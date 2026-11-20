@@ -1,0 +1,45 @@
+# Folders excluded per user request
+codex/
+code/
+screen_design/
+
+# Android / Gradle
+.gradle/
+build/
+**/build/
+captures/
+.externalNativeBuild/
+.cxx/
+local.properties
+**/local.properties
+
+# Build outputs
+*.apk
+*.aab
+
+# Android Studio / IntelliJ / VS Code
+*.iml
+.idea/
+.kotlin/
+.vscode/
+
+# Keys and sensitive credentials
+*.jks
+*.keystore
+*.key
+google-services.json
+.env
+.env.*
+!.env.example
+
+# OS generated files
+.DS_Store
+Thumbs.db
+Desktop.ini
+
+# Node / Web / Backend dependencies & logs (for website / backend workstreams)
+node_modules/
+.firebase/
+__pycache__/
+*.pyc
+*.log

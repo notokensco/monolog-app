@@ -1,0 +1,26 @@
+<resources>
+    <string name="app_name">Monolog</string>
+    <string name="ime_name">Monolog Keyboard</string>
+    <string name="subtype_en_us">English (US)</string>
+    
+    <!-- Setup Screen -->
+    <string name="setup_tagline">Type. Speak. Act. Remember.</string>
+    <string name="setup_enable_title">1. Enable Monolog</string>
+    <string name="setup_enable_desc">Turn on Monolog in system keyboard settings.</string>
+    <string name="setup_enable_btn">Open Keyboard Settings</string>
+    
+    <string name="setup_select_title">2. Select Monolog</string>
+    <string name="setup_select_desc">Set Monolog as your active input method.</string>
+    <string name="setup_select_btn">Switch Input Method</string>
+    
+    <string name="setup_test_title">3. Test Driving Monolog</string>
+    <string name="setup_test_desc">Try typing in various field types right here.</string>
+    <string name="setup_test_hint_standard">Standard text (chat / notes)…</string>
+    <string name="setup_test_hint_password">Password field (watch Incognito activate)…</string>
+    <string name="setup_test_hint_number">Number / phone field…</string>
+    
+    <string name="status_enabled">Enabled</string>
+    <string name="status_disabled">Not Enabled</string>
+    <string name="status_active">Active Keyboard</string>
+    <string name="status_inactive">Not Active</string>
+</resources>
