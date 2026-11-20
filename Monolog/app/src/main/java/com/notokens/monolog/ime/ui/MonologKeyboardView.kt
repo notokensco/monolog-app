@@ -30,6 +30,12 @@ import androidx.compose.ui.window.Popup
 import androidx.compose.ui.window.PopupPositionProvider
 import androidx.compose.ui.window.PopupProperties
 import com.notokens.monolog.ime.EditorContext
+import com.notokens.monolog.ime.ImeAi
+import com.notokens.monolog.ai.KeyboardLanguage
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.setValue
+import androidx.compose.runtime.mutableIntStateOf
+import androidx.compose.runtime.collectAsState
 import com.notokens.monolog.ime.KeyboardAction
 import com.notokens.monolog.ime.KeyboardLayer
 import com.notokens.monolog.ime.KeyboardState
@@ -43,7 +49,7 @@ import com.notokens.monolog.ime.vox.VoxState
 import com.notokens.monolog.ui.theme.PaperKeyText
 
 @Composable
-fun MonologKeyboardView(
+internal fun MonologKeyboardView(
     editorContext: EditorContext,
     keyboardState: KeyboardState,
     voxState: VoxState,
@@ -58,7 +64,12 @@ fun MonologKeyboardView(
     onSearchQueryChange: (TextFieldValue) -> Unit,
     onOpenSearch: () -> Unit,
     onCloseSearch: () -> Unit,
-    onWebSearch: (String) -> Unit,
+    ai: ImeAi,
+    aiAllowed: Boolean,
+    language: KeyboardLanguage,
+    showAiSetup: Boolean,
+    onAiSetup: () -> Unit,
+    onDismissAiSetup: () -> Unit,
     onOpenSettings: () -> Unit,
     onEnterVox: () -> Unit,
     onExitVox: () -> Unit,
@@ -96,9 +107,10 @@ fun MonologKeyboardView(
                 onCancel = onExitVox,
                 onRequestPermission = onRequestPermission
             )
+            if (aiAllowed) ai.toolbar?.let { AiResultCard(it, ai::apply) }
         } else {
             if (searchQuery != null) {
-                KeyboardSearchPanel(searchQuery, onSearchQueryChange, onCloseSearch, onWebSearch)
+                KeyboardSearchPanel(searchQuery, onSearchQueryChange, onCloseSearch, ai)
             } else if (isShortcutsOpen && shortcutDraft.isEditing) {
                 QuickShortcutsPanel(
                     draft = shortcutDraft,
@@ -106,6 +118,10 @@ fun MonologKeyboardView(
                     editorContext = editorContext,
                     onClose = onToggleShortcuts
                 )
+            }
+
+            if (aiAllowed && !isShortcutsOpen && searchQuery == null) {
+                KeyboardAiControls(ai, language, showAiSetup, onAiSetup, onDismissAiSetup, onOpenSearch)
             }
 
             BoxWithConstraints(Modifier.fillMaxWidth()) {
@@ -149,6 +165,7 @@ fun MonologKeyboardView(
                         rowHeight = rowHeight,
                         shiftState = keyboardState.shiftState,
                         editorContext = editorContext,
+                        language = language,
                         onCharTyped = onCharTyped,
                         onShiftClick = onShiftClick,
                         onBackspace = onBackspace,
@@ -232,6 +249,7 @@ private fun LettersLayout(
     rowHeight: Dp,
     shiftState: ShiftState,
     editorContext: EditorContext,
+    language: KeyboardLanguage,
     onCharTyped: (String) -> Unit,
     onShiftClick: () -> Unit,
     onBackspace: () -> Unit,
@@ -243,6 +261,8 @@ private fun LettersLayout(
     onAction: () -> Unit
 ) {
     val isUpper = shiftState.isUppercase
+    val nativeKeys = remember(language) { language.nativeKeys() }
+    var page by remember(language) { mutableIntStateOf(0) }
     val row1 = listOf(
         "q" to "1", "w" to "2", "e" to "3", "r" to "4", "t" to "5",
         "y" to "6", "u" to "7", "i" to "8", "o" to "9", "p" to "0"
@@ -250,6 +270,21 @@ private fun LettersLayout(
     val row2 = listOf("a", "s", "d", "f", "g", "h", "j", "k", "l")
     val row3 = listOf("z", "x", "c", "v", "b", "n", "m")
 
+    if (nativeKeys.isNotEmpty()) {
+        val pages = remember(nativeKeys) { nativeKeys.chunked(24) }
+        for (row in 0..2) {
+            Row(Modifier.fillMaxWidth().height(rowHeight)) {
+                repeat(8) { column ->
+                    val key = pages[page].getOrNull(row * 8 + column)
+                    if (key == null) Spacer(Modifier.weight(1f))
+                    else KeyButton(Modifier.weight(1f), text = key, onClick = { onCharTyped(key) })
+                }
+                if (row == 1) KeyButton(Modifier.weight(1.5f), text = "⇥", onClick = { page = (page + 1) % pages.size },
+                    label = "Next character page")
+                if (row == 2) KeyButton(Modifier.weight(1.5f), text = "⌫", glyph = Glyph.BACKSPACE, onClick = onBackspace)
+            }
+        }
+    } else {
     // Row 1 (Q..P with numbers 1..0 hints above; long press types the number)
     Row(modifier = Modifier.fillMaxWidth().height(rowHeight)) {
         row1.forEach { (char, numHint) ->
@@ -315,6 +350,7 @@ private fun LettersLayout(
     }
 
     // Row 4 (Bottom Bar matching Paper reference)
+    }
     BottomRow(
         rowHeight = rowHeight,
         modeLabel = "?123",
@@ -544,6 +580,8 @@ private fun BottomRow(
     val context = androidx.compose.ui.platform.LocalContext.current
     val scope = androidx.compose.runtime.rememberCoroutineScope()
     val settings = androidx.compose.runtime.remember(context) { com.notokens.monolog.data.SettingsStore(context.applicationContext) }
+    val languageId by settings.keyboardLanguage.collectAsState(initial = "en")
+    val language = KeyboardLanguage.of(languageId)
     Row(modifier = Modifier.fillMaxWidth().height(rowHeight + 4.dp)) {
         KeyButton(Modifier.weight(1.35f), text = modeLabel, fontSize = 17.sp, onClick = onModeClick)
         KeyButton(
@@ -565,7 +603,8 @@ private fun BottomRow(
                 verticalAlignment = androidx.compose.ui.Alignment.CenterVertically,
                 horizontalArrangement = androidx.compose.foundation.layout.Arrangement.spacedBy(12.dp)
             ) {
-                androidx.compose.material3.Text("English", color = PaperKeyText, fontSize = 15.sp)
+                androidx.compose.material3.Text(language.label.substringBefore('·').trim(), color = PaperKeyText,
+                    fontSize = 15.sp, maxLines = 1, overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis)
                 if (!editorContext.isIncognito) MonologIcon(Glyph.BOLT, Modifier.size(17.dp))
             }
         }
@@ -576,13 +615,15 @@ private fun BottomRow(
         KeyButton(
             modifier = Modifier.weight(1f),
             isActive = editorContext.isIncognito,
+            label = "Period",
+            longClickLabel = "Toggle 15 minute incognito",
             onLongClick = {
                 scope.launch {
                     val next = !editorContext.isUserIncognito
-                    settings.setIncognito(next)
+                    settings.setKeyboardIncognito(next)
                     android.widget.Toast.makeText(
                         context,
-                        if (next) "Incognito mode activated" else "Incognito mode deactivated",
+                        if (next) "Incognito on for 15 minutes" else "Keyboard incognito off",
                         android.widget.Toast.LENGTH_SHORT
                     ).show()
                 }

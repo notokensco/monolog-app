@@ -27,6 +27,8 @@ import androidx.compose.ui.text.input.TextFieldValue
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import com.notokens.monolog.data.MonologData
+import com.notokens.monolog.ime.ImeAi
+import com.notokens.monolog.ai.WebLookup
 import com.notokens.monolog.data.matchingJournalEntries
 import com.notokens.monolog.ui.GlassAccent
 import com.notokens.monolog.ui.Glyph
@@ -42,7 +44,7 @@ internal fun KeyboardSearchPanel(
     query: TextFieldValue,
     onQueryChange: (TextFieldValue) -> Unit,
     onClose: () -> Unit,
-    onWebSearch: (String) -> Unit
+    ai: ImeAi
 ) {
     val context = LocalContext.current
     val repository = remember(context) { MonologData.repository(context) }
@@ -71,13 +73,25 @@ internal fun KeyboardSearchPanel(
                 textStyle = MaterialTheme.typography.bodyLarge.copy(color = PaperKeyText),
                 decorationBox = { inner ->
                     Box {
-                        if (query.text.isEmpty()) Text("Search your journal or the web", color = PaperKeySubText)
+                        if (query.text.isEmpty()) Text("Ask or search your journal", color = PaperKeySubText)
                         inner()
                     }
                 }
             )
         }
-        if (query.text.isNotBlank()) {
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            TextButton(ai::toggleWeb, enabled = WebLookup.configured) {
+                Text(if (ai.web) "Web on" else "Web off")
+            }
+            TextButton({ ai.ask(query.text) }, enabled = query.text.isNotBlank() && !ai.busy) {
+                Text(if (ai.web) "Search web" else "Ask")
+            }
+            if (ai.busy) Text("Working…", color = PaperKeySubText)
+        }
+        if (ai.web) Text("Only this query is sent when you search.", style = MaterialTheme.typography.labelSmall,
+            color = PaperKeySubText)
+        ai.preview?.let { AiResultCard(it, ai::apply) }
+        if (query.text.isNotBlank() && !ai.web && ai.preview == null && !ai.busy) {
             Column(
                 Modifier.fillMaxWidth().heightIn(max = 80.dp).verticalScroll(rememberScrollState()).padding(top = 6.dp),
                 verticalArrangement = Arrangement.spacedBy(4.dp)
@@ -90,7 +104,6 @@ internal fun KeyboardSearchPanel(
                     Text(preview, color = PaperKeySubText, style = MaterialTheme.typography.bodySmall, maxLines = 2, overflow = TextOverflow.Ellipsis)
                 }
             }
-            TextButton({ onWebSearch(query.text) }, Modifier.align(Alignment.End)) { Text("Search web") }
         }
     }
 }

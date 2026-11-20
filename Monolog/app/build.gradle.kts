@@ -17,6 +17,11 @@ android {
         versionName = "1.0"
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
+        val webEndpoint = providers.gradleProperty("monologWebEndpoint").orElse("").get()
+        require(webEndpoint.isEmpty() || webEndpoint.matches(Regex("https://[A-Za-z0-9.-]+(?::[0-9]{1,5})?(?:/[A-Za-z0-9._/-]*)?"))) {
+            "monologWebEndpoint must be an HTTPS endpoint without credentials, query parameters or fragments"
+        }
+        buildConfigField("String", "MONOLOG_WEB_ENDPOINT", "\"$webEndpoint\"")
         providers.gradleProperty("monologAbi").orNull?.let { abi ->
             ndk.abiFilters.add(abi)
         }
@@ -43,6 +48,7 @@ android {
     }
     buildFeatures {
         compose = true
+        buildConfig = true
     }
 }
 
@@ -63,6 +69,15 @@ dependencies {
     implementation(libs.androidx.datastore.preferences)
     implementation(libs.commonmark)
     implementation(libs.mlkit.text.recognition)
+    implementation(libs.litert.lm)
+    implementation(libs.mlkit.image.labeling)
+    implementation(libs.mlkit.objectDetection)
+    implementation(libs.mlkit.translation)
+    implementation(libs.mlkit.genai.prompt)
+    implementation(libs.mlkit.genai.rewriting)
+    implementation(libs.mlkit.genai.image.description)
+    implementation(libs.kotlinx.coroutines.tasks)
+    implementation(libs.kotlinx.coroutines.guava)
     testImplementation(libs.junit)
     androidTestImplementation(libs.androidx.junit)
     androidTestImplementation(libs.androidx.espresso.core)

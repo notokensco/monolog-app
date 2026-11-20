@@ -3,15 +3,19 @@ package com.notokens.monolog.data
 import android.content.Context
 import androidx.datastore.preferences.core.booleanPreferencesKey
 import androidx.datastore.preferences.core.intPreferencesKey
+import androidx.datastore.preferences.core.longPreferencesKey
 import androidx.datastore.preferences.core.edit
 import androidx.datastore.preferences.core.emptyPreferences
 import androidx.datastore.preferences.core.stringPreferencesKey
 import androidx.datastore.preferences.preferencesDataStore
 import java.io.IOException
+import kotlinx.coroutines.ExperimentalCoroutinesApi
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.catch
 import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.flow.map
+import kotlinx.coroutines.flow.transformLatest
 
 private val Context.monologSettings by preferencesDataStore(name = "monolog_settings")
 
@@ -35,12 +39,36 @@ class SettingsStore(private val context: Context) {
     suspend fun setCaptureBorderColor(value: String) { context.monologSettings.edit { it[captureBorderColorKey] = value } }
 
     private val incognitoKey = booleanPreferencesKey("incognito")
+    private val incognitoUntilKey = longPreferencesKey("incognito_until")
+    private val webSuggestionsKey = booleanPreferencesKey("web_suggestions")
+    private val weatherCityKey = stringPreferencesKey("weather_city")
+    private val keyboardLanguageKey = stringPreferencesKey("keyboard_language")
+    private val aiSetupSeenKey = booleanPreferencesKey("ai_setup_seen")
     private val themeModeKey = stringPreferencesKey("theme_mode")
     private val reduceTransparencyKey = booleanPreferencesKey("reduce_transparency")
     private val quickShortcutOrderKey = stringPreferencesKey("quick_shortcut_order")
     private val preferences = context.monologSettings.data
 
-    val incognito: Flow<Boolean> = preferences.map { it[incognitoKey] ?: false }.distinctUntilChanged()
+    @OptIn(ExperimentalCoroutinesApi::class)
+    val incognito: Flow<Boolean> = preferences.map {
+        (it[incognitoKey] == true) to (it[incognitoUntilKey] ?: 0L)
+    }.distinctUntilChanged().transformLatest { (enabled, until) ->
+        val remaining = until - System.currentTimeMillis()
+        emit(enabled || remaining > 0)
+        if (!enabled && remaining > 0) {
+            delay(remaining)
+            emit(false)
+        }
+    }.distinctUntilChanged()
+    val webSuggestions = preferences.map { it[webSuggestionsKey] ?: false }.distinctUntilChanged()
+    val weatherCity = preferences.map { it[weatherCityKey].orEmpty() }.distinctUntilChanged()
+    val keyboardLanguage = preferences.map { it[keyboardLanguageKey] ?: "en" }.distinctUntilChanged()
+    val aiSetupSeen = preferences.map { it[aiSetupSeenKey] ?: false }.distinctUntilChanged()
+
+    suspend fun setWebSuggestions(value: Boolean) { context.monologSettings.edit { it[webSuggestionsKey] = value } }
+    suspend fun setWeatherCity(value: String) { context.monologSettings.edit { it[weatherCityKey] = value.trim().take(80) } }
+    suspend fun setKeyboardLanguage(value: String) { context.monologSettings.edit { it[keyboardLanguageKey] = value } }
+    suspend fun markAiSetupSeen() { context.monologSettings.edit { it[aiSetupSeenKey] = true } }
 
     val appearance: Flow<Appearance> = preferences.catch { error ->
         if (error is IOException) emit(emptyPreferences()) else throw error
@@ -77,7 +105,18 @@ class SettingsStore(private val context: Context) {
     }
 
     suspend fun setIncognito(value: Boolean) {
-        context.monologSettings.edit { it[incognitoKey] = value }
+        context.monologSettings.edit {
+            it[incognitoKey] = value
+            it.remove(incognitoUntilKey)
+        }
+    }
+
+    suspend fun setKeyboardIncognito(value: Boolean) {
+        context.monologSettings.edit {
+            it[incognitoKey] = false
+            if (value) it[incognitoUntilKey] = System.currentTimeMillis() + 15 * 60_000L
+            else it.remove(incognitoUntilKey)
+        }
     }
 
     suspend fun setThemeMode(mode: ThemeMode) {

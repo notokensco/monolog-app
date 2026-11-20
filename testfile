@@ -1,0 +1,28 @@
+## Prompt for your laptop agent
+
+Test the latest **Monolog Android app** on my physical phone over USB debugging. Work from the native project directory containing `gradlew.bat` and `app/build.gradle.kts`. The ARM64 debug APK built successfully, passed 16 KB alignment checks, and passed all 24 unit tests. Verify the actual keyboard behavior on the phone. Use synthetic text, screenshots, and voice samples, and preserve existing phone data.
+
+### Build and install
+
+Use JDK 17, Android SDK 35, and Android Platform Tools. Connect the phone, approve the USB debugging prompt, and run:
+
+```powershell
+.\gradlew.bat :app:assembleDebug :app:testDebugUnitTest -PmonologAbi=arm64-v8a
+adb devices -l
+adb -d install -r app\build\outputs\apk\debug\app-debug.apk
+adb -d shell ime enable com.notokens.monolog/.ime.MonologInputMethodService
+adb -d shell ime set com.notokens.monolog/.ime.MonologInputMethodService
+```
+
+If several devices are attached, use `adb -s SERIAL`. Record the phone model, chipset, Android version, and AICore availability.
+
+### Test on the phone
+
+1. **First keyboard launch.** Open a plain text field in another app and tap Monolog’s keys. Confirm the one-time **Choose models** prompt, test **Not now**, and verify both model options remain accessible in Settings. Interrupt and retry the 143 MB SmolLM2 download. Restart the app and confirm a completed download remains ready.
+2. **Nano vs. SmolLM2.** Run **Run Nano foreground test** in companion Settings and **Probe Nano** in the keyboard. Record the results separately. Try the Pixel 8 Pro if that’s the phone available. Use a Pixel 9 Pro or Pixel 10 Pro for the supported-device comparison, and a Nothing Phone (2a) or similar MediaTek phone on Android 15 for the fallback. [Google’s ML Kit device support](https://developers.google.com/ml-kit/genai#device_support)
+3. **Offline Ask and Rewrite.** Turn on airplane mode after downloading the model. Test a general question and a rewrite containing a name, `5 PM`, and `alex@example.com`. Check the asterisk on generated answers, exact detail preservation, and insertion only after tapping **Use**. Edit the draft or switch fields during a request and check that stale results are discarded. Measure cold and warm response times and check for typing lag during inference.
+4. **Vox and language packs.** Test dictation across pauses, transcript insertion, mic cleanup after closing the keyboard, and usable offline speech. In **Languages & packs**, try a regional script, download and remove its translation pack, and test a rewrite through English. Hinglish currently supports Roman typing and basic punctuation polish.
+5. **Web permissions.** Live testing requires a trusted HTTPS endpoint configured with `-PmonologWebEndpoint=https://YOUR-HOST/v1/lookup`. Confirm Web starts off, a manual search submits only the query, and proactive forecast suggestions require a separate opt-in and send only the configured city and date. Verify cited links and failure handling. Mark live Web blocked if the endpoint is unavailable.
+6. **Privacy and capture.** Try password, OTP, and incognito fields. Verify typing still works while AI and capture are suppressed. In a normal field, tap **M**, annotate a synthetic screenshot, ask about it on-device, and save it under an explicit name. Verify the text, labels, and positions in the journal. Check **M** hold shortcuts and confirm an unnamed capture is discarded after 30 seconds. On an upgrade from the previous build, verify existing notes and images still open after the encryption migration.
+
+Return **pass, fail, or blocked** for each case, with reproduction steps, timings, and sanitized diagnostics. Report the Nano foreground and keyboard results independently. Restore the previous default keyboard when finished.

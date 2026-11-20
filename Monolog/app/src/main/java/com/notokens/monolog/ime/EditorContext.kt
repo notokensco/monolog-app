@@ -31,12 +31,17 @@ data class EditorContext(
     val actionLabel: String?,
     val isNoPersonalizedLearning: Boolean,
     val packageName: String?,
-    val isUserIncognito: Boolean = false
+    val isUserIncognito: Boolean = false,
+    val isCredentialField: Boolean = false
 ) {
     val isIncognito: Boolean
-        get() = isPassword || isNoPersonalizedLearning || isUserIncognito
+        get() = isPassword || isNoPersonalizedLearning || isUserIncognito || isCredentialField
 
     companion object {
+        private val credentialHint = Regex(
+            """\b(otp|one[ -]time (code|password|pin)|verification code|security code|passcode|cvv|upi pin)\b""",
+            RegexOption.IGNORE_CASE
+        )
         fun default(): EditorContext = EditorContext(
             inputType = InputType.TYPE_CLASS_TEXT,
             imeOptions = EditorInfo.IME_ACTION_NONE,
@@ -110,7 +115,8 @@ data class EditorContext(
                 action = action,
                 actionLabel = info.actionLabel?.toString(),
                 isNoPersonalizedLearning = isNoPersonalized,
-                packageName = info.packageName
+                packageName = info.packageName,
+                isCredentialField = info.hintText?.let(credentialHint::containsMatchIn) == true
             )
         }
     }

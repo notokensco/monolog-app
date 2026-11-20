@@ -405,6 +405,7 @@ fun CompanionApp(
                         val holdMs by settings.shortcutHoldMs.collectAsState(initial = 500)
                         val shortcutHaptics by settings.shortcutHaptics.collectAsState(initial = true)
                         Screen("Settings", onBack = navigateBack, scrollState = settingsScroll) {
+                            AiSettings(settings)
                             Column(Modifier.fillMaxWidth().glassSurface(24, GlassAccent.LAVENDER).padding(16.dp)) {
                                 Text("Appearance", color = ink, style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.SemiBold)
                                 Spacer(Modifier.height(4.dp))

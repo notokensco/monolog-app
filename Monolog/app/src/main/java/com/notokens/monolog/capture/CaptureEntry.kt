@@ -2,7 +2,7 @@ package com.notokens.monolog.capture
 
 import android.content.Context
 import android.graphics.Bitmap
-import com.google.mlkit.common.MlKit
+import com.notokens.monolog.ai.LocalMlKit
 import com.google.mlkit.vision.common.InputImage
 import com.google.mlkit.vision.text.TextRecognition
 import com.google.mlkit.vision.text.latin.TextRecognizerOptions
@@ -42,20 +42,8 @@ internal fun buildCaptureEntry(recognized: String): CaptureEntry {
     return CaptureEntry(title, body, category)
 }
 
-private object CaptureMlKit {
-    private var initialized = false
-
-    @Synchronized
-    fun initialize(context: Context) {
-        if (!initialized) {
-            MlKit.initialize(context)
-            initialized = true
-        }
-    }
-}
-
 internal suspend fun recognizeScreenText(context: Context, bitmap: Bitmap): String = try {
-    CaptureMlKit.initialize(context)
+    LocalMlKit.initialize(context)
     val recognizer = TextRecognition.getClient(TextRecognizerOptions.DEFAULT_OPTIONS)
     suspendCancellableCoroutine { continuation ->
         try {

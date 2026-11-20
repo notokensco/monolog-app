@@ -25,7 +25,12 @@ internal suspend fun captureToJournal(context: Context, settings: SettingsStore,
         val intent = Intent(context, CaptureAnnotationActivity::class.java).apply {
             flags = Intent.FLAG_ACTIVITY_NEW_TASK
         }
-        context.startActivity(intent)
+        try {
+            context.startActivity(intent)
+        } catch (error: Exception) {
+            if (PendingCaptureHolder.bitmap === bitmap) PendingCaptureHolder.bitmap = null
+            throw error
+        }
         null
     } catch (error: CancellationException) {
         throw error

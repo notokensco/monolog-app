@@ -91,7 +91,7 @@ interface ReminderDao {
     @Delete suspend fun delete(reminder: Reminder)
 }
 
-@Database(entities = [Note::class, Reminder::class, NotePhoto::class], version = 2, exportSchema = false)
+@Database(entities = [Note::class, Reminder::class, NotePhoto::class], version = 3, exportSchema = false)
 abstract class MonologDatabase : RoomDatabase() {
     abstract fun notes(): NoteDao
     abstract fun photos(): NotePhotoDao
@@ -113,10 +113,37 @@ abstract class MonologDatabase : RoomDatabase() {
             }
         }
 
+        private val journalEncryption = object : Migration(2, 3) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                db.query("PRAGMA secure_delete = ON").use { it.moveToFirst() }
+                var id = 0L
+                while (true) {
+                    val row = db.query("SELECT id, title, body FROM notes WHERE id > ? ORDER BY id LIMIT 1", arrayOf(id))
+                        .use { if (it.moveToFirst()) Triple(it.getLong(0), it.getString(1), it.getString(2)) else null }
+                        ?: break
+                    id = row.first
+                    db.execSQL("UPDATE notes SET title = ?, body = ? WHERE id = ?", arrayOf<Any>(
+                        JournalCipher.seal(row.second, "note-title"),
+                        JournalCipher.seal(row.third, "note-body"),
+                        id
+                    ))
+                }
+                id = 0L
+                while (true) {
+                    val row = db.query("SELECT id, image FROM note_photos WHERE id > ? ORDER BY id LIMIT 1", arrayOf(id))
+                        .use { if (it.moveToFirst()) it.getLong(0) to it.getBlob(1) else null }
+                        ?: break
+                    id = row.first
+                    db.execSQL("UPDATE note_photos SET image = ? WHERE id = ?",
+                        arrayOf<Any>(JournalCipher.seal(row.second, "note-photo"), id))
+                }
+            }
+        }
+
         fun get(context: Context): MonologDatabase = instance ?: synchronized(this) {
             instance ?: Room.databaseBuilder(
                 context.applicationContext, MonologDatabase::class.java, "monolog.db"
-            ).addMigrations(photosMigration).build().also { instance = it }
+            ).addMigrations(photosMigration, journalEncryption).build().also { instance = it }
         }
     }
 }

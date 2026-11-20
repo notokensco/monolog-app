@@ -10,6 +10,7 @@ import android.speech.RecognitionListener
 import android.speech.RecognizerIntent
 import android.speech.SpeechRecognizer
 import android.widget.Toast
+import android.view.WindowManager
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.compose.setContent
@@ -21,6 +22,8 @@ import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.layout.*
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.BasicTextField
@@ -47,6 +50,8 @@ import androidx.compose.ui.unit.IntSize
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.core.content.ContextCompat
+import com.notokens.monolog.ai.CaptureVision
+import com.notokens.monolog.ai.KeyboardLanguage
 import com.notokens.monolog.data.Appearance
 import com.notokens.monolog.data.MonologData
 import com.notokens.monolog.data.NotePhotoChanges
@@ -56,6 +61,9 @@ import com.notokens.monolog.ui.Glyph
 import com.notokens.monolog.ui.MonologIcon
 import com.notokens.monolog.ui.theme.MonologTheme
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.delay
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 
@@ -63,7 +71,9 @@ class CaptureAnnotationActivity : ComponentActivity() {
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+        window.addFlags(WindowManager.LayoutParams.FLAG_SECURE)
         val initialBitmap = PendingCaptureHolder.bitmap
+        PendingCaptureHolder.bitmap = null
         if (initialBitmap == null) {
             finish()
             return
@@ -73,6 +83,9 @@ class CaptureAnnotationActivity : ComponentActivity() {
 
         setContent {
             val appearance by settings.appearance.collectAsState(initial = Appearance())
+            val incognito by settings.incognito.collectAsState(initial = null)
+            val language by settings.keyboardLanguage.collectAsState(initial = "en")
+            LaunchedEffect(incognito) { if (incognito == true) finish() }
             val borderColorHex by settings.captureBorderColor.collectAsState(initial = "#FFB800")
             val borderColor = remember(borderColorHex) {
                 try {
@@ -86,13 +99,16 @@ class CaptureAnnotationActivity : ComponentActivity() {
                 CaptureAnnotationScreen(
                     sourceBitmap = initialBitmap,
                     accentColor = borderColor,
+                    settings = settings,
+                    speechTag = KeyboardLanguage.of(language).speechTag,
+                    allowProcessing = incognito == false,
                     onDismiss = {
                         PendingCaptureHolder.bitmap = null
                         finish()
                     },
-                    onSaved = { noteTitle ->
+                    onSaved = {
                         PendingCaptureHolder.bitmap = null
-                        Toast.makeText(this, "Saved to Journal: $noteTitle", Toast.LENGTH_SHORT).show()
+                        Toast.makeText(this, "Saved to Journal", Toast.LENGTH_SHORT).show()
                         finish()
                     }
                 )
@@ -105,8 +121,11 @@ class CaptureAnnotationActivity : ComponentActivity() {
 private fun CaptureAnnotationScreen(
     sourceBitmap: Bitmap,
     accentColor: Color,
+    settings: SettingsStore,
+    speechTag: String,
+    allowProcessing: Boolean,
     onDismiss: () -> Unit,
-    onSaved: (String) -> Unit
+    onSaved: () -> Unit
 ) {
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
@@ -123,6 +142,39 @@ private fun CaptureAnnotationScreen(
     var isRecordingTagVoice by remember { mutableStateOf(false) }
 
     var imageLayoutSize by remember { mutableStateOf(IntSize.Zero) }
+    var activeRecognizer by remember { mutableStateOf<SpeechRecognizer?>(null) }
+    var naming by remember { mutableStateOf(false) }
+    var noteName by remember { mutableStateOf("") }
+    var saving by remember { mutableStateOf(false) }
+    var saveError by remember { mutableStateOf(false) }
+    var asking by remember { mutableStateOf(false) }
+    var question by remember { mutableStateOf("") }
+    var answer by remember { mutableStateOf<String?>(null) }
+    var answering by remember { mutableStateOf(false) }
+
+    val recognizerOnDispose = rememberUpdatedState(activeRecognizer)
+    DisposableEffect(Unit) {
+        onDispose { recognizerOnDispose.value?.destroy() }
+    }
+    LaunchedEffect(naming, noteName.isBlank()) {
+        if (naming && noteName.isBlank()) {
+            delay(30_000)
+            onDismiss()
+        }
+    }
+    LaunchedEffect(asking, answering) {
+        if (!asking || !answering) return@LaunchedEffect
+        try {
+            if (settings.incognito.first()) return@LaunchedEffect
+            answer = CaptureVision.ask(context, currentBitmap, question.trim())
+        } catch (error: CancellationException) {
+            throw error
+        } catch (_: Exception) {
+            answer = "No on-device answer available."
+        } finally {
+            answering = false
+        }
+    }
 
     val micLauncher = rememberLauncherForActivityResult(
         contract = ActivityResultContracts.RequestPermission()
@@ -133,18 +185,26 @@ private fun CaptureAnnotationScreen(
     }
 
     fun startVoiceRecognition(onResult: (String) -> Unit, onRecordingChange: (Boolean) -> Unit) {
+        if (!allowProcessing || activeRecognizer != null) return
         if (ContextCompat.checkSelfPermission(context, Manifest.permission.RECORD_AUDIO) != PackageManager.PERMISSION_GRANTED) {
             micLauncher.launch(Manifest.permission.RECORD_AUDIO)
             return
         }
-        if (!SpeechRecognizer.isRecognitionAvailable(context)) {
-            Toast.makeText(context, "Voice recognition not available on this device", Toast.LENGTH_SHORT).show()
+        if (!SpeechRecognizer.isOnDeviceRecognitionAvailable(context)) {
+            Toast.makeText(context, "On-device voice recognition is unavailable", Toast.LENGTH_SHORT).show()
             return
         }
-        val recognizer = SpeechRecognizer.createSpeechRecognizer(context)
+        val recognizer = try {
+            SpeechRecognizer.createOnDeviceSpeechRecognizer(context)
+        } catch (_: Exception) {
+            Toast.makeText(context, "On-device voice recognition could not start", Toast.LENGTH_SHORT).show()
+            return
+        }
+        activeRecognizer = recognizer
         val intent = Intent(RecognizerIntent.ACTION_RECOGNIZE_SPEECH).apply {
             putExtra(RecognizerIntent.EXTRA_LANGUAGE_MODEL, RecognizerIntent.LANGUAGE_MODEL_FREE_FORM)
-            putExtra(RecognizerIntent.EXTRA_PARTIAL_RESULTS, true)
+            putExtra(RecognizerIntent.EXTRA_LANGUAGE, speechTag)
+            putExtra(RecognizerIntent.EXTRA_PREFER_OFFLINE, true)
             putExtra(RecognizerIntent.EXTRA_MAX_RESULTS, 1)
         }
         recognizer.setRecognitionListener(object : RecognitionListener {
@@ -155,6 +215,7 @@ private fun CaptureAnnotationScreen(
             override fun onEndOfSpeech() { onRecordingChange(false) }
             override fun onError(error: Int) {
                 onRecordingChange(false)
+                activeRecognizer = null
                 recognizer.destroy()
             }
             override fun onResults(results: Bundle?) {
@@ -163,17 +224,18 @@ private fun CaptureAnnotationScreen(
                 if (!matches.isNullOrEmpty()) {
                     onResult(matches[0])
                 }
+                activeRecognizer = null
                 recognizer.destroy()
             }
-            override fun onPartialResults(partialResults: Bundle?) {
-                val matches = partialResults?.getStringArrayList(SpeechRecognizer.RESULTS_RECOGNITION)
-                if (!matches.isNullOrEmpty()) {
-                    onResult(matches[0])
-                }
-            }
+            override fun onPartialResults(partialResults: Bundle?) = Unit
             override fun onEvent(eventType: Int, params: Bundle?) {}
         })
-        recognizer.startListening(intent)
+        try {
+            recognizer.startListening(intent)
+        } catch (_: Exception) {
+            activeRecognizer = null
+            recognizer.destroy()
+        }
     }
 
     Box(
@@ -230,6 +292,11 @@ private fun CaptureAnnotationScreen(
                     )
                 }
             }
+
+            TextButton(
+                onClick = { asking = true },
+                enabled = allowProcessing && !cropMode && !saving
+            ) { Text("Ask about capture") }
 
             // Screenshot preview card with border
             Box(
@@ -417,52 +484,114 @@ private fun CaptureAnnotationScreen(
                 Spacer(Modifier.width(4.dp))
 
                 // Send / Save button (circular accent colored button)
-                val canSave = bottomComment.isNotBlank() || tags.isNotEmpty()
+                val canSave = allowProcessing && !cropMode && !saving
                 Box(
                     modifier = Modifier
                         .size(44.dp)
                         .clip(CircleShape)
                         .background(if (canSave) accentColor else Color(0xFF383944))
-                        .clickable(enabled = canSave) {
-                            scope.launch {
-                                val repo = MonologData.repository(context)
-                                val jpegBytes = withContext(Dispatchers.Default) {
-                                    PhotoCodec.jpeg(currentBitmap)
-                                }
-
-                                val noteTitle = when {
-                                    bottomComment.isNotBlank() -> bottomComment.take(60)
-                                    tags.isNotEmpty() -> tags.first().text.take(60)
-                                    else -> "Capture Note"
-                                }
-
-                                val noteBody = buildString {
-                                    if (bottomComment.isNotBlank()) {
-                                        append(bottomComment)
-                                        append("\n\n")
-                                    }
-                                    if (tags.isNotEmpty()) {
-                                        append("### Annotated Notes\n")
-                                        tags.forEachIndexed { i, t ->
-                                            val type = if (t.isVoice) "🎤 Voice note" else "💬 Tag"
-                                            append("- **$type:** ${t.text}\n")
-                                        }
-                                    }
-                                }
-
-                                repo.saveNote(
-                                    title = noteTitle,
-                                    body = noteBody,
-                                    photos = NotePhotoChanges(added = listOf(jpegBytes))
-                                )
-                                onSaved(noteTitle)
-                            }
-                        },
+                        .clickable(enabled = canSave, onClickLabel = "Name and save capture") { naming = true },
                     contentAlignment = Alignment.Center
                 ) {
                     MonologIcon(Glyph.ARROW, Modifier.size(20.dp), if (canSave) Color.Black else Color.White.copy(alpha = 0.4f))
                 }
             }
+        }
+
+        if (naming) {
+            AlertDialog(
+                onDismissRequest = { if (!saving) onDismiss() },
+                title = { Text("Name this capture") },
+                text = {
+                    Column {
+                        Text("The screenshot, annotations and detected text and labels will stay in your on-device journal.")
+                        OutlinedTextField(
+                            value = noteName, onValueChange = { noteName = it.take(70) },
+                            label = { Text("Note name") }, singleLine = true, enabled = !saving
+                        )
+                        if (saveError) Text("Capture could not be saved. Try again.")
+                    }
+                },
+                confirmButton = {
+                    TextButton(
+                        enabled = allowProcessing && noteName.isNotBlank() && !saving,
+                        onClick = {
+                            saving = true
+                            saveError = false
+                            val bitmap = currentBitmap
+                            val title = noteName.trim()
+                            val comment = bottomComment.trim()
+                            val annotations = tags.toList()
+                            scope.launch {
+                                try {
+                                    if (settings.incognito.first()) return@launch
+                                    val evidence = CaptureVision.inspect(context, bitmap).description()
+                                    val jpeg = withContext(Dispatchers.Default) { PhotoCodec.jpeg(bitmap) }
+                                    if (settings.incognito.first()) return@launch
+                                    val body = buildString {
+                                        if (comment.isNotBlank()) appendLine(comment).appendLine()
+                                        if (annotations.isNotEmpty()) {
+                                            appendLine("### Annotated notes")
+                                            annotations.forEach { tag ->
+                                                val x = (tag.xRatio * 100).toInt()
+                                                val y = (tag.yRatio * 100).toInt()
+                                                appendLine("- ${if (tag.isVoice) "Voice" else "Text"} at ($x%, $y%): ${tag.text}")
+                                            }
+                                        }
+                                        if (evidence.isNotBlank()) {
+                                            appendLine().appendLine("### Detected in the screenshot")
+                                            evidence.lines().forEach { line ->
+                                                append("> ").appendLine(line)
+                                            }
+                                        }
+                                    }
+                                    MonologData.repository(context).saveNote(
+                                        title, body, photos = NotePhotoChanges(added = listOf(jpeg))
+                                    )
+                                    onSaved()
+                                } catch (error: CancellationException) {
+                                    throw error
+                                } catch (_: Exception) {
+                                    saveError = true
+                                } finally {
+                                    saving = false
+                                }
+                            }
+                        }
+                    ) { Text(if (saving) "Saving…" else "Save") }
+                },
+                dismissButton = { TextButton(onDismiss, enabled = !saving) { Text("Discard") } }
+            )
+        }
+
+        if (asking) {
+            AlertDialog(
+                onDismissRequest = { asking = false; question = ""; answer = null; answering = false },
+                title = { Text("Ask about capture") },
+                text = {
+                    Column(Modifier.heightIn(max = 280.dp).verticalScroll(rememberScrollState())) {
+                        OutlinedTextField(
+                            value = question,
+                            onValueChange = { question = it.take(240); answer = null },
+                            label = { Text("Question") },
+                            enabled = !answering
+                        )
+                        answer?.let {
+                            Text(it + " *")
+                            Text("* On-device results can miss details.", style = MaterialTheme.typography.labelSmall)
+                        }
+                    }
+                },
+                confirmButton = {
+                    TextButton(
+                        onClick = { answering = true },
+                        enabled = allowProcessing && question.isNotBlank() && !answering
+                    ) { Text(if (answering) "Working…" else "Ask on device") }
+                },
+                dismissButton = {
+                    TextButton({ asking = false; question = ""; answer = null; answering = false }) { Text("Close") }
+                }
+            )
         }
 
         // Tap on screenshot: Popup to add a note/tag at that point

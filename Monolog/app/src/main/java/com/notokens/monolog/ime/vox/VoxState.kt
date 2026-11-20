@@ -15,5 +15,6 @@ data class VoxState(
     val transcript: String = "",
     val rmsLevel: Float = 0f,
     val errorMessage: String? = null,
-    val language: String = "English"
+    val language: String = "English",
+    val finalSegment: String = ""
 )

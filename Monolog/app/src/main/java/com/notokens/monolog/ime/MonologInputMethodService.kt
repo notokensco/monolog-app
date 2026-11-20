@@ -1,7 +1,5 @@
 package com.notokens.monolog.ime
 
-import android.app.SearchManager
-import android.content.ActivityNotFoundException
 import android.content.Context
 import android.content.Intent
 import android.icu.text.BreakIterator
@@ -23,6 +21,8 @@ import androidx.compose.ui.text.TextRange
 import androidx.compose.ui.text.input.TextFieldValue
 import androidx.core.view.WindowCompat
 import com.notokens.monolog.MainActivity
+import com.notokens.monolog.ai.KeyboardLanguage
+import com.notokens.monolog.ai.LocalAi
 import com.notokens.monolog.capture.CaptureSetupActivity
 import com.notokens.monolog.capture.ScreenCaptureService
 import com.notokens.monolog.data.SettingsStore
@@ -63,6 +63,15 @@ class MonologInputMethodService : LifecycleInputMethodService() {
     private val settingsScope = CoroutineScope(SupervisorJob() + Dispatchers.Main)
     private var userIncognito = false
     private val settingsStore by lazy { SettingsStore(applicationContext) }
+    private var privacyReady by mutableStateOf(false)
+    private var editorActive by mutableStateOf(false)
+    private var language by mutableStateOf(KeyboardLanguage.of("en"))
+    private val ai by lazy {
+        ImeAi(this, settingsScope, settingsStore, { currentInputConnection }, ::aiAllowed)
+    }
+
+    private fun aiAllowed(): Boolean = privacyReady && editorActive && !editorContext.isIncognito &&
+        !editorContext.isNumber && !editorContext.isEmail && !editorContext.isUri
 
     override fun onCreate() {
         super.onCreate()
@@ -74,7 +83,10 @@ class MonologInputMethodService : LifecycleInputMethodService() {
             settingsStore.incognito.collect { enabled ->
                 userIncognito = enabled
                 editorContext = editorContext.copy(isUserIncognito = enabled)
+                privacyReady = true
                 if (enabled) {
+                    ai.reset()
+                    LocalAi.release()
                     searchQuery = null
                     pendingCaptureDisplay = null
                     captureAfterHide?.cancel()
@@ -84,11 +96,20 @@ class MonologInputMethodService : LifecycleInputMethodService() {
                 }
             }
         }
+        settingsScope.launch {
+            settingsStore.keyboardLanguage.collect { language = KeyboardLanguage.of(it) }
+        }
+        settingsScope.launch {
+            settingsStore.webSuggestions.collect { if (!it) ai.disableWebSuggestions() }
+        }
     }
 
     private val voxController by lazy {
         VoxController(this) { state ->
             voxState = state
+            if (isVoxOpen && state.finalSegment.isNotBlank()) {
+                ai.stableSpeech(state.finalSegment)
+            }
         }
     }
 
@@ -99,6 +120,7 @@ class MonologInputMethodService : LifecycleInputMethodService() {
             )
             setContent {
                 val appearance by settingsStore.appearance.collectAsState(initial = Appearance())
+                val setupSeen by settingsStore.aiSetupSeen.collectAsState(initial = true)
                 MonologTheme(appearance = appearance) {
                     val lightBars = !LocalMonologDark.current
                     SideEffect {
@@ -119,16 +141,21 @@ class MonologInputMethodService : LifecycleInputMethodService() {
                         onCaptureContext = ::handleCaptureContext,
                         onDismissShortcuts = ::dismissShortcuts,
                         searchQuery = searchQuery,
-                        onSearchQueryChange = { searchQuery = it },
+                        onSearchQueryChange = { ai.abortAction(); searchQuery = it },
                         onOpenSearch = ::handleOpenSearch,
-                        onCloseSearch = { searchQuery = null },
-                        onWebSearch = ::handleWebSearch,
+                        onCloseSearch = { searchQuery = null; ai.closePanel() },
+                        ai = ai,
+                        aiAllowed = aiAllowed(),
+                        language = language,
+                        showAiSetup = !setupSeen,
+                        onAiSetup = { finishAiSetup(true) },
+                        onDismissAiSetup = { finishAiSetup(false) },
                         onOpenSettings = ::handleOpenSettings,
                         onEnterVox = ::handleEnterVox,
                         onExitVox = ::handleExitVox,
-                        onStartListening = { voxController.startListening() },
+                        onStartListening = { voxController.startListening(language.speechTag, language.label) },
                         onPauseListening = { voxController.pauseOrStopListening() },
-                        onClearTranscript = { voxController.clearTranscript() },
+                        onClearTranscript = { voxController.clearTranscript(); ai.clearDraft() },
                         onCommitTranscript = ::handleCommitTranscript,
                         onRequestPermission = ::handleRequestMicPermission,
                         onCharTyped = ::handleCharTyped,
@@ -154,6 +181,8 @@ class MonologInputMethodService : LifecycleInputMethodService() {
         super.onStartInputView(info, restarting)
         val resolved = EditorContext.fromEditorInfo(info)
         editorContext = resolved.copy(isUserIncognito = userIncognito)
+        editorActive = info != null
+        ai.reset(info?.takeIf { it.initialSelStart == it.initialSelEnd }?.initialSelEnd ?: -1)
 
         // Always close any active private panels when switching editors
         searchQuery = null
@@ -174,6 +203,8 @@ class MonologInputMethodService : LifecycleInputMethodService() {
     }
 
     override fun onFinishInputView(finishingInput: Boolean) {
+        editorActive = false
+        ai.reset()
         super.onFinishInputView(finishingInput)
         voxController.cleanup()
         isShortcutsOpen = false
@@ -186,6 +217,9 @@ class MonologInputMethodService : LifecycleInputMethodService() {
 
     override fun onWindowHidden() {
         super.onWindowHidden()
+        ai.reset()
+        searchQuery = null
+        if (isVoxOpen) handleExitVox()
         val displayId = pendingCaptureDisplay ?: return
         pendingCaptureDisplay = null
         captureAfterHide = settingsScope.launch {
@@ -198,6 +232,8 @@ class MonologInputMethodService : LifecycleInputMethodService() {
     }
 
     override fun onFinishInput() {
+        editorActive = false
+        ai.reset()
         pendingCaptureDisplay = null
         captureAfterHide?.cancel()
         super.onFinishInput()
@@ -207,12 +243,27 @@ class MonologInputMethodService : LifecycleInputMethodService() {
         super.onDestroy()
         settingsScope.cancel()
         voxController.cleanup()
+        LocalAi.release()
+    }
+
+    override fun onTrimMemory(level: Int) {
+        super.onTrimMemory(level)
+        if (level >= android.content.ComponentCallbacks2.TRIM_MEMORY_RUNNING_LOW) LocalAi.release()
+    }
+
+    override fun onUpdateSelection(
+        oldSelStart: Int, oldSelEnd: Int, newSelStart: Int, newSelEnd: Int,
+        candidatesStart: Int, candidatesEnd: Int
+    ) {
+        super.onUpdateSelection(oldSelStart, oldSelEnd, newSelStart, newSelEnd, candidatesStart, candidatesEnd)
+        ai.selectionChanged(newSelStart, newSelEnd)
     }
 
     private fun handleToggleShortcuts() {
         if (android.os.SystemClock.uptimeMillis() - shortcutsDismissedAt < 500) return
         if (editorContext.isIncognito) return
         searchQuery = null
+        ai.closePanel()
         if (isVoxOpen) {
             handleExitVox()
         }
@@ -231,7 +282,8 @@ class MonologInputMethodService : LifecycleInputMethodService() {
     private fun handleCaptureContext() {
         if (isShortcutsOpen) { dismissShortcuts(); return }
         if (android.os.SystemClock.uptimeMillis() - shortcutsDismissedAt < 500) return
-        if (editorContext.isIncognito) {
+        if (!privacyReady || editorContext.isIncognito || editorContext.isNumber ||
+            editorContext.isEmail || editorContext.isUri) {
             Toast.makeText(this, "Context capture disabled in incognito mode", Toast.LENGTH_SHORT).show()
             return
         }
@@ -245,21 +297,17 @@ class MonologInputMethodService : LifecycleInputMethodService() {
     }
 
     private fun handleOpenSearch() {
-        if (editorContext.isIncognito || searchQuery != null) return
+        if (!aiAllowed() || searchQuery != null) return
+        ai.closePanel()
         isShortcutsOpen = false
         shortcutDraft = ShortcutDraft()
-        val selection = currentInputConnection?.getSelectedText(0)?.toString()?.trim().orEmpty()
-        val query = selection.take(240)
-        searchQuery = TextFieldValue(query, TextRange(query.length))
+        searchQuery = TextFieldValue()
     }
 
-    private fun handleWebSearch(query: String) {
-        if (query.isBlank() || editorContext.isIncognito) return
-        try {
-            startActivity(Intent(Intent.ACTION_WEB_SEARCH).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
-                .putExtra(SearchManager.QUERY, query.trim()))
-        } catch (_: ActivityNotFoundException) {
-            Toast.makeText(this, "No web search app is available", Toast.LENGTH_SHORT).show()
+    private fun finishAiSetup(openSettings: Boolean) {
+        settingsScope.launch {
+            settingsStore.markAiSetupSeen()
+            if (openSettings) handleOpenSettings()
         }
     }
 
@@ -273,15 +321,20 @@ class MonologInputMethodService : LifecycleInputMethodService() {
     }
 
     private fun handleEnterVox() {
-        if (editorContext.isIncognito) return
+        if (!aiAllowed()) return
         searchQuery = null
+        ai.closePanel()
+        ai.clearDraft()
+        voxController.clearTranscript()
         isVoxOpen = true
-        voxController.startListening()
+        voxController.startListening(language.speechTag, language.label)
     }
 
     private fun handleExitVox() {
         voxController.cleanup()
         isVoxOpen = false
+        voxController.clearTranscript()
+        ai.clearDraft()
     }
 
     private fun handleCommitTranscript(transcript: String) {
@@ -304,6 +357,7 @@ class MonologInputMethodService : LifecycleInputMethodService() {
 
     private fun handleCharTyped(text: String) {
         searchQuery?.let { query ->
+            ai.abortAction()
             val start = query.selection.min
             val end = query.selection.max
             val replacement = text.take((240 - query.text.length + end - start).coerceAtLeast(0))
@@ -317,12 +371,13 @@ class MonologInputMethodService : LifecycleInputMethodService() {
             return
         }
         val ic = currentInputConnection ?: return
-        ic.commitText(text, 1)
+        if (ic.commitText(text, 1)) ai.textCommitted(text)
         keyboardState = keyboardState.onLetterTyped()
     }
 
     private fun handleBackspace() {
         searchQuery?.let { query ->
+            ai.abortAction()
             val end = query.selection.max
             var start = query.selection.min
             if (start == end && start > 0) {
@@ -336,7 +391,9 @@ class MonologInputMethodService : LifecycleInputMethodService() {
             return
         }
         val ic = currentInputConnection ?: return
-        val selected = ic.getSelectedText(0)
+        ai.closePanel()
+        ai.clearDraft()
+        val selected = if (editorContext.isIncognito) null else ic.getSelectedText(0)
         if (!selected.isNullOrEmpty()) {
             ic.commitText("", 1)
         } else {
@@ -363,15 +420,16 @@ class MonologInputMethodService : LifecycleInputMethodService() {
             return
         }
         val ic = currentInputConnection ?: return
-        ic.commitText(" ", 1)
+        if (ic.commitText(" ", 1)) ai.textCommitted(" ")
     }
 
     private fun handleAction() {
-        if (searchQuery != null) return // Journal results update as the query is typed.
+        searchQuery?.let { ai.ask(it.text); return }
         if (isShortcutsOpen && shortcutDraft.isEditing) {
             shortcutDraft = shortcutDraft.enter()
             return
         }
+        ai.reset()
         editorContext.performAction(currentInputConnection)
     }
 
@@ -413,6 +471,7 @@ class MonologInputMethodService : LifecycleInputMethodService() {
         isShortcutsOpen = false
         shortcutDraft = ShortcutDraft()
         searchQuery = null
+        ai.reset()
         requestHideSelf(0)
     }
 }
