@@ -20,14 +20,11 @@ data class KeyboardState(
     val layer: KeyboardLayer = KeyboardLayer.LETTERS,
     val shiftState: ShiftState = ShiftState.OFF
 ) {
-    fun cycleShift(): KeyboardState {
-        val nextShift = when (shiftState) {
-            ShiftState.OFF -> ShiftState.ONCE
-            ShiftState.ONCE -> ShiftState.CAPS_LOCK
-            ShiftState.CAPS_LOCK -> ShiftState.OFF
-        }
-        return copy(shiftState = nextShift)
-    }
+    fun toggleShift(): KeyboardState =
+        copy(shiftState = if (shiftState == ShiftState.OFF) ShiftState.ONCE else ShiftState.OFF)
+
+    fun toggleCapsLock(): KeyboardState =
+        copy(shiftState = if (shiftState == ShiftState.CAPS_LOCK) ShiftState.OFF else ShiftState.CAPS_LOCK)
 
     fun onLetterTyped(): KeyboardState {
         return if (shiftState == ShiftState.ONCE) {

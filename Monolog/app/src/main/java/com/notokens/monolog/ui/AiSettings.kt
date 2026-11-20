@@ -5,11 +5,14 @@ import android.os.Build
 
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.ColumnScope
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
 import androidx.compose.material3.Button
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.HorizontalDivider
+import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
@@ -25,6 +28,7 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalUriHandler
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.unit.dp
 import com.notokens.monolog.BuildConfig
@@ -38,91 +42,72 @@ import com.notokens.monolog.ai.NanoAvailability
 import com.notokens.monolog.ai.NanoFeature
 import com.notokens.monolog.ai.WebLookup
 import com.notokens.monolog.data.SettingsStore
+import com.notokens.monolog.ui.theme.PaperKeyText
+import com.notokens.monolog.ui.theme.PaperKeySubText
+import com.notokens.monolog.ui.theme.PaperPillBorder
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.launch
 
 @Composable
-internal fun AiSettings(settings: SettingsStore) {
+internal fun SettingsCard(title: String, content: @Composable ColumnScope.() -> Unit) {
+    Column(Modifier.fillMaxWidth().glassSurface(24, GlassAccent.LAVENDER).padding(16.dp),
+        verticalArrangement = Arrangement.spacedBy(10.dp)) {
+        Text(title, color = PaperKeyText, style = MaterialTheme.typography.titleMedium)
+        content()
+    }
+}
+
+@Composable
+internal fun AiSettings() {
     val context = LocalContext.current.applicationContext
+    val uriHandler = LocalUriHandler.current
     val scope = rememberCoroutineScope()
     val store = remember(context) { ModelStore.get(context) }
     val state by store.state.collectAsState()
-    val webEnabled by settings.webSuggestions.collectAsState(initial = false)
-    val weatherCity by settings.weatherCity.collectAsState(initial = "")
-    var city by remember(weatherCity) { mutableStateOf(weatherCity) }
+    val gemmaStatus by LocalAi.lastRunStatus.collectAsState()
     var nano by remember { mutableStateOf(emptyMap<NanoFeature, NanoAvailability>()) }
     var downloading by remember { mutableStateOf<NanoFeature?>(null) }
-    var nanoMessage by remember { mutableStateOf("") }
+    var statusMessage by remember { mutableStateOf("") }
+    var checking by remember { mutableStateOf(false) }
     var testing by remember { mutableStateOf(false) }
     var testMessage by remember { mutableStateOf("") }
-    var showLanguages by remember { mutableStateOf(false) }
     val supportsLocal = remember { Build.SUPPORTED_64_BIT_ABIS.any { it == "arm64-v8a" || it == "x86_64" } }
     val lowRam = remember { context.getSystemService(ActivityManager::class.java)?.isLowRamDevice == true }
 
     suspend fun refreshNano() {
-        nano = NanoFeature.entries.associateWith { NanoAi.status(context, it) }
+        checking = true
+        try {
+            nano = NanoFeature.entries.associateWith { NanoAi.status(context, it) }
+        } finally {
+            checking = false
+        }
     }
     LaunchedEffect(Unit) { refreshNano() }
 
-    Column(Modifier.fillMaxWidth().glassSurface(24).padding(16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-        Text("On-device AI models", style = MaterialTheme.typography.titleMedium)
-        val recommendation = when {
-            nano[NanoFeature.PROMPT] in setOf(NanoAvailability.READY, NanoAvailability.DOWNLOADABLE) ->
-                "Try Gemini Nano first. Offline writing can serve as a fallback."
-            !supportsLocal -> "Offline writing needs a supported 64-bit device."
-            lowRam -> "Offline writing is optional. Run the speed check before relying on it."
-            nano.isNotEmpty() -> "Suggested for this device: Offline writing."
-            else -> "Checking on-device options…"
-        }
-        Text(recommendation, style = MaterialTheme.typography.bodySmall)
-        Text("Offline writing · SmolLM2 135M · 143 MB")
-        when (val current = state) {
-            ModelState.Missing -> Button(store::download, enabled = supportsLocal) { Text("Download offline model") }
-            ModelState.Ready -> {
-                Text("Offline model ready")
-                TextButton(enabled = !testing, onClick = {
-                    testing = true
-                    testMessage = ""
-                    scope.launch {
-                        try {
-                            val elapsed = LocalAi.benchmark(context)
-                            testMessage = if (elapsed == null) "The speed check timed out."
-                            else "Sample rewrite took " + elapsed + " ms."
-                        } catch (error: CancellationException) {
-                            throw error
-                        } catch (_: Exception) {
-                            testMessage = "The offline model could not run on this device."
-                        } finally {
-                            testing = false
-                        }
-                    }
-                }) { Text(if (testing) "Checking…" else "Run offline speed check") }
-                if (testMessage.isNotBlank()) Text(testMessage)
-            }
-            is ModelState.Downloading -> Text("Downloading " + current.percent + "%")
-            is ModelState.Failed -> {
-                Text(current.message)
-                TextButton(store::download) { Text("Retry download") }
-            }
-        }
-        Text("Gemini Nano · managed by Android")
-        for (feature in NanoFeature.entries) {
+    SettingsCard("Gemini Nano") {
+        Text("Used automatically when available. Android manages its model downloads.",
+            color = PaperKeySubText, style = MaterialTheme.typography.bodySmall)
+        NanoFeature.entries.forEachIndexed { index, feature ->
+            if (index > 0) HorizontalDivider(color = PaperPillBorder)
             val status = nano[feature]
             Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
-                Text(feature.label + " · " + (status?.label ?: "Checking…"), Modifier.weight(1f))
+                Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(2.dp)) {
+                    Text(feature.label, color = PaperKeyText, style = MaterialTheme.typography.titleSmall)
+                    Text(status?.label ?: "Checking…", color = PaperKeySubText, style = MaterialTheme.typography.bodySmall)
+                }
                 if (status == NanoAvailability.DOWNLOADABLE) {
                     TextButton(enabled = downloading == null, onClick = {
                         downloading = feature
-                        nanoMessage = ""
+                        statusMessage = ""
                         scope.launch {
                             try {
                                 val result = NanoAi.download(context, feature)
-                                nanoMessage = feature.label + " · " + result.label
+                                statusMessage = "${feature.label} · ${result.label}"
                                 refreshNano()
                             } catch (error: CancellationException) {
                                 throw error
                             } catch (_: Exception) {
-                                nanoMessage = "Android could not finish this download."
+                                statusMessage = "Android could not finish this download."
                             } finally {
                                 downloading = null
                             }
@@ -131,36 +116,97 @@ internal fun AiSettings(settings: SettingsStore) {
                 }
             }
         }
-        TextButton({ scope.launch { refreshNano() } }, enabled = downloading == null) { Text("Refresh model status") }
-        if (BuildConfig.DEBUG) TextButton({
-            scope.launch { nanoMessage = "Foreground rewrite · " + NanoAi.probe(context) }
-        }) { Text("Run Nano foreground test") }
-        if (nanoMessage.isNotBlank()) Text(nanoMessage)
+        TextButton({ scope.launch { refreshNano() } }, enabled = !checking && downloading == null) {
+            Text("Refresh availability")
+        }
+        if (statusMessage.isNotBlank()) Text(statusMessage, color = PaperKeySubText)
     }
 
-    Column(Modifier.fillMaxWidth().glassSurface(24).padding(16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-        Text("Web suggestions", style = MaterialTheme.typography.titleMedium)
-        Row(verticalAlignment = Alignment.CenterVertically) {
-            Text("While typing or using Vox", Modifier.weight(1f))
-            Switch(webEnabled, { value -> scope.launch { settings.setWebSuggestions(value) } },
-                modifier = Modifier.testTag("proactiveWebToggle"), enabled = WebLookup.configured)
+    SettingsCard(ModelStore.DISPLAY_NAME) {
+        Text("Offline model for devices without Nano. Download: ${ModelStore.DOWNLOAD_SIZE}.",
+            color = PaperKeySubText, style = MaterialTheme.typography.bodySmall)
+        if (lowRam) Text("This device may run the model slowly.", color = PaperKeySubText)
+        if (!supportsLocal) Text("Gemma needs a supported 64-bit device.", color = PaperKeySubText)
+        when (val current = state) {
+            ModelState.Missing -> Button(store::download, enabled = supportsLocal) { Text("Download Gemma") }
+            ModelState.Ready -> Text("Downloaded · Ready for offline use", color = PaperKeyText)
+            is ModelState.Downloading -> {
+                Text("Downloading ${current.percent}%", color = PaperKeySubText)
+                LinearProgressIndicator(progress = { current.percent / 100f }, modifier = Modifier.fillMaxWidth())
+            }
+            is ModelState.Failed -> {
+                Text(current.message, color = MaterialTheme.colorScheme.error)
+                TextButton(store::download, enabled = supportsLocal) { Text("Retry download") }
+            }
         }
-        Text("Recognized forecast questions can send only your chosen city and forecast date to Monolog’s search service.")
-        if (!WebLookup.configured) Text("A search service has not been configured for this build.")
-        if (webEnabled) {
-            OutlinedTextField(city, { city = it.take(80) }, label = { Text("Weather city") }, singleLine = true)
-            TextButton({ scope.launch { settings.setWeatherCity(city) } }) { Text("Save city") }
-        }
+        TextButton({ uriHandler.openUri("https://gemma.ai/resources/terms/") }) { Text("Gemma Terms of Use") }
     }
 
-    Column(Modifier.fillMaxWidth().glassSurface(24).padding(16.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
-        TextButton({ showLanguages = !showLanguages }) { Text("Languages & packs") }
-        if (showLanguages) LanguageSettings(settings)
+    if (BuildConfig.DEBUG || state is ModelState.Ready) {
+        SettingsCard("Diagnostics") {
+            if (BuildConfig.DEBUG) TextButton(enabled = !testing, onClick = {
+                testing = true
+                testMessage = ""
+                scope.launch {
+                    try { testMessage = "Nano foreground · ${NanoAi.probe(context)}" }
+                    finally { testing = false }
+                }
+            }) { Text("Run Nano foreground test") }
+            if (state is ModelState.Ready) TextButton(enabled = !testing, onClick = {
+                testing = true
+                testMessage = ""
+                scope.launch {
+                    try {
+                        val elapsed = LocalAi.benchmark(context)
+                        testMessage = elapsed?.let { "Gemma sample answer took $it ms." } ?: "The speed check timed out."
+                    } catch (error: CancellationException) {
+                        throw error
+                    } catch (_: Exception) {
+                        testMessage = "Gemma could not run on this device."
+                    } finally {
+                        testing = false
+                    }
+                }
+            }) { Text("Run Gemma speed check") }
+            gemmaStatus?.let { Text(it, color = PaperKeySubText, style = MaterialTheme.typography.bodySmall) }
+            if (testing) Text("Running check…", color = PaperKeySubText)
+            if (testMessage.isNotBlank()) Text(testMessage, color = PaperKeySubText)
+        }
     }
 }
 
 @Composable
-private fun LanguageSettings(settings: SettingsStore) {
+internal fun WebSettings(settings: SettingsStore) {
+    val scope = rememberCoroutineScope()
+    val webEnabled by settings.webSuggestions.collectAsState(initial = false)
+    val webQuestions by settings.webQuestionSuggestions.collectAsState(initial = false)
+    val weatherCity by settings.weatherCity.collectAsState(initial = "")
+    var city by remember(weatherCity) { mutableStateOf(weatherCity) }
+    SettingsCard("Web suggestions") {
+        Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+            Text("Live weather suggestions", Modifier.weight(1f), color = PaperKeyText)
+            Switch(webEnabled, { value -> scope.launch { settings.setWebSuggestions(value) } },
+                modifier = Modifier.testTag("proactiveWebToggle"), enabled = WebLookup.configured)
+        }
+        Text(if (WebLookup.configured) "Forecast suggestions send only your chosen city and date."
+            else "Live forecasts need a configured weather service.", color = PaperKeySubText, style = MaterialTheme.typography.bodySmall)
+        if (webEnabled && WebLookup.configured) {
+            OutlinedTextField(city, { city = it.take(80) }, modifier = Modifier.fillMaxWidth(),
+                label = { Text("Weather city") }, singleLine = true)
+            TextButton({ scope.launch { settings.setWeatherCity(city) } }) { Text("Save city") }
+        }
+        HorizontalDivider(color = PaperPillBorder)
+        Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+            Text("Search typed questions", Modifier.weight(1f), color = PaperKeyText)
+            Switch(webQuestions, { value -> scope.launch { settings.setWebQuestionSuggestions(value) } })
+        }
+        Text("When Web is on in Monolog AI, send recognized questions to the search provider for toolbar answers.",
+            color = PaperKeySubText, style = MaterialTheme.typography.bodySmall)
+    }
+}
+
+@Composable
+internal fun LanguageSettings(settings: SettingsStore) {
     val context = LocalContext.current.applicationContext
     val scope = rememberCoroutineScope()
     val selected by settings.keyboardLanguage.collectAsState(initial = "en")
@@ -175,12 +221,16 @@ private fun LanguageSettings(settings: SettingsStore) {
         catch (_: Exception) { message = "Could not check offline translation packs." }
     }
 
-    OutlinedTextField(filter, { filter = it }, label = { Text("Find a language") }, singleLine = true)
-    for (language in KeyboardLanguage.all.filter { it.label.contains(filter.trim(), true) }) {
+    OutlinedTextField(filter, { filter = it }, modifier = Modifier.fillMaxWidth(),
+        label = { Text("Find a language") }, singleLine = true)
+    val languages = KeyboardLanguage.all.filter { it.label.contains(filter.trim(), true) }
+    if (languages.isEmpty()) Text("No matching languages", color = PaperKeySubText)
+    for (language in languages) {
+        HorizontalDivider(color = PaperPillBorder)
         val code = language.translationCode
         Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
             Column(Modifier.weight(1f)) {
-                Text(language.label)
+                Text(language.label, color = PaperKeyText, style = MaterialTheme.typography.titleSmall)
                 val detail = when {
                     language.id == "en" -> "Built-in layout and rewrite"
                     language.id == "hi-Latn" -> "Roman keyboard and simple local polish"
@@ -188,11 +238,11 @@ private fun LanguageSettings(settings: SettingsStore) {
                     code != null -> "Native script · optional translation"
                     else -> "Native-script keyboard"
                 }
-                Text(detail, style = MaterialTheme.typography.bodySmall)
+                Text(detail, color = PaperKeySubText, style = MaterialTheme.typography.bodySmall)
             }
-            TextButton({ scope.launch { settings.setKeyboardLanguage(language.id) } }) {
-                Text(if (selected == language.id) "Active" else "Use")
-            }
+            if (selected == language.id) {
+                Text("Active", color = MaterialTheme.colorScheme.primary, style = MaterialTheme.typography.labelMedium)
+            } else TextButton({ scope.launch { settings.setKeyboardLanguage(language.id) } }) { Text("Use") }
         }
         if (code != null) TextButton(enabled = pending == null, onClick = {
             pending = language.id
@@ -218,6 +268,6 @@ private fun LanguageSettings(settings: SettingsStore) {
             })
         }
     }
-    Text("Offline translation uses Google ML Kit.", style = MaterialTheme.typography.bodySmall)
+    Text("Translation packs run on this device.", color = PaperKeySubText, style = MaterialTheme.typography.bodySmall)
     if (message.isNotEmpty()) Text(message)
 }

@@ -11,6 +11,7 @@ import androidx.compose.foundation.ScrollState
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.LazyListScope
@@ -45,11 +46,14 @@ import androidx.compose.ui.text.TextRange
 import androidx.compose.ui.text.input.TextFieldValue
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
 import androidx.navigation.NavType
 import androidx.navigation.compose.*
 import androidx.navigation.navArgument
 import com.notokens.monolog.R
+import androidx.compose.ui.layout.ContentScale
 import com.notokens.monolog.capture.captureToJournal
+import com.notokens.monolog.capture.TagMetadataCodec
 import com.notokens.monolog.capture.copyCompanionWindow
 import com.notokens.monolog.data.*
 import com.notokens.monolog.setup.SetupScreen
@@ -212,7 +216,7 @@ fun CompanionApp(
                                     Text("Today’s journal", color = ink, style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.SemiBold)
                                 }
                                 Spacer(Modifier.height(8.dp))
-                                val excerpt = remember(todayNote) { todayNote?.let { markdownExcerpt(it.body).take(130).ifBlank { it.title } } }
+                                val excerpt = remember(todayNote) { todayNote?.let { markdownExcerpt(TagMetadataCodec.decode(it.body).cleanBody).take(130).ifBlank { it.title } } }
                                 Text(excerpt ?: "A little space for your thoughts, conversations, and progress.", color = muted, style = MaterialTheme.typography.bodyMedium)
                                 Spacer(Modifier.height(12.dp))
                                 Row(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {
@@ -236,26 +240,42 @@ fun CompanionApp(
                         val notes by repo.notes.collectAsState(initial = emptyList())
                         val photoRefs by repo.notePhotos.collectAsState(initial = emptyList())
                         val photosByNote = remember(photoRefs) { photoRefs.groupBy { it.noteId } }
+                        var activeCaptureViewerNote by remember { mutableStateOf<Pair<Note, Long>?>(null) }
                         val locale = LocalConfiguration.current.locales[0]
                         val sections = remember(notes, locale) {
-                            val format = SimpleDateFormat("d MMM ? EEEE", locale)
+                            val format = SimpleDateFormat("EEEE, d MMMM", locale)
                             notes.groupBy { format.format(Date(it.updatedAt)) }
                         }
                         CollectionScreen("Journal", showDate = true) {
                             item(contentType = "month") {
-                                Row(Modifier.fillMaxWidth().glassSurface(24).padding(16.dp), verticalAlignment = Alignment.CenterVertically) {
-                                    MonologIcon(Glyph.CLOCK)
+                                Row(
+                                    Modifier.fillMaxWidth().glassSurface(24, GlassAccent.BLUE).padding(16.dp),
+                                    verticalAlignment = Alignment.CenterVertically
+                                ) {
+                                    MonologIcon(Glyph.CLOCK, color = ink)
                                     Spacer(Modifier.width(12.dp))
-                                    Text(SimpleDateFormat("MMMM yyyy", locale).format(Date()), color = ink, style = MaterialTheme.typography.titleMedium, modifier = Modifier.weight(1f))
+                                    Text(
+                                        SimpleDateFormat("MMMM yyyy", locale).format(Date()),
+                                        color = ink,
+                                        style = MaterialTheme.typography.titleMedium,
+                                        fontWeight = FontWeight.SemiBold,
+                                        modifier = Modifier.weight(1f)
+                                    )
                                     IconControl(Glyph.PLUS, "Add note", { nav.navigate("note/new") })
                                 }
                             }
                             if (notes.isEmpty()) item {
-                                EmptyCard("Your story, one day at a time.", "Save a thought from here or the keyboard?s context key.")
+                                EmptyCard("Your story, one day at a time.", "Save a thought from here or the keyboard's context key.")
                             }
                             sections.forEach { (day, entries) ->
                                 item(key = day, contentType = "heading") {
-                                    Text(day, color = muted, modifier = Modifier.padding(start = 12.dp), fontWeight = FontWeight.Medium)
+                                    Text(
+                                        day,
+                                        color = muted,
+                                        modifier = Modifier.padding(start = 12.dp, top = 8.dp, bottom = 4.dp),
+                                        fontWeight = FontWeight.SemiBold,
+                                        fontSize = 14.sp
+                                    )
                                 }
                                 item(key = "grid_$day", contentType = "entries_grid") {
                                     Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
@@ -266,9 +286,16 @@ fun CompanionApp(
                                             ) {
                                                 pair.forEach { note ->
                                                     Box(modifier = Modifier.weight(1f)) {
-                                                        NoteTile(note, photosByNote[note.id].orEmpty()) {
-                                                            nav.navigate("note/${note.id}")
-                                                        }
+                                                        NoteTile(
+                                                            note = note,
+                                                            photos = photosByNote[note.id].orEmpty(),
+                                                            onPhotoClick = { photoId ->
+                                                                activeCaptureViewerNote = note to photoId
+                                                            },
+                                                            onClick = {
+                                                                nav.navigate("note/${note.id}")
+                                                            }
+                                                        )
                                                     }
                                                 }
                                                 if (pair.size == 1) {
@@ -279,6 +306,16 @@ fun CompanionApp(
                                     }
                                 }
                             }
+                        }
+                        activeCaptureViewerNote?.let { (n, photoId) ->
+                            InteractiveCaptureViewer(
+                                note = n,
+                                photoId = photoId,
+                                onDismiss = { activeCaptureViewerNote = null },
+                                onSaveUpdated = { newTitle, newBody ->
+                                    scope.launch { repo.saveNote(newTitle, newBody, n) }
+                                }
+                            )
                         }
                     }
                     composable("library") {
@@ -342,22 +379,72 @@ fun CompanionApp(
                         val id = entry.arguments!!.getLong("id")
                         val note by remember(id) { repo.note(id) }.collectAsState(initial = null)
                         val photos by remember(id) { repo.notePhotos(id) }.collectAsState(initial = emptyList())
+                        var activeViewerPhotoId by remember { mutableStateOf<Long?>(null) }
                         note?.let { note ->
                             Screen(note.title, onBack = navigateBack) {
+                                val decoded = remember(note.body) { TagMetadataCodec.decode(note.body) }
                                 Text(formatTime(note.updatedAt), color = muted)
                                 if (photos.isNotEmpty()) {
-                                    Spacer(Modifier.height(12.dp))
-                                    JournalPhotoStrip(photos.map { JournalPhoto.Saved(it.id) })
+                                    Spacer(Modifier.height(14.dp))
+                                    // Primary photo interactive hero card
+                                    Box(
+                                        modifier = Modifier
+                                            .fillMaxWidth()
+                                            .heightIn(min = 200.dp, max = 340.dp)
+                                            .clip(RoundedCornerShape(22.dp))
+                                            .border(2.dp, PaperAccentBlue.copy(alpha = 0.4f), RoundedCornerShape(22.dp))
+                                            .clickable { activeViewerPhotoId = photos.first().id }
+                                    ) {
+                                        JournalPhotoImage(
+                                            JournalPhoto.Saved(photos.first().id),
+                                            "Capture photo",
+                                            Modifier.fillMaxWidth().heightIn(min = 200.dp, max = 340.dp),
+                                            contentScale = ContentScale.Crop
+                                        )
+                                        Surface(
+                                            shape = RoundedCornerShape(12.dp),
+                                            color = Color.Black.copy(alpha = 0.72f),
+                                            modifier = Modifier.align(Alignment.BottomEnd).padding(10.dp)
+                                        ) {
+                                            Row(
+                                                modifier = Modifier.padding(horizontal = 10.dp, vertical = 6.dp),
+                                                verticalAlignment = Alignment.CenterVertically,
+                                                horizontalArrangement = Arrangement.spacedBy(6.dp)
+                                            ) {
+                                                MonologIcon(Glyph.EXPAND, Modifier.size(14.dp), Color.White)
+                                                Text(
+                                                    if (decoded.tags.isNotEmpty()) "Inspect ${decoded.tags.size} pins" else "Inspect screenshot",
+                                                    color = Color.White,
+                                                    fontSize = 12.sp,
+                                                    fontWeight = FontWeight.Medium
+                                                )
+                                            }
+                                        }
+                                    }
+                                    if (photos.size > 1) {
+                                        Spacer(Modifier.height(10.dp))
+                                        JournalPhotoStrip(photos.drop(1).map { JournalPhoto.Saved(it.id) })
+                                    }
                                 }
-                                if (note.body.isNotBlank()) {
-                                    Spacer(Modifier.height(12.dp))
-                                    JournalMarkdown(note.body, Modifier.fillMaxWidth().glassSurface().padding(16.dp))
+                                if (decoded.cleanBody.isNotBlank()) {
+                                    Spacer(Modifier.height(14.dp))
+                                    JournalMarkdown(decoded.cleanBody, Modifier.fillMaxWidth().glassSurface().padding(16.dp))
                                 }
                                 Spacer(Modifier.height(20.dp))
                                 Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                                     Button(onClick = { nav.navigate("note/edit/${note.id}") }) { Text("Edit") }
                                     OutlinedButton(onClick = { scope.launch { repo.deleteNote(note); nav.popBackStack() } }) { Text("Delete") }
                                 }
+                            }
+                            activeViewerPhotoId?.let { photoId ->
+                                InteractiveCaptureViewer(
+                                    note = note,
+                                    photoId = photoId,
+                                    onDismiss = { activeViewerPhotoId = null },
+                                    onSaveUpdated = { newTitle, newBody ->
+                                        scope.launch { repo.saveNote(newTitle, newBody, note) }
+                                    }
+                                )
                             }
                         }
                     }
@@ -401,111 +488,160 @@ fun CompanionApp(
                         }
                     }
                     composable("settings") {
-                        val incognito by settings.incognito.collectAsState(initial = false)
-                        val holdMs by settings.shortcutHoldMs.collectAsState(initial = 500)
-                        val shortcutHaptics by settings.shortcutHaptics.collectAsState(initial = true)
                         Screen("Settings", onBack = navigateBack, scrollState = settingsScroll) {
-                            AiSettings(settings)
-                            Column(Modifier.fillMaxWidth().glassSurface(24, GlassAccent.LAVENDER).padding(16.dp)) {
-                                Text("Appearance", color = ink, style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.SemiBold)
-                                Spacer(Modifier.height(4.dp))
-                                Text("Theme for the companion app and keyboard.", color = muted, style = MaterialTheme.typography.bodyMedium)
-                                Spacer(Modifier.height(12.dp))
-                                Column(Modifier.selectableGroup(), verticalArrangement = Arrangement.spacedBy(4.dp)) {
-                                    ThemeChoice("Ink mode", "Charcoal glass with blue and violet accents", Glyph.INK, appearance.theme == ThemeMode.INK) {
-                                        scope.launch { settings.setThemeMode(ThemeMode.INK) }
-                                    }
-                                    ThemeChoice("Paper mode", "Pearl glass with soft blue and blush accents", Glyph.PAPER, appearance.theme == ThemeMode.PAPER) {
-                                        scope.launch { settings.setThemeMode(ThemeMode.PAPER) }
-                                    }
-                                    ThemeChoice("Follow system", "Match your device appearance", Glyph.GLOBE, appearance.theme == ThemeMode.SYSTEM) {
-                                        scope.launch { settings.setThemeMode(ThemeMode.SYSTEM) }
-                                    }
+                            Column(verticalArrangement = Arrangement.spacedBy(14.dp)) {
+                                SettingsCard("Personalization") {
+                                    SettingsLink(SettingsPage.APPEARANCE) { nav.navigate(it.route) }
+                                    SettingsLink(SettingsPage.KEYBOARD) { nav.navigate(it.route) }
+                                    SettingsLink(SettingsPage.LANGUAGES) { nav.navigate(it.route) }
                                 }
-                                HorizontalDivider(Modifier.padding(vertical = 12.dp), color = PaperPillBorder)
-                                Row(horizontalArrangement = Arrangement.spacedBy(12.dp), verticalAlignment = Alignment.CenterVertically) {
-                                    Column(Modifier.weight(1f)) {
-                                        Text("Reduce transparency", color = ink, style = MaterialTheme.typography.titleSmall)
-                                        Text("Use solid surfaces in the app and keyboard.", color = muted, style = MaterialTheme.typography.bodyMedium)
-                                    }
-                                    Switch(
-                                        checked = appearance.reduceTransparency,
-                                        onCheckedChange = { scope.launch { settings.setReduceTransparency(it) } },
-                                        modifier = Modifier.semantics { contentDescription = "Reduce transparency" }
-                                    )
+                                SettingsCard("Intelligence & privacy") {
+                                    SettingsLink(SettingsPage.MODELS) { nav.navigate(it.route) }
+                                    SettingsLink(SettingsPage.CAPTURE) { nav.navigate(it.route) }
+                                    SettingsLink(SettingsPage.PRIVACY) { nav.navigate(it.route) }
                                 }
                             }
-                            Spacer(Modifier.height(16.dp))
-
-                            Column(Modifier.fillMaxWidth().glassSurface(24, GlassAccent.BLUE).padding(16.dp)) {
-                                Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(12.dp), verticalAlignment = Alignment.CenterVertically) {
-                                    IconBadge(Glyph.PRIVACY)
-                                    Text("Incognito mode", Modifier.weight(1f), color = ink, style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.SemiBold)
-                                    Switch(
-                                        checked = incognito,
-                                        onCheckedChange = { scope.launch { settings.setIncognito(it) } },
-                                        modifier = Modifier.semantics { contentDescription = "Incognito mode" }
-                                    )
-                                }
-                                Spacer(Modifier.height(8.dp))
-                                Text("Hold the period key to pause keyboard shortcuts and capture. Monolog automatically protects password fields.", color = muted, style = MaterialTheme.typography.bodyMedium)
-                            }
-                            Spacer(Modifier.height(20.dp))
-
-                            Column(Modifier.fillMaxWidth().glassSurface(24, GlassAccent.LAVENDER).padding(16.dp)) {
-                                Text("Quick shortcuts", color = ink, style = MaterialTheme.typography.titleMedium)
-                                Text("Hold M to open: $holdMs ms", color = muted)
-                                Slider(value = holdMs.toFloat(), onValueChange = { value -> scope.launch { settings.setShortcutHoldMs(value.toInt()) } },
-                                    valueRange = 250f..1500f, steps = 4,
-                                    modifier = Modifier.semantics { contentDescription = "Quick shortcuts hold duration" })
-                                Row(verticalAlignment = Alignment.CenterVertically) {
-                                    Text("Shortcut haptics", Modifier.weight(1f), color = ink)
-                                    Switch(checked = shortcutHaptics, onCheckedChange = { scope.launch { settings.setShortcutHaptics(it) } })
-                                }
-                            }
-                            Spacer(Modifier.height(16.dp))
-
-                            val captureBorderColorHex by settings.captureBorderColor.collectAsState(initial = "#FFB800")
-                            Column(Modifier.fillMaxWidth().glassSurface(24, GlassAccent.BLUE).padding(16.dp)) {
-                                Text("Context Capture Border", color = ink, style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.SemiBold)
-                                Spacer(Modifier.height(4.dp))
-                                Text("Select the highlighted border color for screen captures.", color = muted, style = MaterialTheme.typography.bodySmall)
-                                Spacer(Modifier.height(10.dp))
-                                Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-                                    listOf(
-                                        "#FFB800" to "Yellow",
-                                        "#4A70F5" to "Blue",
-                                        "#E53E3E" to "Red",
-                                        "#38A169" to "Green",
-                                        "#9F7AEA" to "Purple"
-                                    ).forEach { (hex, name) ->
-                                        val isSelected = captureBorderColorHex.equals(hex, ignoreCase = true)
-                                        Box(
-                                            modifier = Modifier
-                                                .size(36.dp)
-                                                .clip(CircleShape)
-                                                .background(Color(android.graphics.Color.parseColor(hex)))
-                                                .border(
-                                                    if (isSelected) 3.dp else 1.dp,
-                                                    if (isSelected) Color.White else Color.Transparent,
-                                                    CircleShape
+                        }
+                    }
+                    composable("settings/{section}") { entry ->
+                        val page = SettingsPage.entries.firstOrNull { it.id == entry.arguments?.getString("section") }
+                            ?: return@composable
+                        Screen(page.title, onBack = navigateBack) {
+                            Column(verticalArrangement = Arrangement.spacedBy(14.dp)) {
+                                when (page) {
+                                    SettingsPage.APPEARANCE -> {
+                                        SettingsCard("Theme") {
+                                            Column(Modifier.selectableGroup(), verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                                                ThemeChoice("Ink mode", "Charcoal glass with blue and violet accents", Glyph.INK, appearance.theme == ThemeMode.INK) {
+                                                    scope.launch { settings.setThemeMode(ThemeMode.INK) }
+                                                }
+                                                ThemeChoice("Paper mode", "Pearl glass with soft blue and blush accents", Glyph.PAPER, appearance.theme == ThemeMode.PAPER) {
+                                                    scope.launch { settings.setThemeMode(ThemeMode.PAPER) }
+                                                }
+                                                ThemeChoice("Follow system", "Match your device appearance", Glyph.GLOBE, appearance.theme == ThemeMode.SYSTEM) {
+                                                    scope.launch { settings.setThemeMode(ThemeMode.SYSTEM) }
+                                                }
+                                            }
+                                            HorizontalDivider(Modifier.padding(vertical = 12.dp), color = PaperPillBorder)
+                                            Row(horizontalArrangement = Arrangement.spacedBy(12.dp), verticalAlignment = Alignment.CenterVertically) {
+                                                Column(Modifier.weight(1f)) {
+                                                    Text("Reduce transparency", color = ink, style = MaterialTheme.typography.titleSmall)
+                                                    Text("Use solid surfaces in the app and keyboard.", color = muted, style = MaterialTheme.typography.bodyMedium)
+                                                }
+                                                Switch(
+                                                    checked = appearance.reduceTransparency,
+                                                    onCheckedChange = { scope.launch { settings.setReduceTransparency(it) } },
+                                                    modifier = Modifier.semantics { contentDescription = "Reduce transparency" }
                                                 )
-                                                .clickable { scope.launch { settings.setCaptureBorderColor(hex) } }
-                                        )
+                                            }
+                                        }
+                                    }
+                                    SettingsPage.KEYBOARD -> {
+                                        val holdMs by settings.shortcutHoldMs.collectAsState(initial = 500)
+                                        val shortcutHaptics by settings.shortcutHaptics.collectAsState(initial = true)
+                                        SettingsCard("Quick shortcuts") {
+                                            Text("Hold M to open: $holdMs ms", color = muted)
+                                            Slider(value = holdMs.toFloat(), onValueChange = { value -> scope.launch { settings.setShortcutHoldMs(value.toInt()) } },
+                                                valueRange = 250f..1500f, steps = 4,
+                                                modifier = Modifier.semantics { contentDescription = "Quick shortcuts hold duration" })
+                                            Row(verticalAlignment = Alignment.CenterVertically) {
+                                                Text("Shortcut haptics", Modifier.weight(1f), color = ink)
+                                                Switch(checked = shortcutHaptics, onCheckedChange = { scope.launch { settings.setShortcutHaptics(it) } },
+                                                    modifier = Modifier.semantics { contentDescription = "Shortcut haptics" })
+                                            }
+                                        }
+                                        SettingsCard("Setup & permissions") {
+                                            SetupScreen(onRequestMicPermission = onRequestMicPermission)
+                                        }
+                                    }
+                                    SettingsPage.LANGUAGES -> SettingsCard("Keyboard language and translation") {
+                                        LanguageSettings(settings)
+                                    }
+                                    SettingsPage.MODELS -> AiSettings()
+                                    SettingsPage.CAPTURE -> {
+                                        val captureBorderColorHex by settings.captureBorderColor.collectAsState(initial = "#FFB800")
+                                        SettingsCard("Border color") {
+                                            Row(Modifier.horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                                                listOf(
+                                                    "#FFB800" to "Yellow",
+                                                    "#4A70F5" to "Blue",
+                                                    "#E53E3E" to "Red",
+                                                    "#38A169" to "Green",
+                                                    "#9F7AEA" to "Purple"
+                                                ).forEach { (hex, name) ->
+                                                    val isSelected = captureBorderColorHex.equals(hex, ignoreCase = true)
+                                                    Box(
+                                                        modifier = Modifier
+                                                            .size(36.dp)
+                                                            .clip(CircleShape)
+                                                            .background(Color(android.graphics.Color.parseColor(hex)))
+                                                            .border(
+                                                                if (isSelected) 3.dp else 1.dp,
+                                                                if (isSelected) Color.White else Color.Transparent,
+                                                                CircleShape
+                                                            )
+                                                            .selectable(isSelected, role = Role.RadioButton) { scope.launch { settings.setCaptureBorderColor(hex) } }
+                                                            .semantics { contentDescription = name }
+                                                    )
+                                                }
+                                            }
+                                        }
+                                    }
+                                    SettingsPage.PRIVACY -> {
+                                        val incognito by settings.incognito.collectAsState(initial = false)
+                                        Column(Modifier.fillMaxWidth().glassSurface(24, GlassAccent.BLUE).padding(16.dp)) {
+                                            Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(12.dp), verticalAlignment = Alignment.CenterVertically) {
+                                                IconBadge(Glyph.PRIVACY)
+                                                Text("Incognito mode", Modifier.weight(1f), color = ink, style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.SemiBold)
+                                                Switch(
+                                                    checked = incognito,
+                                                    onCheckedChange = { scope.launch { settings.setIncognito(it) } },
+                                                    modifier = Modifier.semantics { contentDescription = "Incognito mode" }
+                                                )
+                                            }
+                                            Spacer(Modifier.height(8.dp))
+                                            Text("Open the keyboard menu to turn on incognito for 15 minutes. Monolog automatically protects password fields.", color = muted, style = MaterialTheme.typography.bodyMedium)
+                                        }
+                                        WebSettings(settings)
+                                        SettingsCard("Local storage") {
+                                            OutlinedButton(onClick = { confirmClear = true }) { Text("Clear local data") }
+                                        }
                                     }
                                 }
                             }
-                            Spacer(Modifier.height(20.dp))
-                            Text("Keyboard setup", color = ink, style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.SemiBold)
-                            Spacer(Modifier.height(10.dp))
-                            SetupScreen(onRequestMicPermission = onRequestMicPermission)
-                            Spacer(Modifier.height(20.dp))
-                            OutlinedButton(onClick = { confirmClear = true }) { Text("Clear local data") }
                         }
                     }
                 }
             }
         }
+    }
+}
+
+private enum class SettingsPage(val id: String, val title: String, val summary: String, val icon: Glyph) {
+    APPEARANCE("appearance", "Appearance", "Paper, Ink, and transparency", Glyph.INK),
+    KEYBOARD("keyboard", "Keyboard & shortcuts", "Setup, hold duration, and haptics", Glyph.SETTINGS),
+    LANGUAGES("languages", "Languages & packs", "Layouts and offline translation", Glyph.GLOBE),
+    MODELS("models", "On-device AI", "Gemini Nano and Gemma downloads", Glyph.BOLT),
+    CAPTURE("capture", "Quick Capture", "Screenshot border color", Glyph.CAPTURE),
+    PRIVACY("privacy", "Privacy & data", "Incognito, Web suggestions, and storage", Glyph.SHIELD);
+
+    val route get() = "settings/$id"
+}
+
+@Composable
+private fun SettingsLink(page: SettingsPage, onOpen: (SettingsPage) -> Unit) {
+    Row(
+        Modifier.fillMaxWidth().clip(RoundedCornerShape(14.dp))
+            .clickable(role = Role.Button) { onOpen(page) }.padding(vertical = 8.dp, horizontal = 4.dp),
+        horizontalArrangement = Arrangement.spacedBy(12.dp),
+        verticalAlignment = Alignment.CenterVertically
+    ) {
+        IconBadge(page.icon)
+        Column(Modifier.weight(1f)) {
+            Text(page.title, color = ink, style = MaterialTheme.typography.titleSmall)
+            Text(page.summary, color = muted, style = MaterialTheme.typography.bodySmall)
+        }
+        MonologIcon(Glyph.ARROW, Modifier.size(16.dp), color = muted)
     }
 }
 
@@ -639,8 +775,15 @@ private fun EmptyCard(title: String, body: String) {
 }
 
 @Composable
-private fun NoteTile(note: Note, photos: List<NotePhotoRef>, onClick: () -> Unit) {
-    val excerpt = remember(note.body) { markdownExcerpt(note.body).take(120) }
+private fun NoteTile(
+    note: Note,
+    photos: List<NotePhotoRef>,
+    onPhotoClick: ((Long) -> Unit)? = null,
+    onClick: () -> Unit
+) {
+    val decoded = remember(note.body) { TagMetadataCodec.decode(note.body) }
+    val excerpt = remember(decoded.cleanBody) { markdownExcerpt(decoded.cleanBody).take(120) }
+
     Column(
         Modifier
             .fillMaxWidth()
@@ -650,17 +793,50 @@ private fun NoteTile(note: Note, photos: List<NotePhotoRef>, onClick: () -> Unit
             .padding(12.dp),
         verticalArrangement = Arrangement.SpaceBetween
     ) {
-        Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
-            photos.firstOrNull()?.let {
-                JournalPhotoImage(
-                    JournalPhoto.Saved(it.id),
-                    "Attached photo",
-                    Modifier
+        Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+            if (photos.isNotEmpty()) {
+                Box(
+                    modifier = Modifier
                         .fillMaxWidth()
-                        .height(80.dp)
-                        .clip(RoundedCornerShape(12.dp)),
-                    thumbnailSize = 80.dp
-                )
+                        .height(115.dp)
+                        .clip(RoundedCornerShape(14.dp))
+                        .clickable { onPhotoClick?.invoke(photos.first().id) ?: onClick() }
+                ) {
+                    JournalPhotoImage(
+                        JournalPhoto.Saved(photos.first().id),
+                        "Attached photo",
+                        Modifier.fillMaxSize(),
+                        contentScale = ContentScale.Crop,
+                        thumbnailSize = 140.dp
+                    )
+                    if (decoded.tags.isNotEmpty() || decoded.bottomIsVoice) {
+                        Surface(
+                            shape = RoundedCornerShape(8.dp),
+                            color = Color.Black.copy(alpha = 0.72f),
+                            modifier = Modifier
+                                .align(Alignment.TopEnd)
+                                .padding(6.dp)
+                        ) {
+                            Row(
+                                modifier = Modifier.padding(horizontal = 6.dp, vertical = 3.dp),
+                                verticalAlignment = Alignment.CenterVertically,
+                                horizontalArrangement = Arrangement.spacedBy(4.dp)
+                            ) {
+                                if (decoded.bottomIsVoice || decoded.tags.any { it.isVoice }) {
+                                    MonologIcon(Glyph.MIC, Modifier.size(10.dp), PaperAccentBlue)
+                                } else {
+                                    MonologIcon(Glyph.PIN, Modifier.size(10.dp), PaperAccentBlue)
+                                }
+                                Text(
+                                    if (decoded.tags.isNotEmpty()) "${decoded.tags.size}" else "Voice",
+                                    color = Color.White,
+                                    fontSize = 10.sp,
+                                    fontWeight = FontWeight.SemiBold
+                                )
+                            }
+                        }
+                    }
+                }
             }
             Text(
                 note.title,
@@ -670,14 +846,38 @@ private fun NoteTile(note: Note, photos: List<NotePhotoRef>, onClick: () -> Unit
                 maxLines = 2,
                 overflow = TextOverflow.Ellipsis
             )
-            if (excerpt.isNotEmpty() && photos.isEmpty()) {
-                Text(
-                    excerpt,
-                    color = muted,
-                    style = MaterialTheme.typography.bodySmall,
-                    maxLines = 3,
-                    overflow = TextOverflow.Ellipsis
-                )
+            if (photos.isEmpty()) {
+                if (decoded.bottomIsVoice) {
+                    Surface(
+                        shape = RoundedCornerShape(10.dp),
+                        color = PaperAccentBlue.copy(alpha = 0.12f)
+                    ) {
+                        Row(
+                            modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp),
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.spacedBy(4.dp)
+                        ) {
+                            MonologIcon(Glyph.MIC, Modifier.size(12.dp), PaperAccentBlue)
+                            repeat(4) { i ->
+                                Box(
+                                    Modifier
+                                        .width(2.dp)
+                                        .height(if (i % 2 == 0) 6.dp else 10.dp)
+                                        .background(PaperAccentBlue, RoundedCornerShape(1.dp))
+                                )
+                            }
+                            Text("Voice note", color = PaperAccentBlue, style = MaterialTheme.typography.labelSmall)
+                        }
+                    }
+                } else if (excerpt.isNotEmpty()) {
+                    Text(
+                        excerpt,
+                        color = muted,
+                        style = MaterialTheme.typography.bodySmall,
+                        maxLines = 3,
+                        overflow = TextOverflow.Ellipsis
+                    )
+                }
             }
         }
 
@@ -746,7 +946,7 @@ private fun NoteEditor(initial: Note?, savedPhotos: List<NotePhotoRef>, onCancel
     val keyboard = LocalSoftwareKeyboardController.current
     val scope = rememberCoroutineScope()
     var title by rememberSaveable { mutableStateOf(initial?.title.orEmpty()) }
-    var body by rememberSaveable(stateSaver = TextFieldValue.Saver) { mutableStateOf(TextFieldValue(initial?.body.orEmpty())) }
+    var body by rememberSaveable(stateSaver = TextFieldValue.Saver) { mutableStateOf(TextFieldValue(initial?.let { TagMetadataCodec.decode(it.body).cleanBody }.orEmpty())) }
     var picked by rememberSaveable { mutableStateOf(arrayListOf<String>()) }
     var removed by rememberSaveable { mutableStateOf(arrayListOf<Long>()) }
     var preview by rememberSaveable { mutableStateOf(false) }
@@ -833,7 +1033,10 @@ private fun NoteEditor(initial: Note?, savedPhotos: List<NotePhotoRef>, onCancel
                                     try { PhotoCodec.jpeg(image) } finally { image.recycle() }
                                 }
                             }
-                            MonologData.repository(context).saveNote(currentTitle, currentBody, initial, NotePhotoChanges(removals, bytes))
+                            MonologData.repository(context).saveNote(
+                                currentTitle, initial?.let { TagMetadataCodec.replaceVisibleBody(it.body, currentBody) } ?: currentBody,
+                                initial, NotePhotoChanges(removals, bytes)
+                            )
                             onCancel()
                         } catch (error: CancellationException) {
                             throw error

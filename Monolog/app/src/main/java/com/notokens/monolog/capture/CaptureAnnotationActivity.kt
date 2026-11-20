@@ -20,6 +20,7 @@ import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.gestures.detectDragGestures
 import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.rememberScrollState
@@ -32,12 +33,13 @@ import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
-import androidx.compose.ui.draw.shadow
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.geometry.Size
+import androidx.compose.ui.graphics.BlendMode
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.SolidColor
 import androidx.compose.ui.graphics.asImageBitmap
+import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.layout.onGloballyPositioned
@@ -66,6 +68,7 @@ import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
+import kotlin.math.hypot
 
 class CaptureAnnotationActivity : ComponentActivity() {
 
@@ -117,6 +120,8 @@ class CaptureAnnotationActivity : ComponentActivity() {
     }
 }
 
+private enum class CropHandle { NONE, TOP_LEFT, TOP_RIGHT, BOTTOM_LEFT, BOTTOM_RIGHT, INSIDE }
+
 @Composable
 private fun CaptureAnnotationScreen(
     sourceBitmap: Bitmap,
@@ -129,19 +134,24 @@ private fun CaptureAnnotationScreen(
 ) {
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
+    val density = LocalDensity.current
+
     var currentBitmap by remember { mutableStateOf(sourceBitmap) }
     var cropMode by remember { mutableStateOf(false) }
-    var cropRectRatio by remember { mutableStateOf<RectF?>(null) }
+    var cropRect by remember { mutableStateOf(RectF(0.05f, 0.05f, 0.95f, 0.95f)) }
+    var activeCropHandle by remember { mutableStateOf(CropHandle.NONE) }
 
     var bottomComment by remember { mutableStateOf("") }
+    var isBottomVoice by remember { mutableStateOf(false) }
     var isRecordingBottomVoice by remember { mutableStateOf(false) }
 
     val tags = remember { mutableStateListOf<CaptureTag>() }
     var pendingTagLocation by remember { mutableStateOf<Pair<Float, Float>?>(null) }
+    var editingTagIndex by remember { mutableStateOf<Int?>(null) }
     var tagInputText by remember { mutableStateOf("") }
     var isRecordingTagVoice by remember { mutableStateOf(false) }
 
-    var imageLayoutSize by remember { mutableStateOf(IntSize.Zero) }
+    var containerSize by remember { mutableStateOf(IntSize.Zero) }
     var activeRecognizer by remember { mutableStateOf<SpeechRecognizer?>(null) }
     var naming by remember { mutableStateOf(false) }
     var noteName by remember { mutableStateOf("") }
@@ -238,10 +248,34 @@ private fun CaptureAnnotationScreen(
         }
     }
 
+    // Geometry of rendered bitmap inside container
+    val imgW = currentBitmap.width.toFloat()
+    val imgH = currentBitmap.height.toFloat()
+    val boxW = containerSize.width.toFloat()
+    val boxH = containerSize.height.toFloat()
+
+    val (renderW, renderH, offsetX, offsetY) = remember(imgW, imgH, boxW, boxH) {
+        if (boxW <= 0f || boxH <= 0f || imgW <= 0f || imgH <= 0f) {
+            listOf(0f, 0f, 0f, 0f)
+        } else {
+            val imgAspect = imgW / imgH
+            val boxAspect = boxW / boxH
+            if (boxAspect > imgAspect) {
+                val h = boxH
+                val w = h * imgAspect
+                listOf(w, h, (boxW - w) / 2f, 0f)
+            } else {
+                val w = boxW
+                val h = w / imgAspect
+                listOf(w, h, 0f, (boxH - h) / 2f)
+            }
+        }
+    }
+
     Box(
         modifier = Modifier
             .fillMaxSize()
-            .background(Color.Black.copy(alpha = 0.92f))
+            .background(Color.Black.copy(alpha = 0.94f))
             .systemBarsPadding()
     ) {
         Column(
@@ -261,34 +295,57 @@ private fun CaptureAnnotationScreen(
                 }
 
                 if (cropMode) {
-                    Button(
-                        onClick = {
-                            val rect = cropRectRatio
-                            if (rect != null && rect.width() > 0.05f && rect.height() > 0.05f) {
-                                val srcW = currentBitmap.width
-                                val srcH = currentBitmap.height
-                                val x = (rect.left * srcW).toInt().coerceIn(0, srcW - 1)
-                                val y = (rect.top * srcH).toInt().coerceIn(0, srcH - 1)
-                                val w = ((rect.right - rect.left) * srcW).toInt().coerceIn(1, srcW - x)
-                                val h = ((rect.bottom - rect.top) * srcH).toInt().coerceIn(1, srcH - y)
-                                try {
-                                    val cropped = Bitmap.createBitmap(currentBitmap, x, y, w, h)
-                                    currentBitmap = cropped
-                                    tags.clear() // clear tags that belonged to full coordinate space
-                                } catch (_: Exception) {}
-                            }
-                            cropMode = false
-                            cropRectRatio = null
-                        },
-                        colors = ButtonDefaults.buttonColors(containerColor = accentColor)
+                    Row(
+                        horizontalArrangement = Arrangement.spacedBy(8.dp),
+                        verticalAlignment = Alignment.CenterVertically
                     ) {
-                        Text("Apply crop", color = Color.Black, fontWeight = FontWeight.SemiBold)
+                        TextButton(onClick = { cropMode = false }) {
+                            Text("Cancel", color = Color.White.copy(alpha = 0.8f))
+                        }
+                        Button(
+                            onClick = {
+                                if (renderW > 0f && renderH > 0f) {
+                                    val srcW = currentBitmap.width
+                                    val srcH = currentBitmap.height
+                                    val pxLeft = (cropRect.left * srcW).toInt().coerceIn(0, srcW - 2)
+                                    val pxTop = (cropRect.top * srcH).toInt().coerceIn(0, srcH - 2)
+                                    val pxWidth = ((cropRect.right - cropRect.left) * srcW).toInt().coerceIn(2, srcW - pxLeft)
+                                    val pxHeight = ((cropRect.bottom - cropRect.top) * srcH).toInt().coerceIn(2, srcH - pxTop)
+                                    try {
+                                        val cropped = Bitmap.createBitmap(currentBitmap, pxLeft, pxTop, pxWidth, pxHeight)
+                                        currentBitmap = cropped
+                                        // Remap existing tags into the cropped coordinates
+                                        val cLeft = cropRect.left
+                                        val cTop = cropRect.top
+                                        val cW = cropRect.width()
+                                        val cH = cropRect.height()
+                                        val remapped = tags.mapNotNull { tag ->
+                                            if (tag.xRatio in cLeft..cropRect.right && tag.yRatio in cTop..cropRect.bottom) {
+                                                tag.copy(
+                                                    xRatio = ((tag.xRatio - cLeft) / cW).coerceIn(0.05f, 0.95f),
+                                                    yRatio = ((tag.yRatio - cTop) / cH).coerceIn(0.05f, 0.95f)
+                                                )
+                                            } else null
+                                        }
+                                        tags.clear()
+                                        tags.addAll(remapped)
+                                        Toast.makeText(context, "Screenshot cropped", Toast.LENGTH_SHORT).show()
+                                    } catch (_: Exception) {}
+                                }
+                                cropMode = false
+                                cropRect = RectF(0.05f, 0.05f, 0.95f, 0.95f)
+                            },
+                            colors = ButtonDefaults.buttonColors(containerColor = accentColor)
+                        ) {
+                            Text("Apply crop", color = Color.Black, fontWeight = FontWeight.SemiBold)
+                        }
                     }
                 } else {
                     Text(
                         text = if (tags.size < 5) "Tap photo to add note (${tags.size}/5)" else "Max 5 notes added",
-                        color = Color.White.copy(alpha = 0.7f),
-                        fontSize = 13.sp
+                        color = Color.White.copy(alpha = 0.75f),
+                        fontSize = 13.sp,
+                        fontWeight = FontWeight.Medium
                     )
                 }
             }
@@ -298,22 +355,32 @@ private fun CaptureAnnotationScreen(
                 enabled = allowProcessing && !cropMode && !saving
             ) { Text("Ask about capture") }
 
-            // Screenshot preview card with border
+            // Screenshot preview card with custom accent border
             Box(
                 modifier = Modifier
                     .weight(1f)
                     .padding(horizontal = 16.dp, vertical = 6.dp)
                     .clip(RoundedCornerShape(26.dp))
                     .border(2.5.dp, accentColor, RoundedCornerShape(26.dp))
-                    .background(Color(0xFF141416))
-                    .onGloballyPositioned { imageLayoutSize = it.size }
-                    .pointerInput(cropMode, tags.size) {
-                        detectTapGestures { offset ->
-                            if (!cropMode && tags.size < 5 && imageLayoutSize.width > 0 && imageLayoutSize.height > 0) {
-                                val xR = (offset.x / imageLayoutSize.width).coerceIn(0.05f, 0.95f)
-                                val yR = (offset.y / imageLayoutSize.height).coerceIn(0.05f, 0.95f)
-                                pendingTagLocation = xR to yR
-                                tagInputText = ""
+                    .background(Color(0xFF101014))
+                    .onGloballyPositioned { containerSize = it.size }
+                    .pointerInput(cropMode, tags.size, renderW, renderH, offsetX, offsetY) {
+                        if (!cropMode) {
+                            detectTapGestures { tapOffset ->
+                                if (tags.size >= 5) {
+                                    Toast.makeText(context, "Max 5 notes allowed", Toast.LENGTH_SHORT).show()
+                                    return@detectTapGestures
+                                }
+                                if (renderW > 0f && renderH > 0f) {
+                                    val relX = tapOffset.x - offsetX
+                                    val relY = tapOffset.y - offsetY
+                                    if (relX in 0f..renderW && relY in 0f..renderH) {
+                                        val normX = (relX / renderW).coerceIn(0.05f, 0.95f)
+                                        val normY = (relY / renderH).coerceIn(0.05f, 0.95f)
+                                        pendingTagLocation = normX to normY
+                                        tagInputText = ""
+                                    }
+                                }
                             }
                         }
                     },
@@ -326,174 +393,316 @@ private fun CaptureAnnotationScreen(
                     contentScale = ContentScale.Fit
                 )
 
-                // Crop handles / overlay
-                if (cropMode) {
-                    Canvas(modifier = Modifier.fillMaxSize()) {
-                        val w = size.width
-                        val h = size.height
-                        val left = w * 0.1f
-                        val top = h * 0.1f
-                        val right = w * 0.9f
-                        val bottom = h * 0.9f
+                // Render placed tag bubbles
+                if (!cropMode && renderW > 0f && renderH > 0f) {
+                    tags.forEachIndexed { index, tag ->
+                        val pxX = offsetX + tag.xRatio * renderW
+                        val pxY = offsetY + tag.yRatio * renderH
+                        val dpX = with(density) { pxX.toDp() }
+                        val dpY = with(density) { pxY.toDp() }
 
-                        if (cropRectRatio == null) {
-                            cropRectRatio = RectF(0.1f, 0.1f, 0.9f, 0.9f)
+                        Box(
+                            modifier = Modifier
+                                .fillMaxSize()
+                                .padding(
+                                    start = (dpX - 16.dp).coerceAtLeast(8.dp),
+                                    top = (dpY - 16.dp).coerceAtLeast(8.dp)
+                                )
+                        ) {
+                            Surface(
+                                shape = RoundedCornerShape(12.dp),
+                                color = Color(0xFF1E202B).copy(alpha = 0.95f),
+                                border = androidx.compose.foundation.BorderStroke(1.2.dp, accentColor),
+                                shadowElevation = 8.dp,
+                                modifier = Modifier.clickable {
+                                    editingTagIndex = index
+                                    tagInputText = tag.text
+                                }
+                            ) {
+                                Row(
+                                    modifier = Modifier.padding(horizontal = 8.dp, vertical = 5.dp),
+                                    verticalAlignment = Alignment.CenterVertically,
+                                    horizontalArrangement = Arrangement.spacedBy(5.dp)
+                                ) {
+                                    if (tag.isVoice) {
+                                        MonologIcon(Glyph.MIC, Modifier.size(13.dp), accentColor)
+                                    } else {
+                                        Box(
+                                            Modifier
+                                                .size(7.dp)
+                                                .clip(CircleShape)
+                                                .background(accentColor)
+                                        )
+                                    }
+                                    Text(
+                                        text = tag.text,
+                                        color = Color.White,
+                                        fontSize = 12.sp,
+                                        fontWeight = FontWeight.Medium,
+                                        maxLines = 1,
+                                        overflow = TextOverflow.Ellipsis
+                                    )
+                                }
+                            }
                         }
-
-                        drawRect(
-                            color = Color.Black.copy(alpha = 0.5f),
-                            size = Size(w, h)
-                        )
-                        // Cutout active crop
-                        drawRect(
-                            color = Color.Transparent,
-                            topLeft = Offset(left, top),
-                            size = Size(right - left, bottom - top),
-                            blendMode = androidx.compose.ui.graphics.BlendMode.Clear
-                        )
-                        drawRect(
-                            color = accentColor,
-                            topLeft = Offset(left, top),
-                            size = Size(right - left, bottom - top),
-                            style = androidx.compose.ui.graphics.drawscope.Stroke(width = 3.dp.toPx())
-                        )
                     }
                 }
 
-                // Render placed tag bubbles
-                tags.forEachIndexed { index, tag ->
-                    val xPos = (tag.xRatio * imageLayoutSize.width).dp - 12.dp
-                    val yPos = (tag.yRatio * imageLayoutSize.height).dp - 12.dp
+                // Smooth Manual Crop Overlay
+                if (cropMode && renderW > 0f && renderH > 0f) {
+                    val handleTouchSlopPx = with(density) { 44.dp.toPx() }
 
-                    Box(
+                    Canvas(
                         modifier = Modifier
                             .fillMaxSize()
-                            .padding(
-                                start = (tag.xRatio * with(LocalDensity.current) { imageLayoutSize.width.toDp().value }).dp.coerceAtLeast(8.dp),
-                                top = (tag.yRatio * with(LocalDensity.current) { imageLayoutSize.height.toDp().value }).dp.coerceAtLeast(8.dp)
-                            )
-                    ) {
-                        Surface(
-                            shape = RoundedCornerShape(12.dp),
-                            color = Color(0xFF22232A).copy(alpha = 0.92f),
-                            border = androidx.compose.foundation.BorderStroke(1.dp, accentColor.copy(alpha = 0.8f)),
-                            shadowElevation = 6.dp
-                        ) {
-                            Row(
-                                modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp),
-                                verticalAlignment = Alignment.CenterVertically,
-                                horizontalArrangement = Arrangement.spacedBy(4.dp)
-                            ) {
-                                if (tag.isVoice) {
-                                    MonologIcon(Glyph.MIC, Modifier.size(12.dp), accentColor)
-                                } else {
-                                    Box(
-                                        Modifier
-                                            .size(6.dp)
-                                            .clip(CircleShape)
-                                            .background(accentColor)
-                                    )
-                                }
-                                Text(
-                                    text = tag.text,
-                                    color = Color.White,
-                                    fontSize = 11.sp,
-                                    fontWeight = FontWeight.Medium,
-                                    maxLines = 1,
-                                    overflow = TextOverflow.Ellipsis
+                            .pointerInput(renderW, renderH, offsetX, offsetY) {
+                                detectDragGestures(
+                                    onDragStart = { startPos ->
+                                        val cl = offsetX + cropRect.left * renderW
+                                        val ct = offsetY + cropRect.top * renderH
+                                        val cr = offsetX + cropRect.right * renderW
+                                        val cb = offsetY + cropRect.bottom * renderH
+
+                                        val dTL = hypot(startPos.x - cl, startPos.y - ct)
+                                        val dTR = hypot(startPos.x - cr, startPos.y - ct)
+                                        val dBL = hypot(startPos.x - cl, startPos.y - cb)
+                                        val dBR = hypot(startPos.x - cr, startPos.y - cb)
+
+                                        activeCropHandle = when {
+                                            dTL <= handleTouchSlopPx -> CropHandle.TOP_LEFT
+                                            dTR <= handleTouchSlopPx -> CropHandle.TOP_RIGHT
+                                            dBL <= handleTouchSlopPx -> CropHandle.BOTTOM_LEFT
+                                            dBR <= handleTouchSlopPx -> CropHandle.BOTTOM_RIGHT
+                                            startPos.x in cl..cr && startPos.y in ct..cb -> CropHandle.INSIDE
+                                            else -> CropHandle.NONE
+                                        }
+                                    },
+                                    onDragEnd = { activeCropHandle = CropHandle.NONE },
+                                    onDragCancel = { activeCropHandle = CropHandle.NONE },
+                                    onDrag = { change, dragAmount ->
+                                        change.consume()
+                                        val dX = dragAmount.x / renderW
+                                        val dY = dragAmount.y / renderH
+                                        val minSize = 0.12f
+
+                                        when (activeCropHandle) {
+                                            CropHandle.TOP_LEFT -> {
+                                                val nL = (cropRect.left + dX).coerceIn(0f, cropRect.right - minSize)
+                                                val nT = (cropRect.top + dY).coerceIn(0f, cropRect.bottom - minSize)
+                                                cropRect = RectF(nL, nT, cropRect.right, cropRect.bottom)
+                                            }
+                                            CropHandle.TOP_RIGHT -> {
+                                                val nR = (cropRect.right + dX).coerceIn(cropRect.left + minSize, 1f)
+                                                val nT = (cropRect.top + dY).coerceIn(0f, cropRect.bottom - minSize)
+                                                cropRect = RectF(cropRect.left, nT, nR, cropRect.bottom)
+                                            }
+                                            CropHandle.BOTTOM_LEFT -> {
+                                                val nL = (cropRect.left + dX).coerceIn(0f, cropRect.right - minSize)
+                                                val nB = (cropRect.bottom + dY).coerceIn(cropRect.top + minSize, 1f)
+                                                cropRect = RectF(nL, cropRect.top, cropRect.right, nB)
+                                            }
+                                            CropHandle.BOTTOM_RIGHT -> {
+                                                val nR = (cropRect.right + dX).coerceIn(cropRect.left + minSize, 1f)
+                                                val nB = (cropRect.bottom + dY).coerceIn(cropRect.top + minSize, 1f)
+                                                cropRect = RectF(cropRect.left, cropRect.top, nR, nB)
+                                            }
+                                            CropHandle.INSIDE -> {
+                                                val curW = cropRect.width()
+                                                val curH = cropRect.height()
+                                                var nL = cropRect.left + dX
+                                                var nT = cropRect.top + dY
+                                                if (nL < 0f) nL = 0f
+                                                if (nL + curW > 1f) nL = 1f - curW
+                                                if (nT < 0f) nT = 0f
+                                                if (nT + curH > 1f) nT = 1f - curH
+                                                cropRect = RectF(nL, nT, nL + curW, nT + curH)
+                                            }
+                                            CropHandle.NONE -> Unit
+                                        }
+                                    }
                                 )
                             }
-                        }
+                    ) {
+                        val cl = offsetX + cropRect.left * renderW
+                        val ct = offsetY + cropRect.top * renderH
+                        val cw = cropRect.width() * renderW
+                        val ch = cropRect.height() * renderH
+                        val cr = cl + cw
+                        val cb = ct + ch
+
+                        // Dark scrim over entire layout
+                        drawRect(
+                            color = Color.Black.copy(alpha = 0.65f),
+                            size = size
+                        )
+
+                        // Clear cutout for active crop region
+                        drawRect(
+                            color = Color.Transparent,
+                            topLeft = Offset(cl, ct),
+                            size = Size(cw, ch),
+                            blendMode = BlendMode.Clear
+                        )
+
+                        // Rule of thirds grid inside crop region
+                        val gridColor = Color.White.copy(alpha = 0.28f)
+                        val stroke1dp = 1.dp.toPx()
+                        drawLine(gridColor, Offset(cl + cw / 3f, ct), Offset(cl + cw / 3f, cb), stroke1dp)
+                        drawLine(gridColor, Offset(cl + 2f * cw / 3f, ct), Offset(cl + 2f * cw / 3f, cb), stroke1dp)
+                        drawLine(gridColor, Offset(cl, ct + ch / 3f), Offset(cr, ct + ch / 3f), stroke1dp)
+                        drawLine(gridColor, Offset(cl, ct + 2f * ch / 3f), Offset(cr, ct + 2f * ch / 3f), stroke1dp)
+
+                        // Outer crop box border
+                        drawRect(
+                            color = accentColor,
+                            topLeft = Offset(cl, ct),
+                            size = Size(cw, ch),
+                            style = Stroke(width = 2.dp.toPx())
+                        )
+
+                        // L-shaped corner bracket handles
+                        val bracketLen = 22.dp.toPx()
+                        val bracketStroke = 4.dp.toPx()
+                        val bracketColor = Color.White
+
+                        // Top-Left
+                        drawLine(bracketColor, Offset(cl, ct), Offset(cl + bracketLen, ct), bracketStroke)
+                        drawLine(bracketColor, Offset(cl, ct), Offset(cl, ct + bracketLen), bracketStroke)
+
+                        // Top-Right
+                        drawLine(bracketColor, Offset(cr, ct), Offset(cr - bracketLen, ct), bracketStroke)
+                        drawLine(bracketColor, Offset(cr, ct), Offset(cr, ct + bracketLen), bracketStroke)
+
+                        // Bottom-Left
+                        drawLine(bracketColor, Offset(cl, cb), Offset(cl + bracketLen, cb), bracketStroke)
+                        drawLine(bracketColor, Offset(cl, cb), Offset(cl, cb - bracketLen), bracketStroke)
+
+                        // Bottom-Right
+                        drawLine(bracketColor, Offset(cr, cb), Offset(cr - bracketLen, cb), bracketStroke)
+                        drawLine(bracketColor, Offset(cr, cb), Offset(cr, cb - bracketLen), bracketStroke)
                     }
                 }
             }
 
             Spacer(Modifier.height(8.dp))
 
-            // Bottom bar matching user specification:
-            // Crop icon on left, text in middle, voice and send on right
-            Row(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .padding(horizontal = 16.dp, vertical = 12.dp)
-                    .height(60.dp)
-                    .clip(RoundedCornerShape(30.dp))
-                    .background(Color(0xFF23242A))
-                    .padding(horizontal = 12.dp),
-                verticalAlignment = Alignment.CenterVertically
-            ) {
-                // Crop button
-                IconButton(
-                    onClick = {
-                        cropMode = !cropMode
-                        if (!cropMode) cropRectRatio = null
-                    }
-                ) {
-                    MonologIcon(
-                        Glyph.EXPAND,
-                        Modifier.size(22.dp),
-                        if (cropMode) accentColor else Color.White.copy(alpha = 0.75f)
-                    )
-                }
-
-                Spacer(Modifier.width(4.dp))
-
-                // Middle comment input
-                Box(
+            // Bottom bar matching reference design:
+            // Left: Crop icon. Middle: Note text. Right: Mic and yellow circle send button.
+            if (!cropMode) {
+                Row(
                     modifier = Modifier
-                        .weight(1f)
-                        .height(44.dp),
-                    contentAlignment = Alignment.CenterStart
+                        .fillMaxWidth()
+                        .padding(horizontal = 16.dp, vertical = 12.dp)
+                        .height(60.dp)
+                        .clip(RoundedCornerShape(30.dp))
+                        .background(Color(0xFF202127))
+                        .padding(horizontal = 12.dp),
+                    verticalAlignment = Alignment.CenterVertically
                 ) {
-                    BasicTextField(
-                        value = bottomComment,
-                        onValueChange = { bottomComment = it },
-                        textStyle = TextStyle(color = Color.White, fontSize = 15.sp),
-                        cursorBrush = SolidColor(accentColor),
-                        singleLine = true,
-                        modifier = Modifier.fillMaxWidth(),
-                        decorationBox = { innerTextField ->
-                            if (bottomComment.isEmpty()) {
-                                Text(
-                                    "Add a note...",
-                                    color = Color.White.copy(alpha = 0.45f),
-                                    fontSize = 15.sp
-                                )
-                            }
-                            innerTextField()
+                    // Manual crop button
+                    IconButton(
+                        onClick = {
+                            cropMode = true
+                            cropRect = RectF(0.05f, 0.05f, 0.95f, 0.95f)
                         }
-                    )
-                }
-
-                // Voice dictation button for main comment
-                IconButton(
-                    onClick = {
-                        startVoiceRecognition(
-                            onResult = { bottomComment = it },
-                            onRecordingChange = { isRecordingBottomVoice = it }
+                    ) {
+                        MonologIcon(
+                            Glyph.EXPAND,
+                            Modifier.size(22.dp),
+                            Color.White.copy(alpha = 0.85f)
                         )
                     }
-                ) {
-                    MonologIcon(
-                        Glyph.MIC,
-                        Modifier.size(22.dp),
-                        if (isRecordingBottomVoice) accentColor else Color.White.copy(alpha = 0.85f)
-                    )
+
+                    Spacer(Modifier.width(6.dp))
+
+                    // Middle text input
+                    Box(
+                        modifier = Modifier
+                            .weight(1f)
+                            .height(44.dp),
+                        contentAlignment = Alignment.CenterStart
+                    ) {
+                        BasicTextField(
+                            value = bottomComment,
+                            onValueChange = {
+                                bottomComment = it
+                                isBottomVoice = false
+                            },
+                            textStyle = TextStyle(color = Color.White, fontSize = 15.sp),
+                            cursorBrush = SolidColor(accentColor),
+                            singleLine = true,
+                            modifier = Modifier.fillMaxWidth(),
+                            decorationBox = { innerTextField ->
+                                if (bottomComment.isEmpty()) {
+                                    Text(
+                                        "Add a note...",
+                                        color = Color.White.copy(alpha = 0.45f),
+                                        fontSize = 15.sp
+                                    )
+                                }
+                                innerTextField()
+                            }
+                        )
+                    }
+
+                    // Voice dictation button for main comment
+                    IconButton(
+                        onClick = {
+                            startVoiceRecognition(
+                                onResult = {
+                                    bottomComment = it
+                                    isBottomVoice = true
+                                },
+                                onRecordingChange = { isRecordingBottomVoice = it }
+                            )
+                        }
+                    ) {
+                        MonologIcon(
+                            Glyph.MIC,
+                            Modifier.size(22.dp),
+                            if (isRecordingBottomVoice) accentColor else Color.White.copy(alpha = 0.85f)
+                        )
+                    }
+
+                    Spacer(Modifier.width(4.dp))
+
+                    val canSave = allowProcessing && !saving && activeRecognizer == null
+                    Box(
+                        modifier = Modifier
+                            .size(44.dp)
+                            .clip(CircleShape)
+                            .background(if (canSave) accentColor else Color(0xFF353640))
+                            .clickable(enabled = canSave, onClickLabel = "Name and save capture") { naming = true },
+                        contentAlignment = Alignment.Center
+                    ) {
+                        MonologIcon(
+                            Glyph.ARROW,
+                            Modifier.size(20.dp),
+                            if (canSave) Color.Black else Color.White.copy(alpha = 0.4f)
+                        )
+                    }
                 }
-
-                Spacer(Modifier.width(4.dp))
-
-                // Send / Save button (circular accent colored button)
-                val canSave = allowProcessing && !cropMode && !saving
-                Box(
+            } else {
+                // In Crop Mode: bottom helper bar
+                Row(
                     modifier = Modifier
-                        .size(44.dp)
-                        .clip(CircleShape)
-                        .background(if (canSave) accentColor else Color(0xFF383944))
-                        .clickable(enabled = canSave, onClickLabel = "Name and save capture") { naming = true },
-                    contentAlignment = Alignment.Center
+                        .fillMaxWidth()
+                        .padding(horizontal = 16.dp, vertical = 12.dp)
+                        .height(56.dp)
+                        .clip(RoundedCornerShape(28.dp))
+                        .background(Color(0xFF202127))
+                        .padding(horizontal = 16.dp),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically
                 ) {
-                    MonologIcon(Glyph.ARROW, Modifier.size(20.dp), if (canSave) Color.Black else Color.White.copy(alpha = 0.4f))
+                    TextButton(onClick = { cropRect = RectF(0.05f, 0.05f, 0.95f, 0.95f) }) {
+                        Text("Reset frame", color = Color.White.copy(alpha = 0.7f), fontSize = 13.sp)
+                    }
+                    Text(
+                        "Drag corners or box to frame",
+                        color = Color.White.copy(alpha = 0.5f),
+                        fontSize = 12.sp
+                    )
                 }
             }
         }
@@ -504,7 +713,7 @@ private fun CaptureAnnotationScreen(
                 title = { Text("Name this capture") },
                 text = {
                     Column {
-                        Text("The screenshot, annotations and detected text and labels will stay in your on-device journal.")
+                        Text("The screenshot and your notes stay on this device.")
                         OutlinedTextField(
                             value = noteName, onValueChange = { noteName = it.take(70) },
                             label = { Text("Note name") }, singleLine = true, enabled = !saving
@@ -522,29 +731,23 @@ private fun CaptureAnnotationScreen(
                             val title = noteName.trim()
                             val comment = bottomComment.trim()
                             val annotations = tags.toList()
+                            val commentIsVoice = isBottomVoice
                             scope.launch {
                                 try {
                                     if (settings.incognito.first()) return@launch
-                                    val evidence = CaptureVision.inspect(context, bitmap).description()
+                                    val vision = CaptureVision.inspect(context, bitmap)
+                                    val evidence = vision.description()
+                                    val category = buildCaptureEntry(vision.text.joinToString("\n") { it.text }).category
                                     val jpeg = withContext(Dispatchers.Default) { PhotoCodec.jpeg(bitmap) }
                                     if (settings.incognito.first()) return@launch
-                                    val body = buildString {
-                                        if (comment.isNotBlank()) appendLine(comment).appendLine()
-                                        if (annotations.isNotEmpty()) {
-                                            appendLine("### Annotated notes")
-                                            annotations.forEach { tag ->
-                                                val x = (tag.xRatio * 100).toInt()
-                                                val y = (tag.yRatio * 100).toInt()
-                                                appendLine("- ${if (tag.isVoice) "Voice" else "Text"} at ($x%, $y%): ${tag.text}")
-                                            }
-                                        }
+                                    val additionalBody = buildString {
+                                        appendLine("**Category:** $category")
                                         if (evidence.isNotBlank()) {
-                                            appendLine().appendLine("### Detected in the screenshot")
-                                            evidence.lines().forEach { line ->
-                                                append("> ").appendLine(line)
-                                            }
+                                            appendLine().appendLine(TagMetadataCodec.ANALYSIS_HEADING)
+                                            evidence.lineSequence().forEach { line -> append("> ").appendLine(line) }
                                         }
                                     }
+                                    val body = TagMetadataCodec.encodeCapture(annotations, commentIsVoice, comment, additionalBody)
                                     MonologData.repository(context).saveNote(
                                         title, body, photos = NotePhotoChanges(added = listOf(jpeg))
                                     )
@@ -594,7 +797,7 @@ private fun CaptureAnnotationScreen(
             )
         }
 
-        // Tap on screenshot: Popup to add a note/tag at that point
+        // Tap on screenshot: Popup to add a note/tag at that coordinate
         if (pendingTagLocation != null) {
             AlertDialog(
                 onDismissRequest = { pendingTagLocation = null },
@@ -670,6 +873,64 @@ private fun CaptureAnnotationScreen(
                     }
                 }
             )
+        }
+
+        // Tap existing tag: Popup to edit or delete it
+        editingTagIndex?.let { idx ->
+            if (idx in tags.indices) {
+                val tag = tags[idx]
+                AlertDialog(
+                    onDismissRequest = { editingTagIndex = null },
+                    containerColor = Color(0xFF1E1F26),
+                    title = {
+                        Text(if (tag.isVoice) "Voice Tag" else "Text Tag", color = Color.White, fontSize = 17.sp, fontWeight = FontWeight.SemiBold)
+                    },
+                    text = {
+                        Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                            OutlinedTextField(
+                                value = tagInputText,
+                                onValueChange = { tagInputText = it },
+                                singleLine = true,
+                                modifier = Modifier.fillMaxWidth(),
+                                colors = OutlinedTextFieldDefaults.colors(
+                                    focusedTextColor = Color.White,
+                                    unfocusedTextColor = Color.White,
+                                    focusedBorderColor = accentColor,
+                                    unfocusedBorderColor = Color.White.copy(alpha = 0.2f)
+                                )
+                            )
+                        }
+                    },
+                    confirmButton = {
+                        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                            TextButton(
+                                onClick = {
+                                    tags.removeAt(idx)
+                                    editingTagIndex = null
+                                }
+                            ) {
+                                Text("Delete", color = Color(0xFFFF5252))
+                            }
+                            Button(
+                                onClick = {
+                                    if (tagInputText.isNotBlank()) {
+                                        tags[idx] = tag.copy(text = tagInputText)
+                                    }
+                                    editingTagIndex = null
+                                },
+                                colors = ButtonDefaults.buttonColors(containerColor = accentColor)
+                            ) {
+                                Text("Save", color = Color.Black)
+                            }
+                        }
+                    },
+                    dismissButton = {
+                        TextButton(onClick = { editingTagIndex = null }) {
+                            Text("Cancel", color = Color.White.copy(alpha = 0.7f))
+                        }
+                    }
+                )
+            }
         }
     }
 }

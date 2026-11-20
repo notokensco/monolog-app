@@ -1,0 +1,95 @@
+package com.notokens.monolog.ime.ui
+
+import androidx.compose.foundation.gestures.awaitEachGesture
+import androidx.compose.foundation.gestures.awaitFirstDown
+import androidx.compose.material3.MaterialTheme
+import androidx.compose.runtime.Composable
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateListOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberUpdatedState
+import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.drawWithContent
+import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.graphics.Path
+import androidx.compose.ui.graphics.StrokeCap
+import androidx.compose.ui.graphics.StrokeJoin
+import androidx.compose.ui.graphics.drawscope.Stroke
+import androidx.compose.ui.graphics.drawscope.clipRect
+import androidx.compose.ui.input.pointer.PointerEventPass
+import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.ui.platform.LocalLayoutDirection
+import androidx.compose.ui.unit.LayoutDirection
+import androidx.compose.ui.unit.dp
+import com.notokens.monolog.ime.QwertyLayout
+import com.notokens.monolog.ime.SwipePoint
+
+@Composable
+internal fun swipeTypingModifier(enabled: Boolean, onSwipe: (List<SwipePoint>) -> Unit): Modifier {
+    if (!enabled) return Modifier
+    val onComplete by rememberUpdatedState(onSwipe)
+    val points = remember { mutableStateListOf<Offset>() }
+    val color = MaterialTheme.colorScheme.primary.copy(alpha = .72f)
+    val rtl = LocalLayoutDirection.current == LayoutDirection.Rtl
+    return Modifier
+        .drawWithContent {
+            drawContent()
+            if (points.size > 1) {
+                val path = Path().apply {
+                    moveTo(points.first().x, points.first().y)
+                    for (i in 1 until points.size) lineTo(points[i].x, points[i].y)
+                }
+                clipRect {
+                    drawPath(path, color, style = Stroke(4.dp.toPx(), cap = StrokeCap.Round, join = StrokeJoin.Round))
+                }
+            }
+        }
+        .pointerInput(rtl) {
+            awaitEachGesture {
+                val down = awaitFirstDown(pass = PointerEventPass.Initial)
+                val width = size.width.toFloat()
+                val height = size.height.toFloat()
+                if (width <= 0f || height <= 0f) return@awaitEachGesture
+                fun normalize(point: Offset): SwipePoint {
+                    val x = if (rtl) width - point.x else point.x
+                    return SwipePoint(x * QwertyLayout.width / width,
+                        point.y * QwertyLayout.rowSpacing * QwertyLayout.rows.size / height)
+                }
+                if (!QwertyLayout.startsOnLetter(normalize(down.position))) return@awaitEachGesture
+
+                var swiping = false
+                val slop = maxOf(viewConfiguration.touchSlop, width / QwertyLayout.width * .28f)
+                try {
+                    while (true) {
+                        val event = awaitPointerEvent(PointerEventPass.Initial)
+                        val change = event.changes.singleOrNull() ?: break
+                        if (change.id != down.id || change.isConsumed) break
+                        if (!swiping) {
+                            if (!change.pressed || change.uptimeMillis - down.uptimeMillis >=
+                                viewConfiguration.longPressTimeoutMillis) break
+                            if ((change.position - down.position).getDistance() < slop) continue
+                            swiping = true
+                            points.add(down.position)
+                        }
+                        // Claim the drag before the starting key can treat the release as a tap.
+                        change.consume()
+                        if (!change.pressed) {
+                            if (change.position != points.last()) points.add(change.position)
+                            onComplete(points.map(::normalize))
+                            break
+                        }
+                        if ((change.position - points.last()).getDistance() >= 1.5.dp.toPx()) {
+                            if (points.size >= 192) {
+                                val sampled = points.filterIndexed { index, _ -> index % 2 == 0 }
+                                points.clear()
+                                points.addAll(sampled)
+                            }
+                            points.add(change.position)
+                        }
+                    }
+                } finally {
+                    points.clear()
+                }
+            }
+        }
+}

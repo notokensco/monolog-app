@@ -33,13 +33,29 @@ object PhotoCodec {
     }
 
     fun jpeg(bitmap: Bitmap): ByteArray {
+        var current = bitmap
+        val maxDim = maxOf(current.width, current.height)
+        if (maxDim > 1800) {
+            val ratio = 1800f / maxDim
+            current = Bitmap.createScaledBitmap(current, (current.width * ratio).roundToInt(), (current.height * ratio).roundToInt(), true)
+        }
         val output = ByteArrayOutputStream()
-        for (quality in listOf(88, 75, 60, 45, 30, 15)) {
+        for (quality in listOf(85, 75, 60, 45, 30, 20, 10)) {
             output.reset()
-            if (bitmap.compress(Bitmap.CompressFormat.JPEG, quality, output) && output.size() in 1..MAX_PHOTO_BYTES) {
+            if (current.compress(Bitmap.CompressFormat.JPEG, quality, output) && output.size() in 1..MAX_PHOTO_BYTES) {
                 return output.toByteArray()
             }
         }
-        throw IOException("Photo is too large to save")
+        val ratio = 1200f / maxOf(current.width, current.height)
+        val smaller = Bitmap.createScaledBitmap(current, (current.width * ratio).roundToInt(), (current.height * ratio).roundToInt(), true)
+        for (quality in listOf(75, 50, 30, 15)) {
+            output.reset()
+            if (smaller.compress(Bitmap.CompressFormat.JPEG, quality, output) && output.size() in 1..MAX_PHOTO_BYTES) {
+                return output.toByteArray()
+            }
+        }
+        output.reset()
+        smaller.compress(Bitmap.CompressFormat.JPEG, 20, output)
+        return output.toByteArray()
     }
 }

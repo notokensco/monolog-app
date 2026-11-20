@@ -19,6 +19,7 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -69,6 +70,8 @@ fun KeyButton(
 ) {
     val view = LocalView.current
     var isPressed by remember { mutableStateOf(false) }
+    val tap by rememberUpdatedState(onClick)
+    val hold by rememberUpdatedState(onLongClick)
 
     val baseBg = when {
         isAccent -> PaperAccentBlue
@@ -92,7 +95,8 @@ fun KeyButton(
     }
 
     val pillModifier = if (isPill) {
-        Modifier.border(1.dp, PaperPillBorder, RoundedCornerShape(24.dp))
+        Modifier.border(if (isActive) 2.dp else 1.dp,
+            if (isActive) MaterialTheme.colorScheme.primary else PaperPillBorder, RoundedCornerShape(24.dp))
     } else {
         Modifier
     }
@@ -110,24 +114,19 @@ fun KeyButton(
                 semanticsClick { onClick(); true }
                 if (onLongClick != null) semanticsLongClick(longClickLabel) { onLongClick(); true }
             }
-            .pointerInput(onLongClick, onClick) {
+            .pointerInput(onLongClick != null) {
                 detectTapGestures(
                     onPress = {
                         isPressed = true
-                        tryAwaitRelease()
-                        isPressed = false
+                        try { tryAwaitRelease() } finally { isPressed = false }
                     },
                     onLongPress = {
                         triggerHapticFeedback(view, isLong = true)
-                        if (onLongClick != null) {
-                            onLongClick()
-                        } else {
-                            onClick()
-                        }
+                        (hold ?: tap)()
                     },
                     onTap = {
                         triggerHapticFeedback(view)
-                        onClick()
+                        tap()
                     }
                 )
             },

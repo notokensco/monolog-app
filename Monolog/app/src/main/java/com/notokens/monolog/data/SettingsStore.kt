@@ -40,10 +40,10 @@ class SettingsStore(private val context: Context) {
 
     private val incognitoKey = booleanPreferencesKey("incognito")
     private val incognitoUntilKey = longPreferencesKey("incognito_until")
+    private val webQuestionSuggestionsKey = booleanPreferencesKey("web_question_suggestions")
     private val webSuggestionsKey = booleanPreferencesKey("web_suggestions")
     private val weatherCityKey = stringPreferencesKey("weather_city")
     private val keyboardLanguageKey = stringPreferencesKey("keyboard_language")
-    private val aiSetupSeenKey = booleanPreferencesKey("ai_setup_seen")
     private val themeModeKey = stringPreferencesKey("theme_mode")
     private val reduceTransparencyKey = booleanPreferencesKey("reduce_transparency")
     private val quickShortcutOrderKey = stringPreferencesKey("quick_shortcut_order")
@@ -60,15 +60,15 @@ class SettingsStore(private val context: Context) {
             emit(false)
         }
     }.distinctUntilChanged()
+    val webQuestionSuggestions = preferences.map { it[webQuestionSuggestionsKey] ?: false }.distinctUntilChanged()
     val webSuggestions = preferences.map { it[webSuggestionsKey] ?: false }.distinctUntilChanged()
     val weatherCity = preferences.map { it[weatherCityKey].orEmpty() }.distinctUntilChanged()
     val keyboardLanguage = preferences.map { it[keyboardLanguageKey] ?: "en" }.distinctUntilChanged()
-    val aiSetupSeen = preferences.map { it[aiSetupSeenKey] ?: false }.distinctUntilChanged()
 
+    suspend fun setWebQuestionSuggestions(value: Boolean) { context.monologSettings.edit { it[webQuestionSuggestionsKey] = value } }
     suspend fun setWebSuggestions(value: Boolean) { context.monologSettings.edit { it[webSuggestionsKey] = value } }
     suspend fun setWeatherCity(value: String) { context.monologSettings.edit { it[weatherCityKey] = value.trim().take(80) } }
     suspend fun setKeyboardLanguage(value: String) { context.monologSettings.edit { it[keyboardLanguageKey] = value } }
-    suspend fun markAiSetupSeen() { context.monologSettings.edit { it[aiSetupSeenKey] = true } }
 
     val appearance: Flow<Appearance> = preferences.catch { error ->
         if (error is IOException) emit(emptyPreferences()) else throw error

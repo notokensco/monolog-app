@@ -16,18 +16,20 @@ class KeyboardStateTest {
     }
 
     @Test
-    fun testShiftStateCycling() {
+    fun tapTogglesShiftAndHoldTogglesCapsLock() {
         var state = KeyboardState()
 
-        state = state.cycleShift()
+        state = state.toggleShift()
         assertEquals(ShiftState.ONCE, state.shiftState)
         assertTrue(state.shiftState.isUppercase)
 
-        state = state.cycleShift()
+        state = state.toggleShift()
+        assertEquals(ShiftState.OFF, state.shiftState)
+        state = state.toggleCapsLock()
         assertEquals(ShiftState.CAPS_LOCK, state.shiftState)
         assertTrue(state.shiftState.isUppercase)
 
-        state = state.cycleShift()
+        state = state.toggleShift()
         assertEquals(ShiftState.OFF, state.shiftState)
         assertFalse(state.shiftState.isUppercase)
     }

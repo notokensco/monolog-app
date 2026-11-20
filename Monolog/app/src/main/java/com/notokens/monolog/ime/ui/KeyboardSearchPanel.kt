@@ -1,5 +1,7 @@
 package com.notokens.monolog.ime.ui
 
+import androidx.compose.foundation.background
+import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -25,7 +27,9 @@ import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.input.TextFieldValue
 import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
+import com.notokens.monolog.capture.TagMetadataCodec
 import com.notokens.monolog.data.MonologData
 import com.notokens.monolog.ime.ImeAi
 import com.notokens.monolog.ai.WebLookup
@@ -44,7 +48,8 @@ internal fun KeyboardSearchPanel(
     query: TextFieldValue,
     onQueryChange: (TextFieldValue) -> Unit,
     onClose: () -> Unit,
-    ai: ImeAi
+    ai: ImeAi,
+    availableHeight: Dp
 ) {
     val context = LocalContext.current
     val repository = remember(context) { MonologData.repository(context) }
@@ -52,7 +57,10 @@ internal fun KeyboardSearchPanel(
     val matches = remember(notes, query.text) { notes.matchingJournalEntries(query.text, limit = 3) }
     Column(
         Modifier.fillMaxWidth().padding(horizontal = 8.dp, vertical = 4.dp)
-            .glassSurface(26, GlassAccent.LAVENDER).padding(horizontal = 12.dp, vertical = 4.dp)
+            .background(MaterialTheme.colorScheme.surface, RoundedCornerShape(26.dp))
+            .glassSurface(26, GlassAccent.LAVENDER)
+            .heightIn(max = minOf(availableHeight - 8.dp, 350.dp)).verticalScroll(rememberScrollState())
+            .padding(horizontal = 12.dp, vertical = 4.dp)
     ) {
         Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
             MonologIcon(Glyph.BOLT, Modifier.size(20.dp))
@@ -80,16 +88,22 @@ internal fun KeyboardSearchPanel(
             )
         }
         Row(verticalAlignment = Alignment.CenterVertically) {
-            TextButton(ai::toggleWeb, enabled = WebLookup.configured) {
+            TextButton(ai::toggleWeb) {
                 Text(if (ai.web) "Web on" else "Web off")
             }
             TextButton({ ai.ask(query.text) }, enabled = query.text.isNotBlank() && !ai.busy) {
-                Text(if (ai.web) "Search web" else "Ask")
+                Text(if (ai.web) "Search & answer" else "Ask")
             }
-            if (ai.busy) Text("Working…", color = PaperKeySubText)
         }
-        if (ai.web) Text("Only this query is sent when you search.", style = MaterialTheme.typography.labelSmall,
-            color = PaperKeySubText)
+        if (ai.busy) Text("Working…", color = PaperKeySubText)
+        if (ai.web) {
+            Text(if (WebLookup.configured) "Only this query is sent to the search service."
+                else "Uses Wikipedia. For other results, open a web search.",
+                style = MaterialTheme.typography.labelSmall, color = PaperKeySubText)
+            TextButton({ ai.searchWeb(query.text) }, enabled = query.text.isNotBlank()) {
+                Text("Open web search")
+            }
+        }
         ai.preview?.let { AiResultCard(it, ai::apply) }
         if (query.text.isNotBlank() && !ai.web && ai.preview == null && !ai.busy) {
             Column(
@@ -100,7 +114,7 @@ internal fun KeyboardSearchPanel(
                     Text("No journal matches", color = PaperKeySubText, style = MaterialTheme.typography.bodySmall)
                 } else matches.forEach { note ->
                     Text(note.title, color = PaperKeyText, style = MaterialTheme.typography.titleSmall, maxLines = 1, overflow = TextOverflow.Ellipsis)
-                    val preview = remember(note.body) { markdownExcerpt(note.body).take(180) }
+                    val preview = remember(note.body) { markdownExcerpt(TagMetadataCodec.decode(note.body).cleanBody).take(180) }
                     Text(preview, color = PaperKeySubText, style = MaterialTheme.typography.bodySmall, maxLines = 2, overflow = TextOverflow.Ellipsis)
                 }
             }

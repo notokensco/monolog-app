@@ -26,7 +26,7 @@ internal sealed interface ModelState {
 
 internal class ModelStore private constructor(context: Context) {
     private val directory = File(context.noBackupFilesDir, "models")
-    val model = File(directory, "$REVISION.litertlm")
+    val model = File(directory, MODEL_FILE)
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
     private val mutableState = MutableStateFlow<ModelState>(
         if (model.isFile && model.length() == SIZE) ModelState.Ready else ModelState.Missing
@@ -38,11 +38,11 @@ internal class ModelStore private constructor(context: Context) {
         if (mutableState.value is ModelState.Downloading || mutableState.value is ModelState.Ready) return
         mutableState.value = ModelState.Downloading(0)
         scope.launch {
-            val temporary = File(directory, "$REVISION.partial")
+            val temporary = File(directory, "$MODEL_FILE.partial")
             try {
                 if (!directory.mkdirs() && !directory.isDirectory) throw IOException()
                 if (StatFs(directory.path).availableBytes < SIZE + 8_388_608L) {
-                    mutableState.value = ModelState.Failed("Free up at least 155 MB and try again.")
+                    mutableState.value = ModelState.Failed("Free up at least 313 MB and try again.")
                     return@launch
                 }
                 val digest = MessageDigest.getInstance("SHA-256")
@@ -97,11 +97,14 @@ internal class ModelStore private constructor(context: Context) {
     }
 
     companion object {
-        private const val REVISION = "f7e76881373410af03873a1d92e939495ba98f7b"
-        private const val SIZE = 142_819_328L
-        private const val SHA256 = "ccdc5c85735743f081b7d44ca309cab569f76c0f2f0e8e163449a63721969c37"
-        private const val MODEL_URL =
-            "https://huggingface.co/litert-community/SmolLM2-135M-Instruct/resolve/$REVISION/SmolLM2_135M_Instruct.litertlm"
+        const val DISPLAY_NAME = "Gemma 3 270M IT"
+        const val DOWNLOAD_SIZE = "304 MB"
+        private const val MODEL_FILE = "gemma3-270m-it-q8.litertlm"
+        private const val SIZE = 304_005_120L
+        private const val SHA256 = "757e9119fa5bd667a2774fb470ac4afcd3190a21c677f8e69a5d6bc908abdd63"
+        // Pinned public redistribution of the Gemma LiteRT bundle, with its Gemma terms.
+        private const val MODEL_URL = "https://huggingface.co/moonlauncher/moon-models/resolve/" +
+            "bbf238fa1804f295ea05df88502ac97a4732db30/gemma/$MODEL_FILE"
         @Volatile private var instance: ModelStore? = null
 
         fun get(context: Context): ModelStore = instance ?: synchronized(this) {

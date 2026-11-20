@@ -36,7 +36,7 @@ import com.notokens.monolog.ui.theme.*
 import kotlin.math.cos
 import kotlin.math.sin
 
-enum class Glyph { DOWN, CLOSE, EXPAND, BOLT, CLOCK, BELL, ALARM, BOOK, LAYERS, PLUS, HOME, SETTINGS, MIC, GLOBE, SMILE, SHIFT, BACKSPACE, ENTER, SEARCH, SHIELD, PRIVACY, ARROW, BACK, DOT, PAPER, INK, PHOTO, CAPTURE, EDIT, DRAG_HANDLE }
+enum class Glyph { DOWN, CLOSE, EXPAND, BOLT, CLOCK, BELL, ALARM, BOOK, LAYERS, PLUS, HOME, SETTINGS, MIC, GLOBE, SMILE, SHIFT, BACKSPACE, ENTER, SEARCH, SHIELD, PRIVACY, ARROW, BACK, DOT, PAPER, INK, PHOTO, CAPTURE, EDIT, DRAG_HANDLE, PIN }
 
 @Composable
 fun MonologIcon(glyph: Glyph, modifier: Modifier = Modifier, color: Color = PaperKeyText) {
@@ -119,6 +119,10 @@ fun MonologIcon(glyph: Glyph, modifier: Modifier = Modifier, color: Color = Pape
                     line(21f, 16f, 21f, 21f, 16f, 21f)
                     line(8f, 21f, 3f, 21f, 3f, 16f)
                     circle(12f, 12f, 3f)
+                }
+                Glyph.PIN -> {
+                    circle(12f, 7f, 3.5f)
+                    line(12f, 10.5f, 12f, 21f)
                 }
                 Glyph.PAPER -> {
                     line(5f, 2f, 14f, 2f, 20f, 8f, 20f, 22f, 5f, 22f, 5f, 2f)

@@ -3,16 +3,21 @@ package com.notokens.monolog.ai
 import android.content.Context
 import android.os.SystemClock
 import com.google.ai.edge.litertlm.Backend
+import com.google.ai.edge.litertlm.Content
 import com.google.ai.edge.litertlm.ConversationConfig
 import com.google.ai.edge.litertlm.Engine
 import com.google.ai.edge.litertlm.EngineConfig
+import com.google.ai.edge.litertlm.SamplerConfig
 import java.io.File
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.ensureActive
+import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
@@ -26,12 +31,30 @@ internal enum class RewriteStyle(val label: String, val instruction: String) {
     PROFESSIONAL("Professional", "Make the text sound clear and professional")
 }
 
+internal sealed interface GemmaResult {
+    data class Answer(val text: String) : GemmaResult
+    data object Missing : GemmaResult
+    data object TimedOut : GemmaResult
+    data object Empty : GemmaResult
+    data class Failed(val loading: Boolean) : GemmaResult
+
+    fun status(): String = when (this) {
+        is Answer -> "Gemma returned text"
+        Missing -> "Gemma is not downloaded"
+        TimedOut -> "Gemma timed out"
+        Empty -> "Gemma returned no text"
+        is Failed -> if (loading) "Gemma could not start" else "Gemma could not finish the request"
+    }
+}
+
 internal object LocalAi {
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
     private val engineLock = Mutex()
     private var engine: Engine? = null
     private var idleClose: Job? = null
     private var lastUsed = 0L
+    private val lastRun = MutableStateFlow<String?>(null)
+    val lastRunStatus = lastRun.asStateFlow()
 
     suspend fun warm(context: Context) = withContext(Dispatchers.Default) {
         engineLock.withLock {
@@ -47,39 +70,60 @@ internal object LocalAi {
 
     suspend fun benchmark(context: Context): Long? {
         val start = SystemClock.elapsedRealtime()
-        return withTimeoutOrNull(12_000) {
-            val prompt = AiText.rewritePrompt("Can you send me the report by Friday?", RewriteStyle.PROFESSIONAL)
-            generate(context, prompt, 32)
-            SystemClock.elapsedRealtime() - start
+        val result = request(context, AiText.answerPrompt("Who is Napoleon?"), 48)
+        return when (result) {
+            is GemmaResult.Answer -> SystemClock.elapsedRealtime() - start
+            GemmaResult.TimedOut -> null
+            else -> error(result.status())
         }
     }
 
-    suspend fun generate(context: Context, prompt: String, maxTokens: Int = 100): String =
-        withContext(Dispatchers.Default) {
-            engineLock.withLock {
-                try {
-                    val config = ConversationConfig(maxOutputToken = maxTokens)
-                    val result = getEngine(context).createConversation(config).use { session ->
-                        val output = StringBuilder()
-                        session.sendMessageAsync(prompt).collect { message ->
-                            ensureActive()
-                            output.append(message.toString())
+    suspend fun request(context: Context, prompt: String, maxTokens: Int): GemmaResult {
+        val start = SystemClock.elapsedRealtime()
+        val result = if (ModelStore.get(context).state.value !is ModelState.Ready) GemmaResult.Missing else {
+            withTimeoutOrNull(30_000L) {
+                withContext(Dispatchers.Default) {
+                    engineLock.withLock {
+                        var loading = true
+                        try {
+                            val activeEngine = getEngine(context)
+                            loading = false
+                            val config = ConversationConfig(
+                                samplerConfig = SamplerConfig(topK = 1, topP = 1.0, temperature = 0.1),
+                                maxOutputToken = maxTokens
+                            )
+                            val resultText = activeEngine.createConversation(config).use { session ->
+                                val output = StringBuilder()
+                                session.sendMessageAsync(prompt).collect { message ->
+                                    ensureActive()
+                                    message.contents.contents.filterIsInstance<Content.Text>()
+                                        .forEach { output.append(it.text) }
+                                }
+                                output.toString().trim()
+                            }
+                            if (resultText.isBlank()) GemmaResult.Empty else GemmaResult.Answer(resultText)
+                        } catch (error: CancellationException) {
+                            throw error
+                        } catch (_: Exception) {
+                            GemmaResult.Failed(loading)
+                        } catch (_: LinkageError) {
+                            GemmaResult.Failed(loading)
+                        } finally {
+                            scheduleClose()
                         }
-                        output.toString().trim()
                     }
-                    check(result.isNotEmpty())
-                    result
-                } finally {
-                    scheduleClose()
                 }
-            }
+            } ?: GemmaResult.TimedOut
         }
+        lastRun.value = "${result.status()} · ${SystemClock.elapsedRealtime() - start} ms"
+        return result
+    }
 
     private fun getEngine(context: Context): Engine {
         engine?.let { return it }
         val store = ModelStore.get(context)
         check(store.state.value is ModelState.Ready)
-        val cache = File(context.cacheDir, "local-rewrite").apply { mkdirs() }
+        val cache = File(context.cacheDir, "local-gemma").apply { mkdirs() }
         return Engine(
             EngineConfig(
                 modelPath = store.model.path,
@@ -88,8 +132,12 @@ internal object LocalAi {
                 cacheDir = cache.path
             )
         ).also {
-            it.initialize()
-            engine = it
+            try {
+                it.initialize()
+                engine = it
+            } finally {
+                if (engine == null) runCatching { it.close() }
+            }
         }
     }
 
