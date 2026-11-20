@@ -2,22 +2,31 @@ package com.notokens.monolog.ime
 
 import android.content.Context
 import android.content.Intent
+import android.icu.text.BreakIterator
 import android.os.Build
 import android.view.KeyEvent
 import android.view.View
 import android.view.inputmethod.EditorInfo
 import android.view.inputmethod.InputMethodManager
+import android.widget.Toast
+import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
+import androidx.compose.runtime.SideEffect
 import androidx.compose.ui.platform.ComposeView
 import androidx.compose.ui.platform.ViewCompositionStrategy
+import androidx.core.view.WindowCompat
 import com.notokens.monolog.MainActivity
+import com.notokens.monolog.capture.ContextCaptureActivity
 import com.notokens.monolog.data.SettingsStore
+import com.notokens.monolog.data.Appearance
 import com.notokens.monolog.ime.ui.MonologKeyboardView
+import com.notokens.monolog.ime.shortcuts.ShortcutDraft
 import com.notokens.monolog.ime.vox.VoxController
 import com.notokens.monolog.ime.vox.VoxState
 import com.notokens.monolog.ui.theme.MonologTheme
+import com.notokens.monolog.ui.theme.LocalMonologDark
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
@@ -27,7 +36,7 @@ import kotlinx.coroutines.launch
 
 /**
  * Primary InputMethodService for Monolog.
- * Orchestrates user typing with InputConnection, manages shift/symbol layouts,
+ * Orchestrates user typing with InputConnection, manages shift/symbol/emoji layouts,
  * hosts the Quick Shortcuts (M-key) panel and Vox Voice typing mode,
  * and strictly isolates sensitive/password fields to guarantee zero data collection.
  */
@@ -36,19 +45,22 @@ class MonologInputMethodService : LifecycleInputMethodService() {
     private var editorContext by mutableStateOf(EditorContext.default())
     private var keyboardState by mutableStateOf(KeyboardState())
     private var isShortcutsOpen by mutableStateOf(false)
+    private var shortcutDraft by mutableStateOf(ShortcutDraft())
     private var isVoxOpen by mutableStateOf(false)
     private var voxState by mutableStateOf(VoxState())
     private val settingsScope = CoroutineScope(SupervisorJob() + Dispatchers.Main)
     private var userIncognito = false
+    private val settingsStore by lazy { SettingsStore(applicationContext) }
 
     override fun onCreate() {
         super.onCreate()
         settingsScope.launch {
-            SettingsStore(applicationContext).incognito.collect { enabled ->
+            settingsStore.incognito.collect { enabled ->
                 userIncognito = enabled
                 editorContext = editorContext.copy(isUserIncognito = enabled)
                 if (enabled) {
                     isShortcutsOpen = false
+                    shortcutDraft = ShortcutDraft()
                     if (isVoxOpen) handleExitVox()
                 }
             }
@@ -67,14 +79,26 @@ class MonologInputMethodService : LifecycleInputMethodService() {
                 ViewCompositionStrategy.DisposeOnLifecycleDestroyed(this@MonologInputMethodService)
             )
             setContent {
-                MonologTheme(darkTheme = false) {
+                val appearance by settingsStore.appearance.collectAsState(initial = Appearance())
+                MonologTheme(appearance = appearance) {
+                    val lightBars = !LocalMonologDark.current
+                    SideEffect {
+                        window?.window?.let { imeWindow ->
+                            WindowCompat.getInsetsController(imeWindow, imeWindow.decorView)
+                                .isAppearanceLightNavigationBars = lightBars
+                        }
+                    }
                     MonologKeyboardView(
                         editorContext = editorContext,
                         keyboardState = keyboardState,
                         voxState = voxState,
                         isShortcutsOpen = isShortcutsOpen,
                         isVoxOpen = isVoxOpen,
+                        shortcutDraft = shortcutDraft,
+                        onDraftChange = { shortcutDraft = it },
                         onToggleShortcuts = ::handleToggleShortcuts,
+                        onCaptureContext = ::handleCaptureContext,
+                        onOpenSettings = ::handleOpenSettings,
                         onEnterVox = ::handleEnterVox,
                         onExitVox = ::handleExitVox,
                         onStartListening = { voxController.startListening() },
@@ -89,6 +113,7 @@ class MonologInputMethodService : LifecycleInputMethodService() {
                         onShiftClick = ::handleShiftClick,
                         onToggleSymbols = ::handleToggleSymbols,
                         onToggleMoreSymbols = ::handleToggleMoreSymbols,
+                        onToggleEmoji = ::handleToggleEmoji,
                         onSwitchKeyboard = ::handleSwitchKeyboard,
                         onCloseKeyboard = ::handleCloseKeyboard
                     )
@@ -107,6 +132,7 @@ class MonologInputMethodService : LifecycleInputMethodService() {
 
         // Always close any active private panels when switching editors
         isShortcutsOpen = false
+        shortcutDraft = ShortcutDraft()
         if (isVoxOpen) {
             handleExitVox()
         }
@@ -115,7 +141,7 @@ class MonologInputMethodService : LifecycleInputMethodService() {
         keyboardState = if (resolved.isNumber) {
             KeyboardState(layer = KeyboardLayer.SYMBOLS, shiftState = ShiftState.OFF)
         } else {
-            KeyboardState(layer = KeyboardLayer.LETTERS, shiftState = ShiftState.OFF)
+            KeyboardState(layer = KeyboardLayer.LETTERS, shiftState = ShiftState.ONCE)
         }
     }
 
@@ -123,6 +149,7 @@ class MonologInputMethodService : LifecycleInputMethodService() {
         super.onFinishInputView(finishingInput)
         voxController.cleanup()
         isShortcutsOpen = false
+        shortcutDraft = ShortcutDraft()
         isVoxOpen = false
         editorContext = EditorContext.default().copy(isUserIncognito = userIncognito)
         keyboardState = KeyboardState()
@@ -140,11 +167,32 @@ class MonologInputMethodService : LifecycleInputMethodService() {
             handleExitVox()
         }
         isShortcutsOpen = !isShortcutsOpen
+        shortcutDraft = ShortcutDraft()
+    }
+
+    private fun handleCaptureContext() {
+        if (editorContext.isIncognito) {
+            Toast.makeText(this, "Context capture disabled in incognito mode", Toast.LENGTH_SHORT).show()
+            return
+        }
+        val intent = Intent(this, ContextCaptureActivity::class.java).apply {
+            flags = Intent.FLAG_ACTIVITY_NEW_TASK
+        }
+        startActivity(intent)
+        requestHideSelf(0)
+    }
+
+    private fun handleOpenSettings() {
+        val intent = Intent(this, MainActivity::class.java).apply {
+            action = MainActivity.ACTION_OPEN_SETTINGS
+            flags = Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TOP or Intent.FLAG_ACTIVITY_SINGLE_TOP
+        }
+        startActivity(intent)
+        requestHideSelf(0)
     }
 
     private fun handleEnterVox() {
         if (editorContext.isIncognito) return
-        isShortcutsOpen = false
         isVoxOpen = true
         voxController.startListening()
     }
@@ -156,8 +204,8 @@ class MonologInputMethodService : LifecycleInputMethodService() {
 
     private fun handleCommitTranscript(transcript: String) {
         if (transcript.isNotBlank()) {
-            val ic = currentInputConnection
-            ic?.commitText(transcript, 1)
+            if (isShortcutsOpen && shortcutDraft.isEditing) shortcutDraft = shortcutDraft.insert(transcript)
+            else currentInputConnection?.commitText(transcript, 1)
         }
         handleExitVox()
     }
@@ -173,19 +221,33 @@ class MonologInputMethodService : LifecycleInputMethodService() {
     }
 
     private fun handleCharTyped(text: String) {
+        if (isShortcutsOpen && shortcutDraft.isEditing) {
+            shortcutDraft = shortcutDraft.insert(text)
+            keyboardState = keyboardState.onLetterTyped()
+            return
+        }
         val ic = currentInputConnection ?: return
-        // Commit typed text directly to host field without any logging, storage, or telemetry
         ic.commitText(text, 1)
         keyboardState = keyboardState.onLetterTyped()
     }
 
     private fun handleBackspace() {
+        if (isShortcutsOpen && shortcutDraft.isEditing) {
+            shortcutDraft = shortcutDraft.backspace()
+            return
+        }
         val ic = currentInputConnection ?: return
         val selected = ic.getSelectedText(0)
         if (!selected.isNullOrEmpty()) {
             ic.commitText("", 1)
         } else {
-            val deleted = ic.deleteSurroundingText(1, 0)
+            val previous = if (editorContext.isIncognito) null else ic.getTextBeforeCursor(128, 0)?.toString()
+            val deleted = if (!previous.isNullOrEmpty()) {
+                val boundary = BreakIterator.getCharacterInstance().apply { setText(previous) }.preceding(previous.length)
+                ic.deleteSurroundingText(previous.length - boundary.coerceAtLeast(0), 0)
+            } else {
+                ic.deleteSurroundingTextInCodePoints(1, 0)
+            }
             if (!deleted) {
                 sendDownUpKeyEvents(KeyEvent.KEYCODE_DEL)
             }
@@ -193,11 +255,19 @@ class MonologInputMethodService : LifecycleInputMethodService() {
     }
 
     private fun handleSpace() {
+        if (isShortcutsOpen && shortcutDraft.isEditing) {
+            shortcutDraft = shortcutDraft.insert(" ")
+            return
+        }
         val ic = currentInputConnection ?: return
         ic.commitText(" ", 1)
     }
 
     private fun handleAction() {
+        if (isShortcutsOpen && shortcutDraft.isEditing) {
+            shortcutDraft = shortcutDraft.enter()
+            return
+        }
         editorContext.performAction(currentInputConnection)
     }
 
@@ -211,6 +281,10 @@ class MonologInputMethodService : LifecycleInputMethodService() {
 
     private fun handleToggleMoreSymbols() {
         keyboardState = keyboardState.toggleMoreSymbols()
+    }
+
+    private fun handleToggleEmoji() {
+        keyboardState = keyboardState.toggleEmoji()
     }
 
     private fun handleSwitchKeyboard() {
@@ -233,6 +307,7 @@ class MonologInputMethodService : LifecycleInputMethodService() {
             handleExitVox()
         }
         isShortcutsOpen = false
+        shortcutDraft = ShortcutDraft()
         requestHideSelf(0)
     }
 }

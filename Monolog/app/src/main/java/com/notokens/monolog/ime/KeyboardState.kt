@@ -12,7 +12,8 @@ enum class ShiftState {
 enum class KeyboardLayer {
     LETTERS,
     SYMBOLS,
-    MORE_SYMBOLS
+    MORE_SYMBOLS,
+    EMOJI
 }
 
 data class KeyboardState(
@@ -54,7 +55,9 @@ data class KeyboardState(
         return copy(layer = nextLayer)
     }
 
-    fun switchToLetters(): KeyboardState {
-        return copy(layer = KeyboardLayer.LETTERS)
+    fun toggleEmoji(): KeyboardState {
+        return if (layer == KeyboardLayer.EMOJI) switchToLetters() else copy(layer = KeyboardLayer.EMOJI)
     }
+
+    fun switchToLetters(): KeyboardState = copy(layer = KeyboardLayer.LETTERS)
 }

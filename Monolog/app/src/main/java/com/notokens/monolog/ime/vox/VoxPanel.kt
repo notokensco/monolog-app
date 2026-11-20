@@ -2,7 +2,6 @@ package com.notokens.monolog.ime.vox
 
 import androidx.compose.animation.core.animateDpAsState
 import androidx.compose.animation.core.tween
-import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
@@ -13,14 +12,17 @@ import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
-import androidx.compose.material3.Icon
+import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
@@ -28,26 +30,27 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.shadow
-import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
-import androidx.compose.ui.res.painterResource
+import androidx.compose.ui.platform.LocalConfiguration
+import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
-import com.notokens.monolog.R
+import com.notokens.monolog.ui.GlassAccent
+import com.notokens.monolog.ui.Glyph
+import com.notokens.monolog.ui.IconControl
+import com.notokens.monolog.ui.MonologIcon
+import com.notokens.monolog.ui.MonologLogo
+import com.notokens.monolog.ui.glassSurface
 import com.notokens.monolog.ui.theme.PaperAccentBlue
 import com.notokens.monolog.ui.theme.PaperAccentLavender
 import com.notokens.monolog.ui.theme.PaperAccentLavenderBorder
-import com.notokens.monolog.ui.theme.PaperBackgroundEnd
-import com.notokens.monolog.ui.theme.PaperBackgroundMid
-import com.notokens.monolog.ui.theme.PaperBackgroundStart
-import com.notokens.monolog.ui.theme.PaperCardBackground
-import com.notokens.monolog.ui.theme.PaperCardBorder
+import com.notokens.monolog.ui.theme.MonologIncognitoShield
 import com.notokens.monolog.ui.theme.PaperKeySubText
 import com.notokens.monolog.ui.theme.PaperKeyText
 import com.notokens.monolog.ui.theme.PaperPillBackground
-import com.notokens.monolog.ui.theme.PaperPillBorder
 
 @Composable
 fun VoxPanel(
@@ -60,15 +63,14 @@ fun VoxPanel(
     onRequestPermission: () -> Unit,
     modifier: Modifier = Modifier
 ) {
-    val bgBrush = Brush.verticalGradient(
-        listOf(PaperBackgroundStart, PaperBackgroundMid, PaperBackgroundEnd)
-    )
-
     Column(
         modifier = modifier
             .fillMaxWidth()
-            .background(bgBrush)
-            .padding(horizontal = 14.dp, vertical = 8.dp),
+            .padding(8.dp)
+            .glassSurface(24, GlassAccent.LAVENDER)
+            .heightIn(max = (LocalConfiguration.current.screenHeightDp * .47f).dp)
+            .verticalScroll(rememberScrollState())
+            .padding(horizontal = 12.dp, vertical = 8.dp),
         horizontalAlignment = Alignment.CenterHorizontally
     ) {
         // Top Toolbar
@@ -78,30 +80,7 @@ fun VoxPanel(
             horizontalArrangement = Arrangement.SpaceBetween
         ) {
             Row(verticalAlignment = Alignment.CenterVertically) {
-                // Keyboard toggle button to return to QWERTY
-                Box(
-                    modifier = Modifier
-                        .size(34.dp)
-                        .clip(RoundedCornerShape(8.dp))
-                        .background(PaperPillBackground)
-                        .border(1.dp, PaperPillBorder, RoundedCornerShape(8.dp))
-                        .clickable { onCancel() },
-                    contentAlignment = Alignment.Center
-                ) {
-                    Text(text = "⌨", fontSize = 16.sp, color = PaperKeyText)
-                }
-
-                Spacer(modifier = Modifier.width(8.dp))
-
-                Box(
-                    modifier = Modifier
-                        .height(18.dp)
-                        .width(1.dp)
-                        .background(PaperCardBorder)
-                )
-
-                Spacer(modifier = Modifier.width(8.dp))
-
+                IconControl(Glyph.BACK, "Return to keyboard", onCancel, frosted = true)
                 Text(
                     text = "Vox mode",
                     fontSize = 14.sp,
@@ -120,19 +99,12 @@ fun VoxPanel(
                         .border(1.dp, PaperAccentLavenderBorder, CircleShape),
                     contentAlignment = Alignment.Center
                 ) {
-                    Text(text = "🎙", fontSize = 15.sp)
+                    MonologIcon(Glyph.MIC, Modifier.size(16.dp), MaterialTheme.colorScheme.onSecondaryContainer)
                 }
 
                 Spacer(modifier = Modifier.width(8.dp))
 
-                // M Key Stack
-                Image(
-                    painter = painterResource(id = R.drawable.ic_monolog_m),
-                    contentDescription = "Monolog M Key",
-                    modifier = Modifier
-                        .size(34.dp)
-                        .clip(RoundedCornerShape(8.dp))
-                )
+                MonologLogo(Modifier.size(40.dp))
             }
         }
 
@@ -176,17 +148,17 @@ fun VoxPanel(
             VoxStatus.PERMISSION_REQUIRED -> {
                 Row(verticalAlignment = Alignment.CenterVertically) {
                     Text(
-                        text = "⚠️ Mic permission needed",
+                        text = "Microphone permission needed",
                         fontSize = 12.sp,
                         fontWeight = FontWeight.SemiBold,
-                        color = Color(0xFFD97706)
+                        color = MonologIncognitoShield,
+                        modifier = Modifier.weight(1f, fill = false)
                     )
                     Spacer(modifier = Modifier.width(8.dp))
                     Button(
                         onClick = onRequestPermission,
                         colors = ButtonDefaults.buttonColors(containerColor = PaperAccentBlue),
-                        shape = RoundedCornerShape(6.dp),
-                        modifier = Modifier.height(26.dp)
+                        shape = RoundedCornerShape(12.dp)
                     ) {
                         Text(text = "Grant", fontSize = 11.sp)
                     }
@@ -197,7 +169,7 @@ fun VoxPanel(
                     text = voxState.errorMessage ?: "Speech error. Tap mic to retry.",
                     fontSize = 12.sp,
                     fontWeight = FontWeight.Medium,
-                    color = Color(0xFFE53935),
+                    color = MaterialTheme.colorScheme.error,
                     textAlign = TextAlign.Center
                 )
             }
@@ -224,9 +196,7 @@ fun VoxPanel(
         Box(
             modifier = Modifier
                 .fillMaxWidth()
-                .clip(RoundedCornerShape(12.dp))
-                .background(PaperCardBackground)
-                .border(1.dp, PaperCardBorder, RoundedCornerShape(12.dp))
+                .glassSurface(16, GlassAccent.BLUE)
                 .padding(horizontal = 12.dp, vertical = 10.dp)
         ) {
             Row(
@@ -269,16 +239,13 @@ fun VoxPanel(
             verticalAlignment = Alignment.CenterVertically,
             horizontalArrangement = Arrangement.SpaceBetween
         ) {
-            // Language selector pill
             Box(
                 modifier = Modifier
-                    .clip(RoundedCornerShape(16.dp))
-                    .background(PaperPillBackground)
-                    .border(1.dp, PaperPillBorder, RoundedCornerShape(16.dp))
+                    .glassSurface(16)
                     .padding(horizontal = 12.dp, vertical = 6.dp)
             ) {
                 Text(
-                    text = "${voxState.language} ∨",
+                    text = voxState.language,
                     fontSize = 12.sp,
                     color = PaperKeyText
                 )
@@ -299,32 +266,22 @@ fun VoxPanel(
                     )
                     .clickable {
                         if (isListening) onPauseListening() else onStartListening()
-                    },
+                    }
+                    .semantics { contentDescription = if (isListening) "Pause listening" else "Start listening" },
                 contentAlignment = Alignment.Center
             ) {
                 if (isListening) {
                     Text(text = "❚❚", fontSize = 18.sp, color = PaperKeyText)
                 } else {
-                    Text(text = "🎙", fontSize = 22.sp, color = Color.White)
+                    MonologIcon(Glyph.MIC, color = MaterialTheme.colorScheme.onPrimary)
                 }
             }
 
-            // Right "Done" / "Insert" Button
-            Box(
-                modifier = Modifier
-                    .clip(RoundedCornerShape(18.dp))
-                    .background(if (voxState.transcript.isNotBlank()) Color(0xFF1B1D22) else Color(0xFF8E929E))
-                    .clickable(enabled = voxState.transcript.isNotBlank()) {
-                        onCommitTranscript(voxState.transcript)
-                    }
-                    .padding(horizontal = 18.dp, vertical = 8.dp)
+            Button(
+                enabled = voxState.transcript.isNotBlank(),
+                onClick = { onCommitTranscript(voxState.transcript) }
             ) {
-                Text(
-                    text = "Done",
-                    fontSize = 13.sp,
-                    fontWeight = FontWeight.Bold,
-                    color = Color.White
-                )
+                Text("Done")
             }
         }
     }
@@ -364,11 +321,9 @@ private fun AudioWaveformView(
                 label = "barHeight$i"
             )
 
-            val barColor = if (isListening) {
-                if (distFromCenter < 0.4f) PaperAccentBlue else Color(0xFF8B9ED6)
-            } else {
-                Color(0xFFCBD2E5)
-            }
+            val barColor = if (!isListening) MaterialTheme.colorScheme.outline
+                else if (distFromCenter < 0.4f) PaperAccentBlue
+                else MaterialTheme.colorScheme.secondary
 
             Box(
                 modifier = Modifier

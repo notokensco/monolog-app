@@ -1,6 +1,8 @@
 <resources>
     <string name="app_name">Monolog</string>
     <string name="ime_name">Monolog Keyboard</string>
+    <string name="keyboard_settings">Monolog Keyboard Settings</string>
+    <string name="companion_brand_line">Companion by NoTokens</string>
     <string name="subtype_en_us">English (US)</string>
     
     <!-- Setup Screen -->
