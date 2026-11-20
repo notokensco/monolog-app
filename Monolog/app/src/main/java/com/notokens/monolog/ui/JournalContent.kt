@@ -1,6 +1,5 @@
 package com.notokens.monolog.ui
 
-import android.graphics.BitmapFactory
 import android.net.Uri
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
@@ -21,6 +20,7 @@ import androidx.compose.ui.graphics.ImageBitmap
 import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.text.AnnotatedString
 import androidx.compose.ui.text.LinkAnnotation
 import androidx.compose.ui.text.SpanStyle
@@ -32,6 +32,7 @@ import androidx.compose.ui.text.style.TextDecoration
 import androidx.compose.ui.text.withLink
 import androidx.compose.ui.text.withStyle
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.window.Dialog
 import com.notokens.monolog.data.MonologData
 import com.notokens.monolog.data.PhotoCodec
@@ -43,15 +44,19 @@ import org.commonmark.renderer.text.TextContentRenderer
 
 private val markdownParser = Parser.builder().build()
 private val markdownText = TextContentRenderer.builder().build()
+private val whitespace = Regex("\\s+")
 
 internal fun markdownExcerpt(source: String): String =
-    markdownText.render(markdownParser.parse(source)).trim().replace(Regex("\\s+"), " ")
+    markdownText.render(markdownParser.parse(source.take(2048))).trim().replace(whitespace, " ")
 
 @Composable
 internal fun JournalMarkdown(source: String, modifier: Modifier = Modifier) {
-    val document = remember(source) { markdownParser.parse(source) }
+    var document by remember(source) { mutableStateOf<Node?>(null) }
+    LaunchedEffect(source) {
+        document = withContext(Dispatchers.Default) { markdownParser.parse(source) }
+    }
     Column(modifier, verticalArrangement = Arrangement.spacedBy(8.dp)) {
-        for (child in document.children()) MarkdownBlock(child)
+        document?.let { for (child in it.children()) MarkdownBlock(child) }
     }
 }
 
@@ -136,18 +141,21 @@ internal fun JournalPhotoImage(
     photo: JournalPhoto,
     description: String,
     modifier: Modifier = Modifier,
-    contentScale: ContentScale = ContentScale.Crop
+    contentScale: ContentScale = ContentScale.Crop,
+    thumbnailSize: Dp? = null
 ) {
     val context = LocalContext.current
-    var image by remember(photo) { mutableStateOf<ImageBitmap?>(null) }
-    LaunchedEffect(photo) {
+    // Square crops need some extra resolution for the short side of portrait photos.
+    val maxEdge = thumbnailSize?.let { with(LocalDensity.current) { it.roundToPx() * 2 } } ?: 1800
+    var image by remember(photo, maxEdge) { mutableStateOf<ImageBitmap?>(null) }
+    LaunchedEffect(photo, maxEdge) {
         image = withContext(Dispatchers.IO) {
             runCatching {
                 when (photo) {
                     is JournalPhoto.Saved -> MonologData.repository(context).photoImage(photo.id)?.let {
-                        BitmapFactory.decodeByteArray(it, 0, it.size)
+                        PhotoCodec.decode(it, maxEdge)
                     }
-                    is JournalPhoto.Picked -> PhotoCodec.decode(context.contentResolver, Uri.parse(photo.uri), maxEdge = 1000)
+                    is JournalPhoto.Picked -> PhotoCodec.decode(context.contentResolver, Uri.parse(photo.uri), maxEdge)
                 }?.asImageBitmap()
             }.getOrNull()
         }
@@ -170,7 +178,8 @@ internal fun JournalPhotoStrip(photos: List<JournalPhoto>, onRemove: ((JournalPh
             Column(horizontalAlignment = Alignment.CenterHorizontally) {
                 JournalPhotoImage(
                     photo, "Photo ${index + 1}",
-                    Modifier.size(104.dp).clip(RoundedCornerShape(14.dp)).clickable(onClickLabel = "View photo") { opened = photo }
+                    Modifier.size(104.dp).clip(RoundedCornerShape(14.dp)).clickable(onClickLabel = "View photo") { opened = photo },
+                    thumbnailSize = 104.dp
                 )
                 if (onRemove != null) TextButton(onClick = { onRemove(photo) }) { Text("Remove") }
             }

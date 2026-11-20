@@ -7,11 +7,13 @@ import android.net.Uri
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.PickVisualMediaRequest
 import androidx.activity.result.contract.ActivityResultContracts
-import androidx.compose.foundation.Image
 import androidx.compose.foundation.ScrollState
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
+import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.LazyListScope
+import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.selection.selectable
 import androidx.compose.foundation.selection.selectableGroup
@@ -31,7 +33,7 @@ import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.LocalFocusManager
 import androidx.compose.ui.platform.LocalSoftwareKeyboardController
-import androidx.compose.ui.res.painterResource
+import androidx.compose.ui.platform.LocalView
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.semantics.contentDescription
@@ -45,20 +47,24 @@ import androidx.navigation.NavType
 import androidx.navigation.compose.*
 import androidx.navigation.navArgument
 import com.notokens.monolog.R
+import com.notokens.monolog.capture.captureToJournal
+import com.notokens.monolog.capture.copyCompanionWindow
 import com.notokens.monolog.data.*
 import com.notokens.monolog.setup.SetupScreen
 import com.notokens.monolog.ui.theme.*
 import java.text.DateFormat
 import java.text.SimpleDateFormat
-import java.time.Instant
 import java.time.LocalDate
 import java.time.ZoneId
 import java.time.ZonedDateTime
 import java.util.*
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.withContext
+import kotlinx.coroutines.withTimeoutOrNull
 
 private val ink: Color @Composable get() = PaperKeyText
 private val muted: Color @Composable get() = PaperKeySubText
@@ -85,21 +91,6 @@ enum class CompanionDestination(val route: String) {
 }
 
 @Composable
-fun CompanionLoadingScreen() {
-    Box(Modifier.fillMaxSize().monologBackdrop().safeDrawingPadding(), contentAlignment = Alignment.Center) {
-        Column(
-            Modifier.padding(24.dp),
-            horizontalAlignment = Alignment.CenterHorizontally
-        ) {
-            Image(painterResource(R.drawable.monolog_brand_logo), contentDescription = null, modifier = Modifier.size(132.dp))
-            Text(stringResource(R.string.app_name), style = MaterialTheme.typography.headlineLarge, fontWeight = FontWeight.SemiBold)
-            Spacer(Modifier.height(8.dp))
-            Text(stringResource(R.string.companion_brand_line), color = muted, style = MaterialTheme.typography.bodyLarge)
-        }
-    }
-}
-
-@Composable
 fun CompanionApp(
     settings: SettingsStore,
     appearance: Appearance,
@@ -109,11 +100,6 @@ fun CompanionApp(
 ) {
     val context = LocalContext.current
     val repo = remember { MonologData.repository(context) }
-    val notes by repo.notes.collectAsState(initial = emptyList())
-    val photoRefs by repo.notePhotos.collectAsState(initial = emptyList())
-    val photosByNote = remember(photoRefs) { photoRefs.groupBy { it.noteId } }
-    val reminders by repo.reminders.collectAsState(initial = emptyList())
-    val incognito by settings.incognito.collectAsState(initial = false)
     val scope = rememberCoroutineScope()
     val nav = rememberNavController()
     val settingsScroll = rememberScrollState()
@@ -145,7 +131,10 @@ fun CompanionApp(
         }
     }
     var confirmClear by remember { mutableStateOf(false) }
-    val imeVisible = WindowInsets.ime.getBottom(LocalDensity.current) > 0
+    val imeInsets = WindowInsets.ime
+    val density = LocalDensity.current
+    val imeVisible = imeInsets.getBottom(density) > 0
+    val view = LocalView.current
 
     if (confirmClear) AlertDialog(
         onDismissRequest = { confirmClear = false },
@@ -197,7 +186,21 @@ fun CompanionApp(
                             val tileHeight = ((LocalConfiguration.current.screenHeightDp - 512) / 2).coerceIn(124, 152).dp
                             val zone = ZoneId.systemDefault()
                             val today = LocalDate.now(zone)
-                            val todayNote = notes.firstOrNull { Instant.ofEpochMilli(it.updatedAt).atZone(zone).toLocalDate() == today }
+                            val todayNote by remember(today, zone) {
+                                repo.latestNoteBetween(
+                                    today.atStartOfDay(zone).toInstant().toEpochMilli(),
+                                    today.plusDays(1).atStartOfDay(zone).toInstant().toEpochMilli()
+                                )
+                            }.collectAsState(initial = null)
+                            val latestNote by repo.latestNote.collectAsState(initial = null)
+                            var reminderCutoff by remember { mutableLongStateOf(System.currentTimeMillis()) }
+                            val next by remember(reminderCutoff) { repo.nextReminder(reminderCutoff) }.collectAsState(initial = null)
+                            LaunchedEffect(next?.dueAt) {
+                                next?.let {
+                                    delay((it.dueAt - System.currentTimeMillis()).coerceAtLeast(1))
+                                    reminderCutoff = maxOf(System.currentTimeMillis(), it.dueAt)
+                                }
+                            }
                             Column(
                                 Modifier.fillMaxWidth().glassSurface(24, GlassAccent.BLUE).journalPageAccent()
                                     .clickable { nav.navigate(todayNote?.let { "note/edit/${it.id}" } ?: "note/new") }.padding(16.dp)
@@ -217,9 +220,8 @@ fun CompanionApp(
                             }
                             Spacer(Modifier.height(8.dp))
                             Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                                val next = reminders.firstOrNull { it.dueAt > System.currentTimeMillis() }
                                 DashboardTile("Reminders", next?.title ?: "Nothing coming up", next?.let { DateFormat.getTimeInstance(DateFormat.SHORT).format(Date(it.dueAt)) } ?: "Add a reminder", Glyph.CLOCK, GlassAccent.BLUE, Modifier.weight(1f).heightIn(min = tileHeight)) { nav.navigate("reminders") }
-                                DashboardTile("Recent memory", notes.firstOrNull()?.title ?: "Your story starts here", "Open Journal", Glyph.BOOK, GlassAccent.LAVENDER, Modifier.weight(1f).heightIn(min = tileHeight)) { nav.navigate("journal") }
+                                DashboardTile("Recent memory", latestNote?.title ?: "Your story starts here", "Open Journal", Glyph.BOOK, GlassAccent.LAVENDER, Modifier.weight(1f).heightIn(min = tileHeight)) { nav.navigate("journal") }
                             }
                             Spacer(Modifier.height(8.dp))
                             Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
@@ -229,99 +231,159 @@ fun CompanionApp(
                         }
                     }
                     composable("journal") {
-                        Screen("Journal", showDate = true) {
-                            Row(Modifier.fillMaxWidth().glassSurface(24).padding(16.dp), verticalAlignment = Alignment.CenterVertically) {
-                                MonologIcon(Glyph.CLOCK)
-                                Spacer(Modifier.width(12.dp))
-                                Text(SimpleDateFormat("MMMM yyyy", Locale.getDefault()).format(Date()), color = ink, style = MaterialTheme.typography.titleMedium, modifier = Modifier.weight(1f))
-                                IconControl(Glyph.PLUS, "Add note", { nav.navigate("note/new") })
+                        val notes by repo.notes.collectAsState(initial = emptyList())
+                        val photoRefs by repo.notePhotos.collectAsState(initial = emptyList())
+                        val photosByNote = remember(photoRefs) { photoRefs.groupBy { it.noteId } }
+                        val locale = LocalConfiguration.current.locales[0]
+                        val sections = remember(notes, locale) {
+                            val format = SimpleDateFormat("d MMM ? EEEE", locale)
+                            notes.groupBy { format.format(Date(it.updatedAt)) }
+                        }
+                        CollectionScreen("Journal", showDate = true) {
+                            item(contentType = "month") {
+                                Row(Modifier.fillMaxWidth().glassSurface(24).padding(16.dp), verticalAlignment = Alignment.CenterVertically) {
+                                    MonologIcon(Glyph.CLOCK)
+                                    Spacer(Modifier.width(12.dp))
+                                    Text(SimpleDateFormat("MMMM yyyy", locale).format(Date()), color = ink, style = MaterialTheme.typography.titleMedium, modifier = Modifier.weight(1f))
+                                    IconControl(Glyph.PLUS, "Add note", { nav.navigate("note/new") })
+                                }
                             }
-                            Spacer(Modifier.height(16.dp))
-                            if (notes.isEmpty()) EmptyCard("Your story, one day at a time.", "Save a thought from here or the keyboard’s context key.")
-                            notes.groupBy { SimpleDateFormat("d MMM · EEEE", Locale.getDefault()).format(Date(it.updatedAt)) }.forEach { (day, entries) ->
-                                Text(day, color = muted, modifier = Modifier.padding(start = 12.dp, bottom = 8.dp), fontWeight = FontWeight.Medium)
-                                entries.forEach { note ->
+                            if (notes.isEmpty()) item {
+                                EmptyCard("Your story, one day at a time.", "Save a thought from here or the keyboard?s context key.")
+                            }
+                            sections.forEach { (day, entries) ->
+                                item(key = day, contentType = "heading") {
+                                    Text(day, color = muted, modifier = Modifier.padding(start = 12.dp), fontWeight = FontWeight.Medium)
+                                }
+                                items(entries, key = { it.id }, contentType = { "note" }) { note ->
                                     NoteTile(note, photosByNote[note.id].orEmpty()) { nav.navigate("note/${note.id}") }
-                                    Spacer(Modifier.height(12.dp))
                                 }
                             }
                         }
                     }
                     composable("library") {
                         var photosOnly by rememberSaveable { mutableStateOf(false) }
-                        Screen("Context library") {
-                            Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-                                Button(onClick = { nav.navigate("note/new") }) { Text("New note") }
-                                OutlinedButton(onClick = { nav.navigate("reminders") }) { Text("Reminders") }
+                        var query by rememberSaveable { mutableStateOf("") }
+                        var capturePending by remember { mutableStateOf(false) }
+                        val screenScope = rememberCoroutineScope()
+                        val notes by repo.notes.collectAsState(initial = emptyList())
+                        val photoRefs by repo.notePhotos.collectAsState(initial = emptyList())
+                        val photosByNote = remember(photoRefs) { photoRefs.groupBy { it.noteId } }
+                        val entries = remember(notes, photosByNote, photosOnly, query) {
+                            val candidates = if (photosOnly) notes.filter { it.id in photosByNote } else notes
+                            if (query.isBlank()) candidates else candidates.matchingJournalEntries(query)
+                        }
+                        CollectionScreen("Context library") {
+                            item(contentType = "actions") {
+                                Column {
+                                    Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                                        Button(onClick = { nav.navigate("note/new") }) { Text("New note") }
+                                        OutlinedButton(onClick = { nav.navigate("reminders") }) { Text("Reminders") }
+                                        IconControl(Glyph.CAPTURE, "Capture screen", frosted = true, onClick = {
+                                            if (!capturePending) screenScope.launch {
+                                                capturePending = true
+                                                try {
+                                                    focusManager.clearFocus(force = true)
+                                                    keyboard?.hide()
+                                                    val ready = withTimeoutOrNull(1_500) {
+                                                        snapshotFlow { imeInsets.getBottom(density) == 0 }.first { it }
+                                                    } == true
+                                                    if (ready && view.hasWindowFocus()) {
+                                                        captureToJournal(context, settings) { copyCompanionWindow(view) }
+                                                    }
+                                                } finally {
+                                                    capturePending = false
+                                                }
+                                            }
+                                        })
+                                    }
+                                    OutlinedTextField(
+                                        value = query, onValueChange = { query = it.take(240) },
+                                        modifier = Modifier.fillMaxWidth(), singleLine = true,
+                                        label = { Text("Search context") }, leadingIcon = { MonologIcon(Glyph.SEARCH) }
+                                    )
+                                    Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                                        FilterChip(!photosOnly, { photosOnly = false }, { Text("All entries") })
+                                        FilterChip(photosOnly, { photosOnly = true }, { Text("With photos") })
+                                    }
+                                }
                             }
-                            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                                FilterChip(!photosOnly, { photosOnly = false }, { Text("All entries") })
-                                FilterChip(photosOnly, { photosOnly = true }, { Text("With photos") })
+                            if (entries.isEmpty()) item {
+                                if (query.isNotBlank()) Text("No matching entries", color = muted)
+                                else EmptyCard(if (photosOnly) "No photos yet" else "A home for your notes", "Add a photo while writing a note or journal entry.")
                             }
-                            Spacer(Modifier.height(8.dp))
-                            val entries = if (photosOnly) notes.filter { it.id in photosByNote } else notes
-                            if (entries.isEmpty()) {
-                                EmptyCard(if (photosOnly) "No photos yet" else "A home for your notes", "Add a photo while writing a note or journal entry.")
-                            }
-                            entries.forEach { note ->
+                            items(entries, key = { it.id }, contentType = { "note" }) { note ->
                                 NoteTile(note, photosByNote[note.id].orEmpty()) { nav.navigate("note/${note.id}") }
-                                Spacer(Modifier.height(12.dp))
                             }
                         }
                     }
                     composable("note/new") { NoteEditor(null, emptyList(), onCancel = navigateBack) }
                     composable("note/{id}", arguments = listOf(navArgument("id") { type = NavType.LongType })) { entry ->
-                        val note = notes.firstOrNull { it.id == entry.arguments!!.getLong("id") }
-                        if (note != null) Screen(note.title, onBack = navigateBack) {
-                            Text(formatTime(note.updatedAt), color = muted)
-                            val photos = photosByNote[note.id].orEmpty()
-                            if (photos.isNotEmpty()) {
-                                Spacer(Modifier.height(12.dp))
-                                JournalPhotoStrip(photos.map { JournalPhoto.Saved(it.id) })
-                            }
-                            if (note.body.isNotBlank()) {
-                                Spacer(Modifier.height(12.dp))
-                                JournalMarkdown(note.body, Modifier.fillMaxWidth().glassSurface().padding(16.dp))
-                            }
-                            Spacer(Modifier.height(20.dp))
-                            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                                Button(onClick = { nav.navigate("note/edit/${note.id}") }) { Text("Edit") }
-                                OutlinedButton(onClick = { scope.launch { repo.deleteNote(note); nav.popBackStack() } }) { Text("Delete") }
+                        val id = entry.arguments!!.getLong("id")
+                        val note by remember(id) { repo.note(id) }.collectAsState(initial = null)
+                        val photos by remember(id) { repo.notePhotos(id) }.collectAsState(initial = emptyList())
+                        note?.let { note ->
+                            Screen(note.title, onBack = navigateBack) {
+                                Text(formatTime(note.updatedAt), color = muted)
+                                if (photos.isNotEmpty()) {
+                                    Spacer(Modifier.height(12.dp))
+                                    JournalPhotoStrip(photos.map { JournalPhoto.Saved(it.id) })
+                                }
+                                if (note.body.isNotBlank()) {
+                                    Spacer(Modifier.height(12.dp))
+                                    JournalMarkdown(note.body, Modifier.fillMaxWidth().glassSurface().padding(16.dp))
+                                }
+                                Spacer(Modifier.height(20.dp))
+                                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                                    Button(onClick = { nav.navigate("note/edit/${note.id}") }) { Text("Edit") }
+                                    OutlinedButton(onClick = { scope.launch { repo.deleteNote(note); nav.popBackStack() } }) { Text("Delete") }
+                                }
                             }
                         }
                     }
                     composable("note/edit/{id}", arguments = listOf(navArgument("id") { type = NavType.LongType })) { entry ->
-                        val note = notes.firstOrNull { it.id == entry.arguments!!.getLong("id") }
-                        if (note != null) NoteEditor(note, photosByNote[note.id].orEmpty(), onCancel = navigateBack)
+                        val id = entry.arguments!!.getLong("id")
+                        val note by remember(id) { repo.note(id) }.collectAsState(initial = null)
+                        val photos by remember(id) { repo.notePhotos(id) }.collectAsState(initial = emptyList())
+                        note?.let { NoteEditor(it, photos, onCancel = navigateBack) }
                     }
                     composable("reminders") {
-                        Screen("Reminders", onBack = navigateBack) {
-                            Button(onClick = { nav.navigate("reminders/new") }) { Text("+ Add reminder") }
-                            Spacer(Modifier.height(14.dp))
-                            if (reminders.isEmpty()) EmptyCard("A little help remembering", "Create a reminder here or from your keyboard.")
-                            val (upcoming, past) = reminders.partition { it.dueAt > System.currentTimeMillis() }
+                        val reminders by repo.reminders.collectAsState(initial = emptyList())
+                        val (upcoming, past) = reminders.partition { it.dueAt > System.currentTimeMillis() }
+                        CollectionScreen("Reminders", onBack = navigateBack) {
+                            item(contentType = "actions") {
+                                Button(onClick = { nav.navigate("reminders/new") }) { Text("+ Add reminder") }
+                            }
+                            if (reminders.isEmpty()) item {
+                                EmptyCard("A little help remembering", "Create a reminder here or from your keyboard.")
+                            }
                             for ((label, entries) in listOf("Upcoming" to upcoming, "Past" to past.asReversed())) {
                                 if (entries.isEmpty()) continue
-                                Text(label, color = muted, style = MaterialTheme.typography.labelLarge)
-                                Spacer(Modifier.height(8.dp))
-                                entries.forEach { reminder ->
+                                item(key = label, contentType = "heading") {
+                                    Text(label, color = muted, style = MaterialTheme.typography.labelLarge)
+                                }
+                                items(entries, key = { it.id }, contentType = { "reminder" }) { reminder ->
                                     ReminderTile(
                                         reminder,
                                         onEdit = { nav.navigate("reminders/edit/${reminder.id}") },
                                         onDelete = { scope.launch { repo.deleteReminder(reminder) } }
                                     )
-                                    Spacer(Modifier.height(8.dp))
                                 }
-                                Spacer(Modifier.height(8.dp))
                             }
                         }
                     }
                     composable("reminders/new") { ReminderEditor(null, onSave = { title, due -> scope.launch { repo.saveReminder(title, due); navigateBack() } }, onCancel = navigateBack) }
                     composable("reminders/edit/{id}", arguments = listOf(navArgument("id") { type = NavType.LongType })) { entry ->
-                        val reminder = reminders.firstOrNull { it.id == entry.arguments!!.getLong("id") }
-                        if (reminder != null) ReminderEditor(reminder, onSave = { title, due -> scope.launch { repo.saveReminder(title, due, reminder); navigateBack() } }, onCancel = navigateBack)
+                        val id = entry.arguments!!.getLong("id")
+                        val reminder by remember(id) { repo.reminder(id) }.collectAsState(initial = null)
+                        reminder?.let {
+                            ReminderEditor(it, onSave = { title, due -> scope.launch { repo.saveReminder(title, due, it); navigateBack() } }, onCancel = navigateBack)
+                        }
                     }
                     composable("settings") {
+                        val incognito by settings.incognito.collectAsState(initial = false)
+                        val holdMs by settings.shortcutHoldMs.collectAsState(initial = 500)
+                        val shortcutHaptics by settings.shortcutHaptics.collectAsState(initial = true)
                         Screen("Settings", onBack = navigateBack, scrollState = settingsScroll) {
                             Column(Modifier.fillMaxWidth().glassSurface(24, GlassAccent.LAVENDER).padding(16.dp)) {
                                 Text("Appearance", color = ink, style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.SemiBold)
@@ -369,6 +431,18 @@ fun CompanionApp(
                             }
                             Spacer(Modifier.height(20.dp))
 
+                            Column(Modifier.fillMaxWidth().glassSurface(24, GlassAccent.LAVENDER).padding(16.dp)) {
+                                Text("Quick shortcuts", color = ink, style = MaterialTheme.typography.titleMedium)
+                                Text("Hold M to open: $holdMs ms", color = muted)
+                                Slider(value = holdMs.toFloat(), onValueChange = { value -> scope.launch { settings.setShortcutHoldMs(value.toInt()) } },
+                                    valueRange = 250f..1500f, steps = 4,
+                                    modifier = Modifier.semantics { contentDescription = "Quick shortcuts hold duration" })
+                                Row(verticalAlignment = Alignment.CenterVertically) {
+                                    Text("Shortcut haptics", Modifier.weight(1f), color = ink)
+                                    Switch(checked = shortcutHaptics, onCheckedChange = { scope.launch { settings.setShortcutHaptics(it) } })
+                                }
+                            }
+                            Spacer(Modifier.height(20.dp))
                             Text("Keyboard setup", color = ink, style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.SemiBold)
                             Spacer(Modifier.height(10.dp))
                             SetupScreen(onRequestMicPermission = onRequestMicPermission)
@@ -390,6 +464,36 @@ private fun Screen(
     scrollState: ScrollState = rememberScrollState(),
     content: @Composable () -> Unit
 ) {
+    ScreenFrame(onBack) {
+        Column(Modifier.weight(1f).fillMaxWidth().verticalScroll(scrollState).padding(vertical = 12.dp)) {
+            ScreenTitle(title, showDate)
+            Spacer(Modifier.height(12.dp))
+            content()
+        }
+    }
+}
+
+@Composable
+private fun CollectionScreen(
+    title: String,
+    showDate: Boolean = false,
+    onBack: (() -> Unit)? = null,
+    content: LazyListScope.() -> Unit
+) {
+    ScreenFrame(onBack) {
+        LazyColumn(
+            Modifier.weight(1f).fillMaxWidth(),
+            contentPadding = PaddingValues(vertical = 12.dp),
+            verticalArrangement = Arrangement.spacedBy(10.dp)
+        ) {
+            item(contentType = "title") { ScreenTitle(title, showDate) }
+            content()
+        }
+    }
+}
+
+@Composable
+private fun ScreenFrame(onBack: (() -> Unit)?, content: @Composable ColumnScope.() -> Unit) {
     val onSettings = LocalSettingsAction.current
     Box(Modifier.fillMaxSize(), contentAlignment = Alignment.TopCenter) {
         Column(Modifier.widthIn(max = 640.dp).fillMaxWidth().fillMaxHeight().padding(horizontal = 16.dp)) {
@@ -410,23 +514,24 @@ private fun Screen(
                 }
                 if (onBack == null) IconControl(Glyph.SETTINGS, "Settings", onSettings, frosted = true)
             }
-            Column(Modifier.weight(1f).fillMaxWidth().verticalScroll(scrollState).padding(vertical = 12.dp)) {
-                if (showDate) {
-                    Row(
-                        Modifier.fillMaxWidth().glassSurface(24).padding(horizontal = 16.dp, vertical = 8.dp),
-                        horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically
-                    ) {
-                        MonologIcon(Glyph.CLOCK, Modifier.size(16.dp), muted)
-                        Text(SimpleDateFormat("EEEE, d MMMM", Locale.getDefault()).format(Date()), color = muted, style = MaterialTheme.typography.bodyMedium)
-                    }
-                    Spacer(Modifier.height(16.dp))
-                }
-                Text(title, color = ink, style = MaterialTheme.typography.headlineMedium, fontWeight = FontWeight.SemiBold)
-                Spacer(Modifier.height(12.dp))
-                content()
-            }
+            content()
         }
     }
+}
+
+@Composable
+private fun ScreenTitle(title: String, showDate: Boolean) {
+    if (showDate) {
+        Row(
+            Modifier.fillMaxWidth().glassSurface(24).padding(horizontal = 16.dp, vertical = 8.dp),
+            horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically
+        ) {
+            MonologIcon(Glyph.CLOCK, Modifier.size(16.dp), muted)
+            Text(SimpleDateFormat("EEEE, d MMMM", Locale.getDefault()).format(Date()), color = muted, style = MaterialTheme.typography.bodyMedium)
+        }
+        Spacer(Modifier.height(16.dp))
+    }
+    Text(title, color = ink, style = MaterialTheme.typography.headlineMedium, fontWeight = FontWeight.SemiBold)
 }
 
 @Composable
@@ -488,7 +593,10 @@ private fun NoteTile(note: Note, photos: List<NotePhotoRef>, onClick: () -> Unit
         horizontalArrangement = Arrangement.spacedBy(12.dp), verticalAlignment = Alignment.CenterVertically
     ) {
         photos.firstOrNull()?.let {
-            JournalPhotoImage(JournalPhoto.Saved(it.id), "Attached photo", Modifier.size(76.dp).clip(RoundedCornerShape(12.dp)))
+            JournalPhotoImage(
+                JournalPhoto.Saved(it.id), "Attached photo", Modifier.size(76.dp).clip(RoundedCornerShape(12.dp)),
+                thumbnailSize = 76.dp
+            )
         }
         Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(4.dp)) {
             Text(note.title, color = ink, style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.SemiBold)

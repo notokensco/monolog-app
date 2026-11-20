@@ -4,11 +4,13 @@ import android.Manifest
 import android.content.Intent
 import android.content.pm.PackageManager
 import android.os.Bundle
+import android.view.ViewTreeObserver
 import android.widget.Toast
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
 import androidx.activity.result.contract.ActivityResultContracts
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.SideEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
@@ -20,11 +22,10 @@ import androidx.core.view.WindowCompat
 import com.notokens.monolog.data.Appearance
 import com.notokens.monolog.data.SettingsStore
 import com.notokens.monolog.ui.CompanionApp
-import com.notokens.monolog.ui.CompanionLoadingScreen
 import com.notokens.monolog.ui.CompanionDestination
 import com.notokens.monolog.ui.theme.LocalMonologDark
 import com.notokens.monolog.ui.theme.MonologTheme
-import kotlinx.coroutines.flow.map
+import kotlinx.coroutines.delay
 
 class MainActivity : ComponentActivity() {
     companion object {
@@ -47,30 +48,43 @@ class MainActivity : ComponentActivity() {
         super.onCreate(savedInstanceState)
         enableEdgeToEdge()
         if (savedInstanceState == null) handleIncomingIntent(intent)
+        var readyToDraw = false
+        val decor = window.decorView
+        decor.viewTreeObserver.addOnPreDrawListener(object : ViewTreeObserver.OnPreDrawListener {
+            override fun onPreDraw(): Boolean {
+                if (!readyToDraw) return false
+                decor.viewTreeObserver.removeOnPreDrawListener(this)
+                return true
+            }
+        })
         setContent {
             val settings = remember { SettingsStore(applicationContext) }
-            val appearanceFlow = remember(settings) { settings.appearance.map<Appearance, Appearance?> { it } }
-            val appearance by appearanceFlow.collectAsState(initial = null)
-            val current = appearance
-            MonologTheme(appearance = current ?: Appearance()) {
+            val appearance by settings.appearance.collectAsState(initial = null)
+            var useDefaultAppearance by remember { mutableStateOf(false) }
+            if (appearance == null && !useDefaultAppearance) {
+                LaunchedEffect(Unit) {
+                    delay(600)
+                    useDefaultAppearance = true
+                }
+                return@setContent
+            }
+            val current = appearance ?: Appearance()
+            MonologTheme(appearance = current) {
                 val lightBars = !LocalMonologDark.current
                 SideEffect {
+                    readyToDraw = true
                     WindowCompat.getInsetsController(window, window.decorView).apply {
                         isAppearanceLightStatusBars = lightBars
                         isAppearanceLightNavigationBars = lightBars
                     }
                 }
-                if (current == null) {
-                    CompanionLoadingScreen()
-                } else {
-                    CompanionApp(
-                        settings = settings,
-                        appearance = current,
-                        destination = destination,
-                        onDestinationOpened = { destination = null },
-                        onRequestMicPermission = { micPermissionLauncher.launch(Manifest.permission.RECORD_AUDIO) }
-                    )
-                }
+                CompanionApp(
+                    settings = settings,
+                    appearance = current,
+                    destination = destination,
+                    onDestinationOpened = { destination = null },
+                    onRequestMicPermission = { micPermissionLauncher.launch(Manifest.permission.RECORD_AUDIO) }
+                )
             }
         }
         if (savedInstanceState == null && intent?.action == Intent.ACTION_MAIN &&

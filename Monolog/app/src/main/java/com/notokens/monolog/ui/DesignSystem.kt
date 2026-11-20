@@ -18,7 +18,9 @@ import androidx.compose.ui.draw.drawWithCache
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.ColorFilter
 import androidx.compose.ui.graphics.Path
+import androidx.compose.ui.graphics.Shape
 import androidx.compose.ui.graphics.StrokeCap
 import androidx.compose.ui.graphics.StrokeJoin
 import androidx.compose.ui.graphics.drawscope.Stroke
@@ -34,7 +36,7 @@ import com.notokens.monolog.ui.theme.*
 import kotlin.math.cos
 import kotlin.math.sin
 
-enum class Glyph { DOWN, CLOSE, EXPAND, BOLT, CLOCK, BELL, ALARM, BOOK, LAYERS, PLUS, HOME, SETTINGS, MIC, GLOBE, SMILE, SHIFT, BACKSPACE, ENTER, SEARCH, SHIELD, PRIVACY, ARROW, BACK, DOT, PAPER, INK, PHOTO, CAPTURE }
+enum class Glyph { DOWN, CLOSE, EXPAND, BOLT, CLOCK, BELL, ALARM, BOOK, LAYERS, PLUS, HOME, SETTINGS, MIC, GLOBE, SMILE, SHIFT, BACKSPACE, ENTER, SEARCH, SHIELD, PRIVACY, ARROW, BACK, DOT, PAPER, INK, PHOTO, CAPTURE, EDIT, DRAG_HANDLE }
 
 @Composable
 fun MonologIcon(glyph: Glyph, modifier: Modifier = Modifier, color: Color = PaperKeyText) {
@@ -96,6 +98,16 @@ fun MonologIcon(glyph: Glyph, modifier: Modifier = Modifier, color: Color = Pape
                 Glyph.ARROW -> { line(3f, 12f, 21f, 12f); line(15f, 6f, 21f, 12f, 15f, 18f) }
                 Glyph.BACK -> { line(21f, 12f, 3f, 12f); line(9f, 6f, 3f, 12f, 9f, 18f) }
                 Glyph.DOT -> { drawCircle(color, 2.5f, Offset(12f, 12f)) }
+                Glyph.EDIT -> {
+                    line(4f, 16f, 16f, 4f, 20f, 8f, 8f, 20f, 3f, 21f, 4f, 16f)
+                    line(14f, 6f, 18f, 10f)
+                }
+                Glyph.DRAG_HANDLE -> {
+                    for (y in listOf(5f, 12f, 19f)) {
+                        drawCircle(color, 1.6f, Offset(8f, y))
+                        drawCircle(color, 1.6f, Offset(16f, y))
+                    }
+                }
                 Glyph.PHOTO -> {
                     line(3f, 3f, 21f, 3f, 21f, 21f, 3f, 21f, 3f, 3f)
                     circle(8f, 8f, 1.5f)
@@ -152,6 +164,14 @@ fun IconControl(
 @Composable
 fun MonologLogo(modifier: Modifier = Modifier, alpha: Float = 1f) {
     Image(painterResource(R.drawable.ic_monolog_m), contentDescription = null, modifier, alpha = alpha)
+}
+
+@Composable
+fun MonologMark(modifier: Modifier = Modifier, alpha: Float = 1f) {
+    Image(
+        painterResource(R.drawable.ic_monolog_monochrome), contentDescription = null,
+        modifier = modifier, alpha = alpha, colorFilter = ColorFilter.tint(PaperKeyText)
+    )
 }
 
 @Composable
@@ -222,8 +242,11 @@ fun Modifier.monologBackdrop(keyboard: Boolean = false): Modifier {
 enum class GlassAccent { BLUE, LAVENDER, BLUSH }
 
 @Composable
-fun Modifier.glassSurface(radius: Int = 24, accent: GlassAccent? = null): Modifier {
-    val shape = RoundedCornerShape(radius.dp)
+fun Modifier.glassSurface(
+    radius: Int = 24,
+    accent: GlassAccent? = null,
+    shape: Shape = RoundedCornerShape(radius.dp)
+): Modifier {
     val dark = LocalMonologDark.current
     val borderColor = PaperPillBorder
     val solid = MaterialTheme.colorScheme.surfaceContainer

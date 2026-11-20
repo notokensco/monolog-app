@@ -52,6 +52,10 @@ data class Reminder(
 @Dao
 interface NoteDao {
     @Query("SELECT * FROM notes ORDER BY updatedAt DESC") fun observeAll(): Flow<List<Note>>
+    @Query("SELECT * FROM notes ORDER BY updatedAt DESC LIMIT 1")
+    fun observeLatest(): Flow<Note?>
+    @Query("SELECT * FROM notes WHERE updatedAt >= :start AND updatedAt < :end ORDER BY updatedAt DESC LIMIT 1")
+    fun observeLatestBetween(start: Long, end: Long): Flow<Note?>
     @Query("SELECT * FROM notes WHERE id = :id LIMIT 1") fun observe(id: Long): Flow<Note?>
     @Insert suspend fun insert(note: Note): Long
     @Update suspend fun update(note: Note): Int
@@ -62,6 +66,8 @@ interface NoteDao {
 interface NotePhotoDao {
     @Query("SELECT id, noteId FROM note_photos ORDER BY id")
     fun observeRefs(): Flow<List<NotePhotoRef>>
+    @Query("SELECT id, noteId FROM note_photos WHERE noteId = :noteId ORDER BY id")
+    fun observeRefs(noteId: Long): Flow<List<NotePhotoRef>>
 
     @Query("SELECT image FROM note_photos WHERE id = :id")
     suspend fun image(id: Long): ByteArray?
@@ -75,6 +81,9 @@ interface NotePhotoDao {
 @Dao
 interface ReminderDao {
     @Query("SELECT * FROM reminders ORDER BY dueAt ASC") fun observeAll(): Flow<List<Reminder>>
+    @Query("SELECT * FROM reminders WHERE id = :id") fun observe(id: Long): Flow<Reminder?>
+    @Query("SELECT * FROM reminders WHERE dueAt > :now ORDER BY dueAt ASC LIMIT 1")
+    fun observeNext(now: Long): Flow<Reminder?>
     @Query("SELECT * FROM reminders") suspend fun all(): List<Reminder>
     @Query("SELECT * FROM reminders WHERE dueAt > :now ORDER BY dueAt ASC") suspend fun future(now: Long): List<Reminder>
     @Insert suspend fun insert(reminder: Reminder): Long

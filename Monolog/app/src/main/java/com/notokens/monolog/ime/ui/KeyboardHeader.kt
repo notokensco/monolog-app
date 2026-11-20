@@ -6,7 +6,11 @@ import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.Text
-import androidx.compose.runtime.Composable
+import androidx.compose.runtime.*
+import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalViewConfiguration
+import androidx.compose.ui.platform.ViewConfiguration
+import com.notokens.monolog.data.SettingsStore
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -25,7 +29,6 @@ import com.notokens.monolog.ui.theme.*
 @Composable
 fun KeyboardHeader(
     editorContext: EditorContext,
-    isShortcutsOpen: Boolean,
     onToggleShortcuts: () -> Unit,
     onCaptureContext: () -> Unit,
     onOpenSettings: () -> Unit,
@@ -62,8 +65,7 @@ fun KeyboardHeader(
             )
         }
         if (!editorContext.isIncognito) IconControl(Glyph.MIC, "Open Vox", onEnterVox)
-        MKey(
-            active = isShortcutsOpen,
+        ContextKey(
             enabled = !editorContext.isIncognito,
             onClick = onCaptureContext,
             onLongClick = onToggleShortcuts
@@ -73,33 +75,43 @@ fun KeyboardHeader(
 
 @Composable
 @OptIn(ExperimentalFoundationApi::class)
-fun MKey(
-    active: Boolean = false,
+private fun ContextKey(
     enabled: Boolean = true,
     onClick: () -> Unit,
     onLongClick: () -> Unit
 ) {
     val view = LocalView.current
-    Box(
-        Modifier.size(48.dp)
-            .clip(RoundedCornerShape(11.dp))
-            .then(if (active) Modifier.glassSurface(11, GlassAccent.LAVENDER) else Modifier)
-            .combinedClickable(
-                enabled = enabled,
-                role = Role.Button,
-                onLongClickLabel = "Open quick shortcuts",
-                onLongClick = {
-                    triggerHapticFeedback(view, isLong = true)
-                    onLongClick()
-                },
-                onClick = {
-                    triggerHapticFeedback(view)
-                    onClick()
-                }
-            )
-            .semantics { contentDescription = "Monolog context key" },
-        contentAlignment = Alignment.Center
-    ) {
-        MonologLogo(Modifier.size(48.dp), alpha = if (enabled) 1f else .4f)
+    val context = LocalContext.current
+    val settings = remember { SettingsStore(context.applicationContext) }
+    val holdMs by settings.shortcutHoldMs.collectAsState(initial = 500)
+    val haptics by settings.shortcutHaptics.collectAsState(initial = true)
+    val defaultConfiguration = LocalViewConfiguration.current
+    val configuration = remember(defaultConfiguration, holdMs) {
+        object : ViewConfiguration by defaultConfiguration {
+            override val longPressTimeoutMillis: Long = holdMs.toLong()
+        }
+    }
+    CompositionLocalProvider(LocalViewConfiguration provides configuration) {
+        Box(
+            Modifier.size(48.dp)
+                .clip(RoundedCornerShape(12.dp))
+                .combinedClickable(
+                    enabled = enabled,
+                    role = Role.Button,
+                    onLongClickLabel = "Open quick shortcuts",
+                    onLongClick = {
+                        if (haptics) triggerHapticFeedback(view, isLong = true)
+                        onLongClick()
+                    },
+                    onClick = {
+                        if (haptics) triggerHapticFeedback(view)
+                        onClick()
+                    }
+                )
+                .semantics { contentDescription = "Monolog context key" },
+            contentAlignment = Alignment.Center
+        ) {
+            MonologMark(Modifier.size(48.dp), alpha = if (enabled) 1f else .4f)
+        }
     }
 }

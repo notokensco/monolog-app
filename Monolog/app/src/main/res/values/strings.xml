@@ -4,6 +4,8 @@
     <string name="keyboard_settings">Monolog Keyboard Settings</string>
     <string name="companion_brand_line">Companion by NoTokens</string>
     <string name="subtype_en_us">English (US)</string>
+    <string name="quick_capture_name">Monolog Quick Capture</string>
+    <string name="quick_capture_description">Takes one screenshot when you tap the Monolog context key on the keyboard. The screenshot and recognized text are saved to your private Journal on this device.</string>
     
     <!-- Setup Screen -->
     <string name="setup_tagline">Type. Speak. Act. Remember.</string>

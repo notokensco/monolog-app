@@ -46,7 +46,8 @@ private object EmojiCatalog {
         "Travel & Places" to "Travel"
     )
 
-    @Volatile private var cached: List<EmojiGroup>? = null
+    @Volatile var cached: List<EmojiGroup>? = null
+        private set
 
     fun read(assets: AssetManager): List<EmojiGroup> = cached ?: synchronized(this) {
         cached ?: readFile(assets).also { cached = it }
@@ -76,6 +77,10 @@ private object EmojiCatalog {
     }
 }
 
+internal fun preloadEmojiCatalog(assets: AssetManager) {
+    EmojiCatalog.read(assets)
+}
+
 private val EmojiFont = FontFamily(Font(R.font.noto_emoji))
 
 @Composable
@@ -83,7 +88,7 @@ private val EmojiFont = FontFamily(Font(R.font.noto_emoji))
 internal fun EmojiPicker(height: Dp, recent: List<Emoji>, onPick: (Emoji) -> Unit) {
     val context = LocalContext.current
     val view = LocalView.current
-    val catalog by produceState<List<EmojiGroup>?>(null) {
+    val catalog by produceState(EmojiCatalog.cached) {
         value = withContext(Dispatchers.IO) { EmojiCatalog.read(context.assets) }
     }
     val groups = catalog.orEmpty()

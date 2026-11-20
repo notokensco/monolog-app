@@ -2,6 +2,7 @@ package com.notokens.monolog.ime.ui
 
 import android.content.res.Configuration
 import kotlinx.coroutines.launch
+import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
@@ -10,20 +11,30 @@ import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.width
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.mutableStateListOf
 import androidx.compose.runtime.remember
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.input.TextFieldValue
 import androidx.compose.ui.unit.Dp
+import androidx.compose.ui.unit.IntOffset
+import androidx.compose.ui.unit.IntRect
+import androidx.compose.ui.unit.IntSize
+import androidx.compose.ui.unit.LayoutDirection
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import androidx.compose.ui.window.Popup
+import androidx.compose.ui.window.PopupPositionProvider
+import androidx.compose.ui.window.PopupProperties
 import com.notokens.monolog.ime.EditorContext
 import com.notokens.monolog.ime.KeyboardAction
 import com.notokens.monolog.ime.KeyboardLayer
 import com.notokens.monolog.ime.KeyboardState
 import com.notokens.monolog.ime.ShiftState
+import com.notokens.monolog.ime.shortcuts.QuickShortcutsMenu
 import com.notokens.monolog.ime.shortcuts.QuickShortcutsPanel
 import com.notokens.monolog.ime.shortcuts.ShortcutDraft
 import com.notokens.monolog.ui.*
@@ -42,6 +53,12 @@ fun MonologKeyboardView(
     onDraftChange: (ShortcutDraft) -> Unit,
     onToggleShortcuts: () -> Unit,
     onCaptureContext: () -> Unit,
+    onDismissShortcuts: () -> Unit,
+    searchQuery: TextFieldValue?,
+    onSearchQueryChange: (TextFieldValue) -> Unit,
+    onOpenSearch: () -> Unit,
+    onCloseSearch: () -> Unit,
+    onWebSearch: (String) -> Unit,
     onOpenSettings: () -> Unit,
     onEnterVox: () -> Unit,
     onExitVox: () -> Unit,
@@ -67,12 +84,7 @@ fun MonologKeyboardView(
     val rowHeight = if (isLandscape) 38.dp else 54.dp
     val recentEmoji = remember { mutableStateListOf<Emoji>() }
 
-    Column(
-        modifier = modifier
-            .fillMaxWidth()
-            .monologBackdrop(keyboard = true)
-            .navigationBarsPadding()
-    ) {
+    Column(modifier.fillMaxWidth().monologBackdrop(keyboard = true).navigationBarsPadding()) {
         // If Vox mode is open, render the full Vox Panel
         if (isVoxOpen) {
             VoxPanel(
@@ -85,7 +97,9 @@ fun MonologKeyboardView(
                 onRequestPermission = onRequestPermission
             )
         } else {
-            if (isShortcutsOpen) {
+            if (searchQuery != null) {
+                KeyboardSearchPanel(searchQuery, onSearchQueryChange, onCloseSearch, onWebSearch)
+            } else if (isShortcutsOpen && shortcutDraft.isEditing) {
                 QuickShortcutsPanel(
                     draft = shortcutDraft,
                     onDraftChange = onDraftChange,
@@ -94,16 +108,35 @@ fun MonologKeyboardView(
                 )
             }
 
-            KeyboardHeader(
-                editorContext = editorContext,
-                isShortcutsOpen = isShortcutsOpen,
-                onToggleShortcuts = onToggleShortcuts,
-                onCaptureContext = onCaptureContext,
-                onOpenSettings = onOpenSettings,
-                onEnterVox = onEnterVox,
-                onCloseKeyboard = onCloseKeyboard,
-                isEditing = isShortcutsOpen && shortcutDraft.isEditing
-            )
+            BoxWithConstraints(Modifier.fillMaxWidth()) {
+                KeyboardHeader(
+                    editorContext = editorContext,
+                    onToggleShortcuts = onToggleShortcuts,
+                    onCaptureContext = onCaptureContext,
+                    onOpenSettings = onOpenSettings,
+                    onEnterVox = onEnterVox,
+                    onCloseKeyboard = onCloseKeyboard,
+                    isEditing = isShortcutsOpen && shortcutDraft.isEditing
+                )
+                if (isShortcutsOpen && !shortcutDraft.isEditing && searchQuery == null) {
+                    val keyboardHeight = if (isLandscape) 244 else 312
+                    val menuHeight = (configuration.screenHeightDp - keyboardHeight).coerceIn(80, 290).dp
+                    Popup(
+                        popupPositionProvider = AboveKeyboardHeader,
+                        onDismissRequest = onDismissShortcuts,
+                        properties = PopupProperties(
+                            focusable = false, dismissOnClickOutside = true, clippingEnabled = false
+                        )
+                    ) {
+                        QuickShortcutsMenu(
+                            panelHeight = menuHeight,
+                            onDraftChange = onDraftChange,
+                            onClose = onToggleShortcuts,
+                            modifier = Modifier.width(minOf(maxWidth, 312.dp))
+                        )
+                    }
+                }
+            }
 
             // Keyboard rows
             Column(
@@ -123,7 +156,7 @@ fun MonologKeyboardView(
                         onToggleEmoji = onToggleEmoji,
                         onSwitchKeyboard = onSwitchKeyboard,
                         onSpace = onSpace,
-                        onCaptureScreen = onCaptureContext,
+                        onOpenSearch = onOpenSearch,
                         onAction = onAction
                     )
 
@@ -137,7 +170,7 @@ fun MonologKeyboardView(
                         onToggleEmoji = onToggleEmoji,
                         onSwitchKeyboard = onSwitchKeyboard,
                         onSpace = onSpace,
-                        onCaptureScreen = onCaptureContext,
+                        onOpenSearch = onOpenSearch,
                         onAction = onAction
                     )
 
@@ -151,7 +184,7 @@ fun MonologKeyboardView(
                         onToggleEmoji = onToggleEmoji,
                         onSwitchKeyboard = onSwitchKeyboard,
                         onSpace = onSpace,
-                        onCaptureScreen = onCaptureContext,
+                        onOpenSearch = onOpenSearch,
                         onAction = onAction
                     )
 
@@ -172,12 +205,25 @@ fun MonologKeyboardView(
                         onToggleLetters = onToggleEmoji,
                         onSwitchKeyboard = onSwitchKeyboard,
                         onSpace = onSpace,
-                        onCaptureScreen = onCaptureContext,
+                        onOpenSearch = onOpenSearch,
                         onAction = onAction
                     )
                 }
             }
         }
+    }
+}
+
+private object AboveKeyboardHeader : PopupPositionProvider {
+    override fun calculatePosition(
+        anchorBounds: IntRect,
+        windowSize: IntSize,
+        layoutDirection: LayoutDirection,
+        popupContentSize: IntSize
+    ): IntOffset {
+        val x = if (layoutDirection == LayoutDirection.Ltr) anchorBounds.right - popupContentSize.width else anchorBounds.left
+        // The IME window starts at the keyboard, so the callout sits at a negative Y offset.
+        return IntOffset(x, anchorBounds.top - popupContentSize.height)
     }
 }
 
@@ -193,7 +239,7 @@ private fun LettersLayout(
     onToggleEmoji: () -> Unit,
     onSwitchKeyboard: () -> Unit,
     onSpace: () -> Unit,
-    onCaptureScreen: () -> Unit,
+    onOpenSearch: () -> Unit,
     onAction: () -> Unit
 ) {
     val isUpper = shiftState.isUppercase
@@ -277,7 +323,7 @@ private fun LettersLayout(
         onEmojiClick = onToggleEmoji,
         onSwitchKeyboard = onSwitchKeyboard,
         onSpace = onSpace,
-        onCaptureScreen = onCaptureScreen,
+        onOpenSearch = onOpenSearch,
         onAction = onAction,
         onCharTyped = onCharTyped
     )
@@ -294,7 +340,7 @@ private fun SymbolsLayout(
     onToggleEmoji: () -> Unit,
     onSwitchKeyboard: () -> Unit,
     onSpace: () -> Unit,
-    onCaptureScreen: () -> Unit,
+    onOpenSearch: () -> Unit,
     onAction: () -> Unit
 ) {
     val row1 = listOf("1", "2", "3", "4", "5", "6", "7", "8", "9", "0")
@@ -361,7 +407,7 @@ private fun SymbolsLayout(
         onEmojiClick = onToggleEmoji,
         onSwitchKeyboard = onSwitchKeyboard,
         onSpace = onSpace,
-        onCaptureScreen = onCaptureScreen,
+        onOpenSearch = onOpenSearch,
         onAction = onAction,
         onCharTyped = onCharTyped
     )
@@ -378,7 +424,7 @@ private fun MoreSymbolsLayout(
     onToggleEmoji: () -> Unit,
     onSwitchKeyboard: () -> Unit,
     onSpace: () -> Unit,
-    onCaptureScreen: () -> Unit,
+    onOpenSearch: () -> Unit,
     onAction: () -> Unit
 ) {
     val row1 = listOf("~", "`", "|", "•", "√", "π", "÷", "×", "¶", "∆")
@@ -445,7 +491,7 @@ private fun MoreSymbolsLayout(
         onEmojiClick = onToggleEmoji,
         onSwitchKeyboard = onSwitchKeyboard,
         onSpace = onSpace,
-        onCaptureScreen = onCaptureScreen,
+        onOpenSearch = onOpenSearch,
         onAction = onAction,
         onCharTyped = onCharTyped
     )
@@ -462,7 +508,7 @@ private fun EmojiLayout(
     onToggleLetters: () -> Unit,
     onSwitchKeyboard: () -> Unit,
     onSpace: () -> Unit,
-    onCaptureScreen: () -> Unit,
+    onOpenSearch: () -> Unit,
     onAction: () -> Unit
 ) {
     EmojiPicker(height = rowHeight * 3 + 8.dp, recent = recent, onPick = onEmojiPicked)
@@ -474,7 +520,7 @@ private fun EmojiLayout(
         onEmojiClick = onToggleLetters,
         onSwitchKeyboard = onSwitchKeyboard,
         onSpace = onSpace,
-        onCaptureScreen = onCaptureScreen,
+        onOpenSearch = onOpenSearch,
         onAction = onAction,
         onCharTyped = onCharTyped,
         onEmojiBackspace = onBackspace
@@ -490,7 +536,7 @@ private fun BottomRow(
     onEmojiClick: () -> Unit,
     onSwitchKeyboard: () -> Unit,
     onSpace: () -> Unit,
-    onCaptureScreen: () -> Unit,
+    onOpenSearch: () -> Unit,
     onAction: () -> Unit,
     onCharTyped: (String) -> Unit,
     onEmojiBackspace: (() -> Unit)? = null
@@ -511,8 +557,8 @@ private fun BottomRow(
             Modifier.weight(4.1f),
             isPill = true,
             label = "Space",
-            longClickLabel = "Capture screen",
-            onLongClick = onCaptureScreen.takeUnless { editorContext.isIncognito },
+            longClickLabel = "Open Monolog AI search",
+            onLongClick = onOpenSearch.takeUnless { editorContext.isIncognito },
             onClick = onSpace
         ) {
             Row(
@@ -520,7 +566,7 @@ private fun BottomRow(
                 horizontalArrangement = androidx.compose.foundation.layout.Arrangement.spacedBy(12.dp)
             ) {
                 androidx.compose.material3.Text("English", color = PaperKeyText, fontSize = 15.sp)
-                if (!editorContext.isIncognito) MonologIcon(Glyph.CAPTURE, Modifier.size(17.dp))
+                if (!editorContext.isIncognito) MonologIcon(Glyph.BOLT, Modifier.size(17.dp))
             }
         }
         // Combined Incognito & Dot button:

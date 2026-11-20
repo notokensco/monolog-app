@@ -6,8 +6,6 @@
     <uses-permission android:name="com.android.alarm.permission.SET_ALARM" />
     <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
     <uses-permission android:name="android.permission.RECEIVE_BOOT_COMPLETED" />
-    <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
-    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_MEDIA_PROJECTION" />
     <uses-permission android:name="android.permission.INTERNET" tools:node="remove" />
 
     <queries>
@@ -25,6 +23,10 @@
         android:roundIcon="@mipmap/ic_launcher_round"
         android:supportsRtl="true"
         android:theme="@style/Theme.Monolog">
+        <provider
+            android:name="com.google.mlkit.common.internal.MlKitInitProvider"
+            android:authorities="${applicationId}.mlkitinitprovider"
+            tools:node="remove" />
         <activity
             android:name=".MainActivity"
             android:exported="true"
@@ -44,16 +46,20 @@
             android:label="@string/keyboard_settings"
             android:targetActivity=".MainActivity" />
         <activity
-            android:name=".capture.ContextCaptureActivity"
+            android:name=".capture.CaptureSetupActivity"
             android:exported="false"
             android:excludeFromRecents="true"
-            android:launchMode="singleTop"
-            android:taskAffinity="${applicationId}.capture"
             android:theme="@style/Theme.Monolog.Capture" />
         <service
-            android:name=".capture.ProjectionCaptureService"
-            android:exported="false"
-            android:foregroundServiceType="mediaProjection" />
+            android:name=".capture.ScreenCaptureService"
+            android:exported="true"
+            android:label="@string/quick_capture_name"
+            android:permission="android.permission.BIND_ACCESSIBILITY_SERVICE">
+            <intent-filter>
+                <action android:name="android.accessibilityservice.AccessibilityService" />
+            </intent-filter>
+            <meta-data android:name="android.accessibilityservice" android:resource="@xml/quick_capture_service" />
+        </service>
 
         <service
             android:name=".ime.MonologInputMethodService"
