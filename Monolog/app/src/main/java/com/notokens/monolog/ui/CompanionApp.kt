@@ -9,6 +9,7 @@ import androidx.activity.result.PickVisualMediaRequest
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.ScrollState
 import androidx.compose.foundation.background
+import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
@@ -17,6 +18,7 @@ import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.selection.selectable
 import androidx.compose.foundation.selection.selectableGroup
+import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.*
@@ -255,8 +257,26 @@ fun CompanionApp(
                                 item(key = day, contentType = "heading") {
                                     Text(day, color = muted, modifier = Modifier.padding(start = 12.dp), fontWeight = FontWeight.Medium)
                                 }
-                                items(entries, key = { it.id }, contentType = { "note" }) { note ->
-                                    NoteTile(note, photosByNote[note.id].orEmpty()) { nav.navigate("note/${note.id}") }
+                                item(key = "grid_$day", contentType = "entries_grid") {
+                                    Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                                        entries.chunked(2).forEach { pair ->
+                                            Row(
+                                                modifier = Modifier.fillMaxWidth(),
+                                                horizontalArrangement = Arrangement.spacedBy(10.dp)
+                                            ) {
+                                                pair.forEach { note ->
+                                                    Box(modifier = Modifier.weight(1f)) {
+                                                        NoteTile(note, photosByNote[note.id].orEmpty()) {
+                                                            nav.navigate("note/${note.id}")
+                                                        }
+                                                    }
+                                                }
+                                                if (pair.size == 1) {
+                                                    Spacer(modifier = Modifier.weight(1f))
+                                                }
+                                            }
+                                        }
+                                    }
                                 }
                             }
                         }
@@ -442,6 +462,38 @@ fun CompanionApp(
                                     Switch(checked = shortcutHaptics, onCheckedChange = { scope.launch { settings.setShortcutHaptics(it) } })
                                 }
                             }
+                            Spacer(Modifier.height(16.dp))
+
+                            val captureBorderColorHex by settings.captureBorderColor.collectAsState(initial = "#FFB800")
+                            Column(Modifier.fillMaxWidth().glassSurface(24, GlassAccent.BLUE).padding(16.dp)) {
+                                Text("Context Capture Border", color = ink, style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.SemiBold)
+                                Spacer(Modifier.height(4.dp))
+                                Text("Select the highlighted border color for screen captures.", color = muted, style = MaterialTheme.typography.bodySmall)
+                                Spacer(Modifier.height(10.dp))
+                                Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                                    listOf(
+                                        "#FFB800" to "Yellow",
+                                        "#4A70F5" to "Blue",
+                                        "#E53E3E" to "Red",
+                                        "#38A169" to "Green",
+                                        "#9F7AEA" to "Purple"
+                                    ).forEach { (hex, name) ->
+                                        val isSelected = captureBorderColorHex.equals(hex, ignoreCase = true)
+                                        Box(
+                                            modifier = Modifier
+                                                .size(36.dp)
+                                                .clip(CircleShape)
+                                                .background(Color(android.graphics.Color.parseColor(hex)))
+                                                .border(
+                                                    if (isSelected) 3.dp else 1.dp,
+                                                    if (isSelected) Color.White else Color.Transparent,
+                                                    CircleShape
+                                                )
+                                                .clickable { scope.launch { settings.setCaptureBorderColor(hex) } }
+                                        )
+                                    }
+                                }
+                            }
                             Spacer(Modifier.height(20.dp))
                             Text("Keyboard setup", color = ink, style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.SemiBold)
                             Spacer(Modifier.height(10.dp))
@@ -587,29 +639,59 @@ private fun EmptyCard(title: String, body: String) {
 
 @Composable
 private fun NoteTile(note: Note, photos: List<NotePhotoRef>, onClick: () -> Unit) {
-    val excerpt = remember(note.body) { markdownExcerpt(note.body).take(150) }
-    Row(
-        Modifier.fillMaxWidth().glassSurface(20, GlassAccent.LAVENDER).clickable(onClick = onClick).padding(12.dp),
-        horizontalArrangement = Arrangement.spacedBy(12.dp), verticalAlignment = Alignment.CenterVertically
+    val excerpt = remember(note.body) { markdownExcerpt(note.body).take(120) }
+    Column(
+        Modifier
+            .fillMaxWidth()
+            .heightIn(min = 140.dp)
+            .glassSurface(20, GlassAccent.LAVENDER)
+            .clickable(onClick = onClick)
+            .padding(12.dp),
+        verticalArrangement = Arrangement.SpaceBetween
     ) {
-        photos.firstOrNull()?.let {
-            JournalPhotoImage(
-                JournalPhoto.Saved(it.id), "Attached photo", Modifier.size(76.dp).clip(RoundedCornerShape(12.dp)),
-                thumbnailSize = 76.dp
+        Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
+            photos.firstOrNull()?.let {
+                JournalPhotoImage(
+                    JournalPhoto.Saved(it.id),
+                    "Attached photo",
+                    Modifier
+                        .fillMaxWidth()
+                        .height(80.dp)
+                        .clip(RoundedCornerShape(12.dp)),
+                    thumbnailSize = 80.dp
+                )
+            }
+            Text(
+                note.title,
+                color = ink,
+                style = MaterialTheme.typography.titleSmall,
+                fontWeight = FontWeight.SemiBold,
+                maxLines = 2,
+                overflow = TextOverflow.Ellipsis
             )
-        }
-        Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(4.dp)) {
-            Text(note.title, color = ink, style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.SemiBold)
-            if (excerpt.isNotEmpty()) {
-                Text(excerpt, color = muted, style = MaterialTheme.typography.bodyMedium, maxLines = 2, overflow = TextOverflow.Ellipsis)
-            }
-            if (photos.isNotEmpty()) {
-                Text(if (photos.size == 1) "1 photo" else "${photos.size} photos", color = PaperAccentBlue, style = MaterialTheme.typography.labelMedium)
-            } else if (excerpt.isEmpty()) {
-                Text(formatTime(note.updatedAt), color = muted, style = MaterialTheme.typography.bodySmall)
+            if (excerpt.isNotEmpty() && photos.isEmpty()) {
+                Text(
+                    excerpt,
+                    color = muted,
+                    style = MaterialTheme.typography.bodySmall,
+                    maxLines = 3,
+                    overflow = TextOverflow.Ellipsis
+                )
             }
         }
-        MonologIcon(Glyph.ARROW, Modifier.size(16.dp), PaperAccentBlue)
+
+        Row(
+            Modifier.fillMaxWidth().padding(top = 4.dp),
+            horizontalArrangement = Arrangement.SpaceBetween,
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            Text(
+                if (photos.isNotEmpty()) "${photos.size} photo" else formatTime(note.updatedAt),
+                color = if (photos.isNotEmpty()) PaperAccentBlue else muted,
+                style = MaterialTheme.typography.labelSmall
+            )
+            MonologIcon(Glyph.ARROW, Modifier.size(14.dp), PaperAccentBlue)
+        }
     }
 }
 

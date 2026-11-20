@@ -26,10 +26,13 @@ enum class QuickShortcut { REMINDER, ALARM, JOURNAL }
 class SettingsStore(private val context: Context) {
     private val shortcutHoldKey = intPreferencesKey("shortcut_hold_ms")
     private val shortcutHapticsKey = booleanPreferencesKey("shortcut_haptics")
+    private val captureBorderColorKey = stringPreferencesKey("capture_border_color")
     val shortcutHoldMs: Flow<Int> = context.monologSettings.data.map { (it[shortcutHoldKey] ?: 500).coerceIn(250, 1500) }.distinctUntilChanged()
     val shortcutHaptics: Flow<Boolean> = context.monologSettings.data.map { it[shortcutHapticsKey] ?: true }.distinctUntilChanged()
+    val captureBorderColor: Flow<String> = context.monologSettings.data.map { it[captureBorderColorKey] ?: "#FFB800" }.distinctUntilChanged()
     suspend fun setShortcutHoldMs(value: Int) { context.monologSettings.edit { it[shortcutHoldKey] = value.coerceIn(250, 1500) } }
     suspend fun setShortcutHaptics(value: Boolean) { context.monologSettings.edit { it[shortcutHapticsKey] = value } }
+    suspend fun setCaptureBorderColor(value: String) { context.monologSettings.edit { it[captureBorderColorKey] = value } }
 
     private val incognitoKey = booleanPreferencesKey("incognito")
     private val themeModeKey = stringPreferencesKey("theme_mode")

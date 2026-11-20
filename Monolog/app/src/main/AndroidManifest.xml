@@ -50,6 +50,11 @@
             android:exported="false"
             android:excludeFromRecents="true"
             android:theme="@style/Theme.Monolog.Capture" />
+        <activity
+            android:name=".capture.CaptureAnnotationActivity"
+            android:exported="false"
+            android:excludeFromRecents="true"
+            android:theme="@style/Theme.Monolog.Capture" />
         <service
             android:name=".capture.ScreenCaptureService"
             android:exported="true"
