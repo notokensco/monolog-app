@@ -49,14 +49,15 @@ internal object RewritePipeline {
         val instruction = AiText.answerPrompt(question, evidence)
         val nano = NanoAi.answer(context, instruction)
         if (nano != null) return verifiedAnswer(question, nano, evidence)
-        return when (val result = LocalAi.request(context, instruction, 80)) {
+        return when (val result = LocalAi.request(context, instruction, 160)) {
             is GemmaResult.Answer -> verifiedAnswer(question, result.text, evidence)
             else -> AiPreview(gemmaMessage(result))
         }
     }
 
     private fun verifiedAnswer(question: String, text: String, evidence: String): AiPreview =
-        AiText.checkedAnswer(question, text, evidence)?.let { edit(it, generated = true) } ?: AiPreview(AiText.UNKNOWN_ANSWER)
+        AiText.checkedAnswer(question, text, evidence)?.let { edit(it, generated = true) }
+            ?: AiPreview(AiText.UNKNOWN_ANSWER, detail = "Turn Web on for a sourced answer.")
 
     private fun gemmaMessage(result: GemmaResult): String = when (result) {
         GemmaResult.Missing -> "Download Gemma in Monolog Settings → On-device AI."

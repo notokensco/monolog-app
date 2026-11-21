@@ -57,7 +57,7 @@ class AiTextTest {
 
     @Test
     fun naturalAnswersAndUsefulShortRewritesPassTheChecks() {
-        assertEquals("who is Napoleon?", AiText.answerPrompt("Hi, who is Napoleon?"))
+        assertTrue(AiText.answerPrompt("Hi, who is Napoleon?").endsWith("Question: who is Napoleon?"))
         val answer = "He was a French military commander.\nHe served as emperor."
         assertEquals(answer, AiText.checkedAnswer("Hi, who was Napoleon?", answer))
         assertFalse(AiText.isBareFragment("send me the report"))
@@ -73,5 +73,11 @@ class AiTextTest {
         assertNull(AiText.proactiveQuestion("I sent a note. Who was Napoleon?"))
         val today = LocalDate.of(2026, 11, 21)
         assertEquals(today.plusDays(1), AiText.weatherLookup("Hey, how is the weather tomorrow?", today)?.date)
+    }
+
+    @Test
+    fun conversationalQuestionsBecomeEncyclopediaTopics() {
+        assertEquals("anthropic", AiText.encyclopediaQuery("So do you know about anthropic"))
+        assertEquals("Napoleon", AiText.encyclopediaQuery("Tell me about Napoleon?"))
     }
 }

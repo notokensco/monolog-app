@@ -52,6 +52,8 @@ import com.notokens.monolog.ime.SwipePoint
 import com.notokens.monolog.ime.shortcuts.QuickShortcutsMenu
 import com.notokens.monolog.ime.shortcuts.QuickShortcutsPanel
 import com.notokens.monolog.ime.shortcuts.ShortcutDraft
+import com.notokens.monolog.ime.shortcuts.ShortcutSuggestion
+import com.notokens.monolog.capture.ScreenCaptureService
 import com.notokens.monolog.ui.*
 import com.notokens.monolog.ime.vox.VoxPanel
 import com.notokens.monolog.ime.vox.VoxState
@@ -66,6 +68,7 @@ internal fun MonologKeyboardView(
     isVoxOpen: Boolean,
     shortcutDraft: ShortcutDraft,
     onDraftChange: (ShortcutDraft) -> Unit,
+    onSuggestedShortcut: (ShortcutSuggestion) -> Unit,
     onToggleShortcuts: () -> Unit,
     onCaptureContext: () -> Unit,
     onDismissShortcuts: () -> Unit,
@@ -75,6 +78,7 @@ internal fun MonologKeyboardView(
     onCloseSearch: () -> Unit,
     ai: ImeAi,
     aiAllowed: Boolean,
+    swipeAllowed: Boolean,
     language: KeyboardLanguage,
     onOpenSettings: () -> Unit,
     onEnterVox: () -> Unit,
@@ -123,6 +127,20 @@ internal fun MonologKeyboardView(
             )
             if (aiAllowed) ai.toolbar?.let { AiResultCard(it, ai::apply) }
         } else {
+            if (editorContext.isIncognito) {
+                Row(Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 8.dp),
+                    verticalAlignment = Alignment.CenterVertically) {
+                    MonologIcon(Glyph.PRIVACY, Modifier.size(24.dp))
+                    Spacer(Modifier.width(10.dp))
+                    Column(Modifier.weight(1f)) {
+                        androidx.compose.material3.Text("Incognito is on", color = PaperKeyText, fontSize = 14.sp,
+                            fontWeight = FontWeight.SemiBold)
+                        androidx.compose.material3.Text("Nothing saved", color = PaperKeyText.copy(alpha = .7f), fontSize = 11.sp)
+                    }
+                    androidx.compose.material3.Text(if (editorContext.isUserIncognito) "15 minutes" else "Automatic",
+                        color = PaperKeyText.copy(alpha = .7f), fontSize = 11.sp)
+                }
+            }
             if (searchQuery == null && isShortcutsOpen && shortcutDraft.isEditing) {
                 QuickShortcutsPanel(
                     draft = shortcutDraft,
@@ -144,7 +162,13 @@ internal fun MonologKeyboardView(
                     onOpenSettings = onOpenSettings,
                     onEnterVox = onEnterVox,
                     onCloseKeyboard = onCloseKeyboard,
-                    onToggleIncognito = onToggleIncognito
+                    onToggleIncognito = onToggleIncognito,
+                    isContextActive = !editorContext.isIncognito && (isShortcutsOpen || ScreenCaptureService.isReady),
+                    suggestions = {
+                        if (aiAllowed && !isShortcutsOpen && searchQuery == null) {
+                            KeyboardSuggestionStrip(ai, language, onSuggestedShortcut)
+                        }
+                    }
                 )
                 if (searchQuery != null) {
                     Popup(
@@ -193,7 +217,7 @@ internal fun MonologKeyboardView(
                         editorContext = editorContext,
                         language = language,
                         onCharTyped = onCharTyped,
-                        swipeEnabled = aiAllowed && language.id == "en" && (!isShortcutsOpen || shortcutDraft.isEditing),
+                        swipeEnabled = swipeAllowed && language.id == "en" && (!isShortcutsOpen || shortcutDraft.isEditing),
                         onSwipe = onSwipe,
                         onShiftClick = onShiftClick,
                         onCapsLock = onCapsLock,
@@ -203,6 +227,7 @@ internal fun MonologKeyboardView(
                         onSpace = onSpace,
                         onOpenSearch = onOpenSearch,
                         isAiActive = isAiActive,
+                        onToggleIncognito = onToggleIncognito,
                         onAction = onAction
                     )
 
@@ -217,6 +242,7 @@ internal fun MonologKeyboardView(
                         onSpace = onSpace,
                         onOpenSearch = onOpenSearch,
                         isAiActive = isAiActive,
+                        onToggleIncognito = onToggleIncognito,
                         onAction = onAction
                     )
 
@@ -231,6 +257,7 @@ internal fun MonologKeyboardView(
                         onSpace = onSpace,
                         onOpenSearch = onOpenSearch,
                         isAiActive = isAiActive,
+                        onToggleIncognito = onToggleIncognito,
                         onAction = onAction
                     )
 
@@ -252,6 +279,7 @@ internal fun MonologKeyboardView(
                         onSpace = onSpace,
                         onOpenSearch = onOpenSearch,
                         isAiActive = isAiActive,
+                        onToggleIncognito = onToggleIncognito,
                         onAction = onAction
                     )
                 }
@@ -290,6 +318,7 @@ private fun LettersLayout(
     onSpace: () -> Unit,
     onOpenSearch: () -> Unit,
     isAiActive: Boolean,
+    onToggleIncognito: () -> Unit,
     onAction: () -> Unit
 ) {
     val isUpper = shiftState.isUppercase
@@ -361,6 +390,7 @@ private fun LettersLayout(
         onSpace = onSpace,
         onOpenSearch = onOpenSearch,
         isAiActive = isAiActive,
+        onToggleIncognito = onToggleIncognito,
         onAction = onAction,
         onCharTyped = onCharTyped
     )
@@ -378,6 +408,7 @@ private fun SymbolsLayout(
     onSpace: () -> Unit,
     onOpenSearch: () -> Unit,
     isAiActive: Boolean,
+    onToggleIncognito: () -> Unit,
     onAction: () -> Unit
 ) {
     val row1 = listOf("1", "2", "3", "4", "5", "6", "7", "8", "9", "0")
@@ -445,6 +476,7 @@ private fun SymbolsLayout(
         onSpace = onSpace,
         onOpenSearch = onOpenSearch,
         isAiActive = isAiActive,
+        onToggleIncognito = onToggleIncognito,
         onAction = onAction,
         onCharTyped = onCharTyped
     )
@@ -462,6 +494,7 @@ private fun MoreSymbolsLayout(
     onSpace: () -> Unit,
     onOpenSearch: () -> Unit,
     isAiActive: Boolean,
+    onToggleIncognito: () -> Unit,
     onAction: () -> Unit
 ) {
     val row1 = listOf("~", "`", "|", "•", "√", "π", "÷", "×", "¶", "∆")
@@ -529,6 +562,7 @@ private fun MoreSymbolsLayout(
         onSpace = onSpace,
         onOpenSearch = onOpenSearch,
         isAiActive = isAiActive,
+        onToggleIncognito = onToggleIncognito,
         onAction = onAction,
         onCharTyped = onCharTyped
     )
@@ -546,6 +580,7 @@ private fun EmojiLayout(
     onSpace: () -> Unit,
     onOpenSearch: () -> Unit,
     isAiActive: Boolean,
+    onToggleIncognito: () -> Unit,
     onAction: () -> Unit
 ) {
     EmojiPicker(height = rowHeight * 3 + 8.dp, recent = recent, onPick = onEmojiPicked)
@@ -558,6 +593,7 @@ private fun EmojiLayout(
         onSpace = onSpace,
         onOpenSearch = onOpenSearch,
         isAiActive = isAiActive,
+        onToggleIncognito = onToggleIncognito,
         onAction = onAction,
         onCharTyped = onCharTyped,
         onEmojiBackspace = onBackspace
@@ -574,6 +610,7 @@ private fun BottomRow(
     onSpace: () -> Unit,
     onOpenSearch: () -> Unit,
     isAiActive: Boolean,
+    onToggleIncognito: () -> Unit,
     onAction: () -> Unit,
     onCharTyped: (String) -> Unit,
     onEmojiBackspace: (() -> Unit)? = null
@@ -583,20 +620,15 @@ private fun BottomRow(
     val languageId by settings.keyboardLanguage.collectAsState(initial = "en")
     val language = KeyboardLanguage.of(languageId)
     Row(modifier = Modifier.fillMaxWidth().height(rowHeight + 4.dp)) {
-        KeyButton(Modifier.weight(1.35f), text = modeLabel, fontSize = 17.sp, onClick = onModeClick)
+        KeyButton(Modifier.weight(1.2f), text = modeLabel, fontSize = 16.sp, onClick = onModeClick)
+        KeyButton(Modifier.weight(.7f), text = ",", label = "Comma", onClick = { onCharTyped(",") })
+        KeyButton(Modifier.weight(.8f), glyph = Glyph.SMILE,
+            label = if (onEmojiBackspace == null) "Open emoji picker" else "Return to letters", onClick = onEmojiClick)
         KeyButton(
-            modifier = Modifier.weight(1f),
-            text = ".",
-            subText = "☺",
-            label = "Period",
-            longClickLabel = if (onEmojiBackspace == null) "Open emoji picker" else "Return to letters",
-            onLongClick = onEmojiClick,
-            onClick = { onCharTyped(".") }
-        )
-        KeyButton(
-            Modifier.weight(4.1f),
+            Modifier.weight(if (onEmojiBackspace == null) 4.1f else 3.2f),
             isPill = true,
             isActive = isAiActive,
+            glow = isAiActive,
             label = if (isAiActive) "Space, Monolog AI active" else "Space",
             longClickLabel = if (isAiActive) "Close Monolog AI" else "Open Monolog AI search",
             onLongClick = onOpenSearch.takeUnless { editorContext.isIncognito },
@@ -610,6 +642,23 @@ private fun BottomRow(
                     color = if (isAiActive) androidx.compose.material3.MaterialTheme.colorScheme.primary else PaperKeyText,
                     fontSize = 15.sp, maxLines = 1, overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis)
                 if (!editorContext.isIncognito) MonologIcon(Glyph.BOLT, Modifier.size(17.dp))
+            }
+        }
+        KeyButton(
+            Modifier.weight(1f),
+            label = if (editorContext.isIncognito) "Period, incognito on" else "Period, incognito off",
+            longClickLabel = when {
+                editorContext.isUserIncognito -> "Turn off incognito"
+                editorContext.isIncognito -> "Incognito is automatic for this private field"
+                else -> "Turn on incognito for 15 minutes"
+            },
+            onLongClick = onToggleIncognito,
+            glow = editorContext.isIncognito,
+            onClick = { onCharTyped(".") }
+        ) {
+            Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                MonologIcon(Glyph.PRIVACY, Modifier.size(18.dp))
+                androidx.compose.material3.Text(".", color = PaperKeyText, fontSize = 17.sp, lineHeight = 16.sp)
             }
         }
         if (onEmojiBackspace != null) {

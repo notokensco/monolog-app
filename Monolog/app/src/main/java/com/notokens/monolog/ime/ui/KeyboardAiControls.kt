@@ -32,37 +32,43 @@ import com.notokens.monolog.ui.glassSurface
 import com.notokens.monolog.ui.theme.PaperKeyText
 
 @Composable
-internal fun KeyboardAiControls(ai: ImeAi, language: KeyboardLanguage) {
-    if (ai.rewriteOpen || ai.hasDraft || ai.suggestions.isNotEmpty()) {
-        Row(
-            Modifier.fillMaxWidth().padding(horizontal = 8.dp),
-            verticalAlignment = Alignment.CenterVertically
-        ) {
+internal fun KeyboardSuggestionStrip(
+    ai: ImeAi,
+    language: KeyboardLanguage,
+    onShortcut: (com.notokens.monolog.ime.shortcuts.ShortcutSuggestion) -> Unit
+) {
+    Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+        Row(Modifier.weight(1f).horizontalScroll(rememberScrollState()),
+            verticalAlignment = Alignment.CenterVertically) {
             if (ai.rewriteOpen) {
-                val styles = if (language.id == "en" || language.translationCode != null) {
-                    RewriteStyle.entries
-                } else listOf(RewriteStyle.POLISH)
-                Row(Modifier.weight(1f).horizontalScroll(rememberScrollState())) {
-                    styles.forEach { style ->
-                        ToolbarAction(style.label, enabled = !ai.busy) { ai.rewrite(style, language) }
-                    }
-                    if (language.translationCode != null) {
-                        ToolbarAction("To English", enabled = !ai.busy) {
-                            ai.rewrite(RewriteStyle.POLISH, language, translate = true)
-                        }
-                    }
+                val styles = if (language.id == "en" || language.translationCode != null) RewriteStyle.entries
+                    else listOf(RewriteStyle.POLISH)
+                styles.forEach { style ->
+                    ToolbarAction(style.label, enabled = !ai.busy) { ai.rewrite(style, language) }
                 }
-                ToolbarAction("Close", onClick = ai::closePanel)
+                if (language.translationCode != null) ToolbarAction("To English", enabled = !ai.busy) {
+                    ai.rewrite(RewriteStyle.POLISH, language, translate = true)
+                }
             } else {
-                Row(Modifier.weight(1f).horizontalScroll(rememberScrollState())) {
-                    ai.suggestions.forEach { suggestion ->
-                        ToolbarAction(suggestion.replacement.trimEnd()) { ai.applyWord(suggestion) }
-                    }
+                ai.shortcutSuggestion?.let { suggestion ->
+                    ToolbarAction(suggestion.label) { onShortcut(suggestion) }
                 }
                 if (ai.hasDraft) ToolbarAction("Rewrite") { ai.openRewrite(language) }
+                ai.suggestions.forEach { suggestion ->
+                    ToolbarAction(suggestion.replacement.trimEnd()) { ai.applyWord(suggestion) }
+                }
+                if (!ai.hasDraft && ai.suggestions.isEmpty()) {
+                    Text("Suggestions", Modifier.padding(horizontal = 10.dp), color = PaperKeyText.copy(alpha = .5f),
+                        style = MaterialTheme.typography.labelMedium)
+                }
             }
         }
+        if (ai.rewriteOpen) ToolbarAction("Close", onClick = ai::closePanel)
     }
+}
+
+@Composable
+internal fun KeyboardAiControls(ai: ImeAi, language: KeyboardLanguage) {
     if (ai.busy) Text("Working…", Modifier.padding(horizontal = 12.dp), color = PaperKeyText)
     ai.preview?.let { AiResultCard(it, ai::apply) }
     AnimatedContent(

@@ -41,6 +41,8 @@ fun KeyboardHeader(
     onEnterVox: () -> Unit,
     onCloseKeyboard: () -> Unit,
     onToggleIncognito: () -> Unit,
+    isContextActive: Boolean = false,
+    suggestions: @Composable () -> Unit = {},
     modifier: Modifier = Modifier
 ) {
     Row(
@@ -50,17 +52,13 @@ fun KeyboardHeader(
     ) {
         KeyboardMenu(editorContext.isUserIncognito, onOpenSettings, onToggleIncognito, onCloseKeyboard)
         Box(Modifier.weight(1f), contentAlignment = Alignment.Center) {
-            if (editorContext.isIncognito) Row(
-                verticalAlignment = Alignment.CenterVertically,
-                horizontalArrangement = Arrangement.spacedBy(6.dp)
-            ) {
-                MonologIcon(Glyph.SHIELD, Modifier.size(16.dp))
-                Text("Private typing", color = PaperKeyText, fontSize = 14.sp)
-            }
+            if (editorContext.isIncognito) Text("Monolog", color = PaperKeyText, fontSize = 14.sp)
+            else suggestions()
         }
         if (!editorContext.isIncognito) IconControl(Glyph.MIC, "Open Vox", onEnterVox)
         ContextKey(
             enabled = !editorContext.isIncognito,
+            active = isContextActive,
             onClick = onCaptureContext,
             onLongClick = onToggleShortcuts
         )
@@ -101,6 +99,7 @@ private object LeftMenuAboveKeyboard : PopupPositionProvider {
 @OptIn(ExperimentalFoundationApi::class)
 private fun ContextKey(
     enabled: Boolean = true,
+    active: Boolean = false,
     onClick: () -> Unit,
     onLongClick: () -> Unit
 ) {
@@ -118,6 +117,7 @@ private fun ContextKey(
     CompositionLocalProvider(LocalViewConfiguration provides configuration) {
         Box(
             Modifier.size(48.dp)
+                .activeKeyGlow(active)
                 .clip(RoundedCornerShape(12.dp))
                 .combinedClickable(
                     enabled = enabled,

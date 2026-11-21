@@ -45,6 +45,7 @@ import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.layout.onGloballyPositioned
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
@@ -279,7 +280,7 @@ private fun CaptureAnnotationScreen(
             .systemBarsPadding()
     ) {
         Column(
-            modifier = Modifier.fillMaxSize(),
+            modifier = Modifier.fillMaxSize().imePadding().verticalScroll(rememberScrollState()),
             horizontalAlignment = Alignment.CenterHorizontally
         ) {
             // Top control bar
@@ -358,7 +359,8 @@ private fun CaptureAnnotationScreen(
             // Screenshot preview card with custom accent border
             Box(
                 modifier = Modifier
-                    .weight(1f)
+                    .fillMaxWidth()
+                    .height((LocalConfiguration.current.screenHeightDp * .68f).dp)
                     .padding(horizontal = 16.dp, vertical = 6.dp)
                     .clip(RoundedCornerShape(26.dp))
                     .border(2.5.dp, accentColor, RoundedCornerShape(26.dp))

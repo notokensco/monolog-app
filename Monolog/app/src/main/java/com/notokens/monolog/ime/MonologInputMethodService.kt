@@ -24,9 +24,11 @@ import com.notokens.monolog.capture.CaptureSetupActivity
 import com.notokens.monolog.capture.ScreenCaptureService
 import com.notokens.monolog.data.SettingsStore
 import com.notokens.monolog.data.Appearance
+import com.notokens.monolog.data.ThemeMode
 import com.notokens.monolog.ime.ui.MonologKeyboardView
 import com.notokens.monolog.ime.ui.preloadEmojiCatalog
 import com.notokens.monolog.ime.shortcuts.ShortcutDraft
+import com.notokens.monolog.ime.shortcuts.ShortcutSuggestion
 import com.notokens.monolog.ime.vox.VoxController
 import com.notokens.monolog.ime.vox.VoxState
 import com.notokens.monolog.ui.theme.MonologTheme
@@ -73,6 +75,10 @@ class MonologInputMethodService : LifecycleInputMethodService() {
 
     private fun aiAllowed(): Boolean = privacyReady && editorActive && !editorContext.isIncognito &&
         !editorContext.isNumber && !editorContext.isEmail && !editorContext.isUri
+
+    // Address bars are text editors too. Local gesture decoding does not need AI permission.
+    private fun swipeAllowed(): Boolean = privacyReady && editorActive &&
+        !editorContext.isIncognito && !editorContext.isNumber
 
     override fun onCreate() {
         super.onCreate()
@@ -127,7 +133,7 @@ class MonologInputMethodService : LifecycleInputMethodService() {
             )
             setContent {
                 val appearance by settingsStore.appearance.collectAsState(initial = Appearance())
-                MonologTheme(appearance = appearance) {
+                MonologTheme(appearance = if (editorContext.isIncognito) appearance.copy(theme = ThemeMode.INK) else appearance) {
                     val lightBars = !LocalMonologDark.current
                     SideEffect {
                         window?.window?.let { imeWindow ->
@@ -143,6 +149,7 @@ class MonologInputMethodService : LifecycleInputMethodService() {
                         isVoxOpen = isVoxOpen,
                         shortcutDraft = shortcutDraft,
                         onDraftChange = { shortcutDraft = it },
+                        onSuggestedShortcut = ::handleSuggestedShortcut,
                         onToggleShortcuts = ::handleToggleShortcuts,
                         onCaptureContext = ::handleCaptureContext,
                         onDismissShortcuts = ::dismissShortcuts,
@@ -152,6 +159,7 @@ class MonologInputMethodService : LifecycleInputMethodService() {
                         onCloseSearch = ::handleCloseSearch,
                         ai = ai,
                         aiAllowed = aiAllowed(),
+                        swipeAllowed = swipeAllowed(),
                         language = language,
                         onOpenSettings = ::handleOpenSettings,
                         onEnterVox = ::handleEnterVox,
@@ -285,6 +293,19 @@ class MonologInputMethodService : LifecycleInputMethodService() {
         shortcutDraft = ShortcutDraft()
     }
 
+    private fun handleSuggestedShortcut(suggestion: ShortcutSuggestion) {
+        if (!aiAllowed() || suggestion != ai.shortcutSuggestion) return
+        swipeJob?.cancel()
+        searchQuery = null
+        ai.closePanel()
+        shortcutDraft = ShortcutDraft(page = suggestion.page,
+            title = TextFieldValue(suggestion.title, TextRange(suggestion.title.length)),
+            body = TextFieldValue(suggestion.body, TextRange(suggestion.body.length)),
+            dueAt = suggestion.dueAt)
+        isShortcutsOpen = true
+        keyboardState = keyboardState.switchToLetters()
+    }
+
     private var shortcutsDismissedAt = 0L
     private fun dismissShortcuts() {
         isShortcutsOpen = false
@@ -375,7 +396,7 @@ class MonologInputMethodService : LifecycleInputMethodService() {
     }
 
     private fun handleSwipe(points: List<SwipePoint>) {
-        if (!aiAllowed() || language.id != "en" || keyboardState.layer != KeyboardLayer.LETTERS) return
+        if (!swipeAllowed() || language.id != "en" || keyboardState.layer != KeyboardLayer.LETTERS) return
         val connection = currentInputConnection ?: return
         val query = searchQuery
         val shortcut = shortcutDraft.takeIf { isShortcutsOpen && it.isEditing }
@@ -385,7 +406,7 @@ class MonologInputMethodService : LifecycleInputMethodService() {
         swipeJob = settingsScope.launch {
             val word = withContext(Dispatchers.Default) { dictionary.swipeDecoder.decode(points) } ?: return@launch
             // A swipe belongs to the editor and cursor that were active when it ended.
-            if (!aiAllowed() || language.id != "en" || currentInputConnection !== connection ||
+            if (!swipeAllowed() || language.id != "en" || currentInputConnection !== connection ||
                 searchQuery != query || keyboardState != state ||
                 shortcut != shortcutDraft.takeIf { isShortcutsOpen && it.isEditing } ||
                 isShortcutsOpen && shortcut == null ||
@@ -501,6 +522,10 @@ class MonologInputMethodService : LifecycleInputMethodService() {
     }
 
     private fun handleToggleIncognito() {
+        if (editorContext.isIncognito && !editorContext.isUserIncognito) {
+            Toast.makeText(this, "Incognito is automatic for this private field", Toast.LENGTH_SHORT).show()
+            return
+        }
         settingsScope.launch {
             val next = !editorContext.isUserIncognito
             settingsStore.setKeyboardIncognito(next)

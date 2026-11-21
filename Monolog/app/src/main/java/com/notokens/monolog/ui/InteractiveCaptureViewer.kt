@@ -180,7 +180,7 @@ fun InteractiveCaptureViewer(
             if (hasChanges) saveAllChanges()
             onDismiss()
         },
-        properties = DialogProperties(usePlatformDefaultWidth = false)
+        properties = DialogProperties(usePlatformDefaultWidth = false, decorFitsSystemWindows = false)
     ) {
         BoxWithConstraints(
             modifier = Modifier
@@ -190,7 +190,8 @@ fun InteractiveCaptureViewer(
         ) {
             val previewHeight = (maxHeight * .82f).coerceIn(200.dp, 720.dp)
             Column(
-                modifier = Modifier.fillMaxSize().verticalScroll(rememberScrollState()),
+                modifier = Modifier.fillMaxSize().imePadding().verticalScroll(rememberScrollState())
+                    .padding(bottom = 32.dp),
                 horizontalAlignment = Alignment.CenterHorizontally
             ) {
                 // Top header

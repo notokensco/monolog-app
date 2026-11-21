@@ -21,6 +21,8 @@ import com.notokens.monolog.data.MonologData
 import com.notokens.monolog.data.SettingsStore
 import com.notokens.monolog.data.asksAboutJournalCapture
 import com.notokens.monolog.data.captureEvidence
+import com.notokens.monolog.ime.shortcuts.ShortcutSuggestion
+import com.notokens.monolog.ime.shortcuts.ShortcutSuggestions
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Job
@@ -40,6 +42,8 @@ internal class ImeAi(
     var hasDraft by mutableStateOf(false)
         private set
     var suggestions by mutableStateOf(emptyList<WordSuggestion>())
+        private set
+    var shortcutSuggestion by mutableStateOf<ShortcutSuggestion?>(null)
         private set
     private var suggestionJob: Job? = null
     private var askOpen = false
@@ -89,6 +93,7 @@ internal class ImeAi(
         suggestionJob?.cancel()
         hasDraft = false
         suggestions = emptyList()
+        shortcutSuggestion = null
         lookup?.cancel()
         toolbar = null
         toolbarDraft = null
@@ -120,6 +125,7 @@ internal class ImeAi(
         toolbar = null
         toolbarDraft = null
         suggestions = emptyList()
+        shortcutSuggestion = null
         refreshDraft(typing = true)
     }
 
@@ -133,6 +139,7 @@ internal class ImeAi(
             val before = ic.getTextBeforeCursor(400, 0)?.toString().orEmpty()
             hasDraft = selected.isNotBlank() || before.isNotBlank() ||
                 !ic.getTextAfterCursor(400, 0).isNullOrBlank()
+            shortcutSuggestion = ShortcutSuggestions.detect(selected.ifBlank { before })
             if (typing && selected.isEmpty()) suggest(before.substringAfterLast('\n'), replaceTypedDraft = true)
             val language = settings.keyboardLanguage.first()
             suggestions = if (selected.isEmpty() && (language == "en" || language == "hi-Latn")) {

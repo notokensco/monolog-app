@@ -158,12 +158,16 @@ internal object AiText {
     }
 
     fun encyclopediaQuery(query: String): String {
-        val question = greeting.replaceFirst(query.trim(), "")
+        val question = greeting.replaceFirst(query.trim(), "").replaceFirst(
+            Regex("""^(?:so\s+)?(?:do you know (?:about\s+)?|tell me about\s+|explain\s+)""", RegexOption.IGNORE_CASE), ""
+        ).trim().trimEnd('?', '.', '!')
         return identityQuestion.matchEntire(question)?.groupValues?.get(1)?.trim() ?: question
     }
 
     fun answerPrompt(question: String, evidence: String = ""): String = buildString {
         if (evidence.isBlank()) {
+            append("Answer the question directly in two short sentences. Be factual. ")
+            append("If you do not know, say so. Do not impersonate a person.\nQuestion: ")
             append(greeting.replaceFirst(question.trim(), ""))
             return@buildString
         }
@@ -177,7 +181,7 @@ internal object AiText {
 
     fun checkedAnswer(question: String, output: String?, evidence: String = ""): String? {
         val answer = greeting.replaceFirst(output?.trim().orEmpty(), "")
-        if (answer.isBlank() || answer.length > 720 || roleplay.containsMatchIn(answer) ||
+        if (answer.isBlank() || roleplay.containsMatchIn(answer) ||
             assistantPreface.containsMatchIn(answer) || Regex("""\b(?:i don['’]t know|i do not know|not sure)\b""", RegexOption.IGNORE_CASE).containsMatchIn(answer)
         ) return null
         val identity = identityQuestion.matchEntire(greeting.replaceFirst(question.trim(), ""))?.groupValues?.get(1)

@@ -319,58 +319,112 @@ fun CompanionApp(
                         }
                     }
                     composable("library") {
-                        var photosOnly by rememberSaveable { mutableStateOf(false) }
+                        var filter by rememberSaveable { mutableStateOf("All") }
                         var query by rememberSaveable { mutableStateOf("") }
+                        var creating by remember { mutableStateOf(false) }
                         var capturePending by remember { mutableStateOf(false) }
                         val screenScope = rememberCoroutineScope()
                         val notes by repo.notes.collectAsState(initial = emptyList())
                         val photoRefs by repo.notePhotos.collectAsState(initial = emptyList())
                         val photosByNote = remember(photoRefs) { photoRefs.groupBy { it.noteId } }
-                        val entries = remember(notes, photosByNote, photosOnly, query) {
-                            val candidates = if (photosOnly) notes.filter { it.id in photosByNote } else notes
-                            if (query.isBlank()) candidates else candidates.matchingJournalEntries(query)
-                        }
-                        CollectionScreen("Context library") {
-                            item(contentType = "actions") {
-                                Column {
-                                    Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-                                        Button(onClick = { nav.navigate("note/new") }) { Text("New note") }
-                                        OutlinedButton(onClick = { nav.navigate("reminders") }) { Text("Reminders") }
-                                        IconControl(Glyph.CAPTURE, "Capture screen", frosted = true, onClick = {
-                                            if (!capturePending) screenScope.launch {
-                                                capturePending = true
-                                                try {
-                                                    focusManager.clearFocus(force = true)
-                                                    keyboard?.hide()
-                                                    val ready = withTimeoutOrNull(1_500) {
-                                                        snapshotFlow { imeInsets.getBottom(density) == 0 }.first { it }
-                                                    } == true
-                                                    if (ready && view.hasWindowFocus()) {
-                                                        captureToJournal(context, settings) { copyCompanionWindow(view) }
-                                                    }
-                                                } finally {
-                                                    capturePending = false
-                                                }
-                                            }
-                                        })
-                                    }
-                                    OutlinedTextField(
-                                        value = query, onValueChange = { query = it.take(240) },
-                                        modifier = Modifier.fillMaxWidth(), singleLine = true,
-                                        label = { Text("Search context") }, leadingIcon = { MonologIcon(Glyph.SEARCH) }
-                                    )
-                                    Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                                        FilterChip(!photosOnly, { photosOnly = false }, { Text("All entries") })
-                                        FilterChip(photosOnly, { photosOnly = true }, { Text("With photos") })
-                                    }
+                        val entries = remember(notes, photosByNote, filter, query) {
+                            val candidates = notes.filter { note ->
+                                val metadata = TagMetadataCodec.decode(note.body)
+                                when (filter) {
+                                    "Photos" -> note.id in photosByNote
+                                    "Screenshots" -> metadata.tags.isNotEmpty() || note.body.contains("<!-- MONOLOG_CAPTURE:")
+                                    "Voice" -> metadata.bottomIsVoice || metadata.tags.any { it.isVoice }
+                                    else -> true
                                 }
                             }
-                            if (entries.isEmpty()) item {
-                                if (query.isNotBlank()) Text("No matching entries", color = muted)
-                                else EmptyCard(if (photosOnly) "No photos yet" else "A home for your notes", "Add a photo while writing a note or journal entry.")
-                            }
-                            items(entries, key = { it.id }, contentType = { "note" }) { note ->
-                                NoteTile(note, photosByNote[note.id].orEmpty()) { nav.navigate("note/${note.id}") }
+                            if (query.isBlank()) candidates else candidates.matchingJournalEntries(query)
+                        }
+                        ScreenFrame(null) {
+                            LazyColumn(Modifier.weight(1f).fillMaxWidth(),
+                                contentPadding = PaddingValues(top = 20.dp, bottom = 24.dp),
+                                verticalArrangement = Arrangement.spacedBy(14.dp)) {
+                                item {
+                                    Row(verticalAlignment = Alignment.CenterVertically) {
+                                        Column(Modifier.weight(1f)) {
+                                            Text("Context library", color = ink, style = MaterialTheme.typography.headlineMedium,
+                                                fontWeight = FontWeight.SemiBold)
+                                            Text("Saved moments, ready when you need them", color = muted,
+                                                style = MaterialTheme.typography.bodyMedium)
+                                        }
+                                        Box {
+                                            IconControl(Glyph.PLUS, "Create", { creating = true }, frosted = true)
+                                            DropdownMenu(expanded = creating, onDismissRequest = { creating = false }) {
+                                                DropdownMenuItem(text = { Text("Note or photo") },
+                                                    leadingIcon = { MonologIcon(Glyph.PHOTO) },
+                                                    onClick = { creating = false; nav.navigate("note/new") })
+                                                DropdownMenuItem(text = { Text("Journal entry") },
+                                                    leadingIcon = { MonologIcon(Glyph.BOOK) },
+                                                    onClick = { creating = false; nav.navigate("journal") })
+                                                DropdownMenuItem(text = { Text("Reminder") },
+                                                    leadingIcon = { MonologIcon(Glyph.BELL) },
+                                                    onClick = { creating = false; nav.navigate("reminders") })
+                                                DropdownMenuItem(text = { Text("Capture screen") },
+                                                    leadingIcon = { MonologIcon(Glyph.CAPTURE) }, enabled = !capturePending,
+                                                    onClick = {
+                                                        creating = false
+                                                        if (!capturePending) screenScope.launch {
+                                                            capturePending = true
+                                                            try {
+                                                                focusManager.clearFocus(force = true)
+                                                                keyboard?.hide()
+                                                                val ready = withTimeoutOrNull(1_500) {
+                                                                    snapshotFlow { imeInsets.getBottom(density) == 0 }.first { it }
+                                                                } == true
+                                                                if (ready && view.hasWindowFocus()) {
+                                                                    captureToJournal(context, settings) { copyCompanionWindow(view) }
+                                                                }
+                                                            } finally {
+                                                                capturePending = false
+                                                            }
+                                                        }
+                                                    })
+                                            }
+                                        }
+                                    }
+                                }
+                                item {
+                                    TextField(value = query, onValueChange = { query = it.take(240) },
+                                        modifier = Modifier.fillMaxWidth().glassSurface(28), singleLine = true,
+                                        placeholder = { Text("Search photos, notes & memories") },
+                                        leadingIcon = { MonologIcon(Glyph.SEARCH) },
+                                        colors = TextFieldDefaults.colors(
+                                            focusedContainerColor = Color.Transparent, unfocusedContainerColor = Color.Transparent,
+                                            focusedIndicatorColor = Color.Transparent, unfocusedIndicatorColor = Color.Transparent))
+                                }
+                                item {
+                                    Row(Modifier.horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                                        listOf("All", "Photos", "Screenshots", "Voice").forEach { label ->
+                                            FilterChip(filter == label, { filter = label }, { Text(label) })
+                                        }
+                                    }
+                                }
+                                if (entries.isEmpty()) item {
+                                    EmptyCard(if (query.isNotBlank()) "No matching memories" else "Your memories start here",
+                                        if (query.isNotBlank()) "Try another search or filter." else "Tap + to add a note or photo. Use M on the keyboard to capture a screen.")
+                                }
+                                items(entries.chunked(2), key = { row -> row.first().id }) { row ->
+                                    Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+                                        row.forEach { note ->
+                                            Box(Modifier.weight(1f)) {
+                                                NoteTile(note, photosByNote[note.id].orEmpty()) { nav.navigate("note/${note.id}") }
+                                            }
+                                        }
+                                        if (row.size == 1) Spacer(Modifier.weight(1f))
+                                    }
+                                }
+                                item {
+                                    Row(Modifier.fillMaxWidth().glassSurface(24).clickable { nav.navigate("journal") }.padding(16.dp),
+                                        verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+                                        MonologIcon(Glyph.BOOK)
+                                        Text("Open today's journal", Modifier.weight(1f), color = ink)
+                                        MonologIcon(Glyph.ARROW)
+                                    }
+                                }
                             }
                         }
                     }

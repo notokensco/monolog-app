@@ -44,6 +44,9 @@ import com.notokens.monolog.ui.theme.PaperPillBackground
 import com.notokens.monolog.ui.theme.PaperPillBorder
 import com.notokens.monolog.ui.Glyph
 import com.notokens.monolog.ui.MonologIcon
+import kotlinx.coroutines.coroutineScope
+import kotlinx.coroutines.delay
+import kotlinx.coroutines.launch
 
 internal fun triggerHapticFeedback(view: View, isLong: Boolean = false) {
     view.performHapticFeedback(if (isLong) HapticFeedbackConstants.LONG_PRESS else HapticFeedbackConstants.KEYBOARD_TAP)
@@ -65,6 +68,8 @@ fun KeyButton(
     label: String? = null,
     longClickLabel: String? = null,
     onLongClick: (() -> Unit)? = null,
+    repeatOnHold: Boolean = glyph == Glyph.BACKSPACE,
+    glow: Boolean = false,
     onClick: () -> Unit,
     content: (@Composable () -> Unit)? = null
 ) {
@@ -105,6 +110,7 @@ fun KeyButton(
         modifier = modifier
             .fillMaxHeight()
             .padding(horizontal = 1.dp, vertical = if (isPill) 7.dp else 2.dp)
+            .activeKeyGlow(glow, circular = true)
             .clip(RoundedCornerShape(if (isPill) 24.dp else 8.dp))
             .then(pillModifier)
             .background(finalBg)
@@ -114,19 +120,34 @@ fun KeyButton(
                 semanticsClick { onClick(); true }
                 if (onLongClick != null) semanticsLongClick(longClickLabel) { onLongClick(); true }
             }
-            .pointerInput(onLongClick != null) {
+            .pointerInput(onLongClick != null, repeatOnHold) {
                 detectTapGestures(
                     onPress = {
                         isPressed = true
-                        try { tryAwaitRelease() } finally { isPressed = false }
+                        try {
+                            coroutineScope {
+                                val repeat = if (repeatOnHold) launch {
+                                    triggerHapticFeedback(view)
+                                    tap()
+                                    delay(350)
+                                    while (true) {
+                                        tap()
+                                        delay(55)
+                                    }
+                                } else null
+                                try { tryAwaitRelease() } finally { repeat?.cancel() }
+                            }
+                        } finally { isPressed = false }
                     },
-                    onLongPress = {
+                    onLongPress = if (onLongClick != null && !repeatOnHold) {{
                         triggerHapticFeedback(view, isLong = true)
-                        (hold ?: tap)()
-                    },
+                        hold?.invoke()
+                    }} else null,
                     onTap = {
-                        triggerHapticFeedback(view)
-                        tap()
+                        if (!repeatOnHold) {
+                            triggerHapticFeedback(view)
+                            tap()
+                        }
                     }
                 )
             },

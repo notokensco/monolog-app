@@ -105,6 +105,14 @@ internal fun KeyboardSearchPanel(
             }
         }
         ai.preview?.let { AiResultCard(it, ai::apply) }
+        if (!ai.web && ai.preview?.text == com.notokens.monolog.ai.AiText.UNKNOWN_ANSWER) {
+            TextButton({
+                ai.toggleWeb()
+                ai.ask(query.text)
+            }, enabled = query.text.isNotBlank() && !ai.busy) {
+                Text("Find a sourced answer")
+            }
+        }
         if (query.text.isNotBlank() && !ai.web && ai.preview == null && !ai.busy) {
             Column(
                 Modifier.fillMaxWidth().heightIn(max = 80.dp).verticalScroll(rememberScrollState()).padding(top = 6.dp),
