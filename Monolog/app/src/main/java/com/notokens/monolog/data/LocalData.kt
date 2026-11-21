@@ -41,6 +41,31 @@ data class NotePhoto(
 
 data class NotePhotoRef(val id: Long, val noteId: Long)
 
+@Entity(tableName = "backup_records", foreignKeys = [ForeignKey(
+    entity = Note::class, parentColumns = ["id"], childColumns = ["noteId"], onDelete = ForeignKey.CASCADE
+)], indices = [Index("recordId")])
+data class BackupRecord(@PrimaryKey val noteId: Long, val recordId: String)
+
+@Entity(tableName = "backup_versions", primaryKeys = ["owner", "recordId", "digest"],
+    foreignKeys = [ForeignKey(entity = Note::class, parentColumns = ["id"], childColumns = ["noteId"],
+        onDelete = ForeignKey.CASCADE)], indices = [Index("noteId")])
+data class BackupVersion(val owner: String, val recordId: String, val digest: String, val noteId: Long)
+
+@Entity(tableName = "backup_archives", primaryKeys = ["owner", "noteId"],
+    foreignKeys = [ForeignKey(entity = Note::class, parentColumns = ["id"], childColumns = ["noteId"],
+        onDelete = ForeignKey.CASCADE)], indices = [Index("noteId")])
+data class BackupArchive(val owner: String, val noteId: Long, val fingerprint: String)
+
+@Dao
+interface BackupDao {
+    @Query("SELECT * FROM backup_records") suspend fun records(): List<BackupRecord>
+    @Insert suspend fun insertRecord(record: BackupRecord)
+    @Query("SELECT * FROM backup_versions WHERE owner = :owner") suspend fun versions(owner: String): List<BackupVersion>
+    @Insert(onConflict = androidx.room.OnConflictStrategy.REPLACE) suspend fun insertVersion(version: BackupVersion)
+    @Query("SELECT * FROM backup_archives WHERE owner = :owner") fun archives(owner: String): Flow<List<BackupArchive>>
+    @Insert(onConflict = androidx.room.OnConflictStrategy.REPLACE) suspend fun archive(archives: List<BackupArchive>)
+}
+
 @Entity(tableName = "reminders")
 data class Reminder(
     @PrimaryKey(autoGenerate = true) val id: Long = 0,
@@ -91,11 +116,15 @@ interface ReminderDao {
     @Delete suspend fun delete(reminder: Reminder)
 }
 
-@Database(entities = [Note::class, Reminder::class, NotePhoto::class], version = 3, exportSchema = false)
+@Database(entities = [Note::class, Reminder::class, NotePhoto::class, BackupRecord::class,
+    BackupVersion::class, BackupArchive::class, MemoryRecord::class, MemoryRecap::class,
+    MemoryBackupReceipt::class, YearDownload::class, YearDownloadNote::class], version = 5, exportSchema = false)
 abstract class MonologDatabase : RoomDatabase() {
     abstract fun notes(): NoteDao
     abstract fun photos(): NotePhotoDao
     abstract fun reminders(): ReminderDao
+    abstract fun backups(): BackupDao
+    abstract fun memories(): MemoryDao
 
     companion object {
         @Volatile private var instance: MonologDatabase? = null
@@ -140,10 +169,36 @@ abstract class MonologDatabase : RoomDatabase() {
             }
         }
 
+        internal val backupMigration: Migration = object : Migration(3, 4) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                db.execSQL("CREATE TABLE IF NOT EXISTS backup_records (noteId INTEGER NOT NULL PRIMARY KEY, recordId TEXT NOT NULL, FOREIGN KEY(noteId) REFERENCES notes(id) ON DELETE CASCADE)")
+                db.execSQL("CREATE INDEX IF NOT EXISTS index_backup_records_recordId ON backup_records(recordId)")
+                db.execSQL("CREATE TABLE IF NOT EXISTS backup_versions (owner TEXT NOT NULL, recordId TEXT NOT NULL, digest TEXT NOT NULL, noteId INTEGER NOT NULL, PRIMARY KEY(owner, recordId, digest), FOREIGN KEY(noteId) REFERENCES notes(id) ON DELETE CASCADE)")
+                db.execSQL("CREATE INDEX IF NOT EXISTS index_backup_versions_noteId ON backup_versions(noteId)")
+                db.execSQL("CREATE TABLE IF NOT EXISTS backup_archives (owner TEXT NOT NULL, noteId INTEGER NOT NULL, fingerprint TEXT NOT NULL, PRIMARY KEY(owner, noteId), FOREIGN KEY(noteId) REFERENCES notes(id) ON DELETE CASCADE)")
+                db.execSQL("CREATE INDEX IF NOT EXISTS index_backup_archives_noteId ON backup_archives(noteId)")
+            }
+        }
+        internal val memoryMigration: Migration = object : Migration(4, 5) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                db.execSQL("CREATE TABLE IF NOT EXISTS memories (id TEXT NOT NULL PRIMARY KEY, timestamp INTEGER NOT NULL, localDay TEXT NOT NULL, year INTEGER NOT NULL, revision INTEGER NOT NULL, source TEXT NOT NULL, payload TEXT NOT NULL, dedup TEXT NOT NULL, pinned INTEGER NOT NULL, noteId INTEGER, reminderId INTEGER, embedding BLOB, encoderVersion TEXT, vectorRevision INTEGER NOT NULL, cacheOwner TEXT, cacheYear INTEGER, cacheExpiresAt INTEGER, FOREIGN KEY(noteId) REFERENCES notes(id) ON DELETE CASCADE, FOREIGN KEY(reminderId) REFERENCES reminders(id) ON DELETE CASCADE)")
+                db.execSQL("CREATE UNIQUE INDEX IF NOT EXISTS index_memories_dedup ON memories(dedup)")
+                db.execSQL("CREATE INDEX IF NOT EXISTS index_memories_year ON memories(year)")
+                db.execSQL("CREATE INDEX IF NOT EXISTS index_memories_noteId ON memories(noteId)")
+                db.execSQL("CREATE INDEX IF NOT EXISTS index_memories_reminderId ON memories(reminderId)")
+                db.execSQL("CREATE TABLE IF NOT EXISTS memory_recaps (period TEXT NOT NULL PRIMARY KEY, fingerprint TEXT NOT NULL, payload TEXT NOT NULL)")
+                db.execSQL("CREATE TABLE IF NOT EXISTS memory_backup_receipts (owner TEXT NOT NULL, memoryId TEXT NOT NULL, revision INTEGER NOT NULL, digest TEXT NOT NULL, PRIMARY KEY(owner, memoryId), FOREIGN KEY(memoryId) REFERENCES memories(id) ON DELETE CASCADE)")
+                db.execSQL("CREATE INDEX IF NOT EXISTS index_memory_backup_receipts_memoryId ON memory_backup_receipts(memoryId)")
+                db.execSQL("CREATE TABLE IF NOT EXISTS year_downloads (owner TEXT NOT NULL, year INTEGER NOT NULL, expiresAt INTEGER NOT NULL, PRIMARY KEY(owner, year))")
+                db.execSQL("CREATE TABLE IF NOT EXISTS year_download_notes (owner TEXT NOT NULL, year INTEGER NOT NULL, noteId INTEGER NOT NULL, fingerprint TEXT NOT NULL, PRIMARY KEY(owner, year, noteId), FOREIGN KEY(noteId) REFERENCES notes(id) ON DELETE CASCADE)")
+                db.execSQL("CREATE INDEX IF NOT EXISTS index_year_download_notes_noteId ON year_download_notes(noteId)")
+            }
+        }
+
         fun get(context: Context): MonologDatabase = instance ?: synchronized(this) {
             instance ?: Room.databaseBuilder(
                 context.applicationContext, MonologDatabase::class.java, "monolog.db"
-            ).addMigrations(photosMigration, journalEncryption).build().also { instance = it }
+            ).addMigrations(photosMigration, journalEncryption, backupMigration, memoryMigration).build().also { instance = it }
         }
     }
 }

@@ -192,13 +192,13 @@ fun CompanionApp(
                             val tileHeight = ((LocalConfiguration.current.screenHeightDp - 512) / 2).coerceIn(124, 152).dp
                             val zone = ZoneId.systemDefault()
                             val today = LocalDate.now(zone)
-                            val todayNote by remember(today, zone) {
-                                repo.latestNoteBetween(
-                                    today.atStartOfDay(zone).toInstant().toEpochMilli(),
-                                    today.plusDays(1).atStartOfDay(zone).toInstant().toEpochMilli()
-                                )
-                            }.collectAsState(initial = null)
-                            val latestNote by repo.latestNote.collectAsState(initial = null)
+                            val allNotes by repo.notes.collectAsState(initial = emptyList())
+                            val visibleNotes = visibleBackupYears(allNotes)
+                            val todayNote = visibleNotes.firstOrNull {
+                                it.updatedAt >= today.atStartOfDay(zone).toInstant().toEpochMilli() &&
+                                    it.updatedAt < today.plusDays(1).atStartOfDay(zone).toInstant().toEpochMilli()
+                            }
+                            val latestNote = visibleNotes.firstOrNull()
                             var reminderCutoff by remember { mutableLongStateOf(System.currentTimeMillis()) }
                             val next by remember(reminderCutoff) { repo.nextReminder(reminderCutoff) }.collectAsState(initial = null)
                             LaunchedEffect(next?.dueAt) {
@@ -237,14 +237,15 @@ fun CompanionApp(
                         }
                     }
                     composable("journal") {
-                        val notes by repo.notes.collectAsState(initial = emptyList())
+                        val allNotes by repo.notes.collectAsState(initial = emptyList())
+                        val notes = visibleBackupYears(allNotes)
                         val photoRefs by repo.notePhotos.collectAsState(initial = emptyList())
                         val photosByNote = remember(photoRefs) { photoRefs.groupBy { it.noteId } }
                         var activeCaptureViewerNote by remember { mutableStateOf<Pair<Note, Long>?>(null) }
                         val locale = LocalConfiguration.current.locales[0]
                         val sections = remember(notes, locale) {
-                            val format = SimpleDateFormat("EEEE, d MMMM", locale)
-                            notes.groupBy { format.format(Date(it.updatedAt)) }
+                            val format = SimpleDateFormat("EEEE, d MMMM yyyy", locale)
+                            notes.sortedByDescending { it.createdAt }.groupBy { format.format(Date(it.createdAt)) }
                         }
                         CollectionScreen("Journal", showDate = true) {
                             item(contentType = "month") {
@@ -264,6 +265,7 @@ fun CompanionApp(
                                     IconControl(Glyph.PLUS, "Add note", { nav.navigate("note/new") })
                                 }
                             }
+                            item { ArchivedYearsLink { nav.navigate(SettingsPage.ACCOUNT.route) } }
                             if (notes.isEmpty()) item {
                                 EmptyCard("Your story, one day at a time.", "Save a thought from here or the keyboard's context key.")
                             }
@@ -324,7 +326,8 @@ fun CompanionApp(
                         var creating by remember { mutableStateOf(false) }
                         var capturePending by remember { mutableStateOf(false) }
                         val screenScope = rememberCoroutineScope()
-                        val notes by repo.notes.collectAsState(initial = emptyList())
+                        val allNotes by repo.notes.collectAsState(initial = emptyList())
+                        val notes = visibleBackupYears(allNotes)
                         val photoRefs by repo.notePhotos.collectAsState(initial = emptyList())
                         val photosByNote = remember(photoRefs) { photoRefs.groupBy { it.noteId } }
                         val entries = remember(notes, photosByNote, filter, query) {
@@ -407,6 +410,7 @@ fun CompanionApp(
                                     EmptyCard(if (query.isNotBlank()) "No matching memories" else "Your memories start here",
                                         if (query.isNotBlank()) "Try another search or filter." else "Tap + to add a note or photo. Use M on the keyboard to capture a screen.")
                                 }
+                                item { ArchivedYearsLink { nav.navigate(SettingsPage.ACCOUNT.route) } }
                                 items(entries.chunked(2), key = { row -> row.first().id }) { row ->
                                     Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(12.dp)) {
                                         row.forEach { note ->
@@ -545,6 +549,7 @@ fun CompanionApp(
                         Screen("Settings", onBack = navigateBack, scrollState = settingsScroll) {
                             Column(verticalArrangement = Arrangement.spacedBy(14.dp)) {
                                 SettingsCard("Personalization") {
+                                    SettingsLink(SettingsPage.ACCOUNT) { nav.navigate(it.route) }
                                     SettingsLink(SettingsPage.APPEARANCE) { nav.navigate(it.route) }
                                     SettingsLink(SettingsPage.KEYBOARD) { nav.navigate(it.route) }
                                     SettingsLink(SettingsPage.LANGUAGES) { nav.navigate(it.route) }
@@ -563,6 +568,7 @@ fun CompanionApp(
                         Screen(page.title, onBack = navigateBack) {
                             Column(verticalArrangement = Arrangement.spacedBy(14.dp)) {
                                 when (page) {
+                                    SettingsPage.ACCOUNT -> AccountBackupSettings()
                                     SettingsPage.APPEARANCE -> {
                                         SettingsCard("Theme") {
                                             Column(Modifier.selectableGroup(), verticalArrangement = Arrangement.spacedBy(4.dp)) {
@@ -672,6 +678,7 @@ fun CompanionApp(
 }
 
 private enum class SettingsPage(val id: String, val title: String, val summary: String, val icon: Glyph) {
+    ACCOUNT("account", "Account & backup", "Google account, encrypted Drive backup, and past years", Glyph.SHIELD),
     APPEARANCE("appearance", "Appearance", "Paper, Ink, and transparency", Glyph.INK),
     KEYBOARD("keyboard", "Keyboard & shortcuts", "Setup, hold duration, and haptics", Glyph.SETTINGS),
     LANGUAGES("languages", "Languages & packs", "Layouts and offline translation", Glyph.GLOBE),

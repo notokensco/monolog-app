@@ -102,6 +102,13 @@ monologTestingKeystore?.let { keystore ->
 }
 
 dependencies {
+    implementation("com.microsoft.onnxruntime:onnxruntime-android:1.20.0")
+    implementation("androidx.credentials:credentials:1.5.0")
+    implementation("androidx.credentials:credentials-play-services-auth:1.5.0")
+    implementation("com.google.android.libraries.identity.googleid:googleid:1.1.1")
+    implementation("com.google.android.gms:play-services-auth:21.5.1")
+    implementation("androidx.work:work-runtime-ktx:2.10.1")
+    testImplementation("org.json:json:20240303")
 
     implementation(libs.androidx.core.ktx)
     implementation(libs.androidx.lifecycle.runtime.ktx)
