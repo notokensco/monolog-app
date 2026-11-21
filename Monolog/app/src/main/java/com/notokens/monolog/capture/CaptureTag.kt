@@ -29,7 +29,7 @@ object TagMetadataCodec {
             if (tags.isNotEmpty()) {
                 appendLine("### Tags (${tags.size}/5)")
                 tags.forEach { tag ->
-                    val label = if (tag.isVoice) "?? Voice note" else "?? Tag"
+                    val label = if (tag.isVoice) "Voice note" else "Pinned note"
                     appendLine("- **$label:** ${tag.text}")
                 }
                 appendLine()
@@ -88,6 +88,11 @@ object TagMetadataCodec {
         val existing = decode(original)
         if (!existing.hasMetadata && existing.analysis.isBlank()) return visible
         return encode(visible, existing.tags, existing.bottomIsVoice, existing.bottomComment, existing.additionalBody)
+    }
+
+    fun replaceCaptureComment(original: String, comment: String): String {
+        val existing = decode(original)
+        return encodeCapture(existing.tags, existing.bottomIsVoice, comment, existing.additionalBody)
     }
 
     fun decode(rawBody: String): DecodedCapture {

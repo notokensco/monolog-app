@@ -97,7 +97,8 @@ internal fun KeyboardSearchPanel(
         }
         if (ai.busy) Text("Working…", color = PaperKeySubText)
         if (ai.web) {
-            Text(if (WebLookup.configured) "Only this query is sent to the search service."
+            Text(if (com.notokens.monolog.ai.CloudAi.enabled(context)) "This question is sent to Gemini online."
+                else if (WebLookup.configured) "Only this query is sent to the search service."
                 else "Uses Wikipedia. For other results, open a web search.",
                 style = MaterialTheme.typography.labelSmall, color = PaperKeySubText)
             TextButton({ ai.searchWeb(query.text) }, enabled = query.text.isNotBlank()) {

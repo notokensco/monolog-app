@@ -24,6 +24,17 @@ internal object RewritePipeline {
 
     private suspend fun rewriteEnglish(context: Context, draft: String, style: RewriteStyle): AiPreview {
         if (AiText.isBareFragment(draft)) return edit(AiText.simpleRewrite(draft))
+        if (CloudAi.enabled(context)) {
+            return withAiFallback(online = {
+                val result = CloudAi.answer(context, AiText.rewritePrompt(draft, style))
+                AiText.checkedRewrite(draft, result)?.let { edit(it, detail = "Gemini online") }
+                    ?: error("The online rewrite did not preserve the draft.")
+            }, offline = { rewriteEnglishOffline(context, draft, style) })
+        }
+        return rewriteEnglishOffline(context, draft, style)
+    }
+
+    private suspend fun rewriteEnglishOffline(context: Context, draft: String, style: RewriteStyle): AiPreview {
         val nano = NanoAi.rewrite(context, draft, style)
         if (nano != null) return AiText.checkedRewrite(draft, nano)?.let { edit(it, generated = true) }
             ?: lightEdit(draft, "The rewrite didn’t preserve the draft.")

@@ -259,6 +259,12 @@ internal class ImeAi(
         launchRequest {
             if (useWeb) {
                 try {
+                    if (com.notokens.monolog.ai.CloudAi.enabled(context)) {
+                        return@launchRequest com.notokens.monolog.ai.withAiFallback(online = {
+                            AiPreview(com.notokens.monolog.ai.CloudAi.answer(context, AiText.answerPrompt(query)),
+                                insertable = true, detail = "Gemini online")
+                        }, offline = { offlineAnswer(query) })
+                    }
                     webPreview(query, WebLookup.ask(query))
                 } catch (error: CancellationException) {
                     throw error
@@ -266,12 +272,16 @@ internal class ImeAi(
                     AiPreview("No sourced answer. Try Open web search or turn Web off.")
                 }
             } else {
-                val evidence = if (query.asksAboutJournalCapture()) {
-                    MonologData.repository(context).notes.first().captureEvidence(query)
-                } else ""
-                RewritePipeline.askOffline(context, query, evidence)
+                offlineAnswer(query)
             }
         }
+    }
+
+    private suspend fun offlineAnswer(query: String): AiPreview {
+        val evidence = if (query.asksAboutJournalCapture()) {
+            MonologData.repository(context).notes.first().captureEvidence(query)
+        } else ""
+        return RewritePipeline.askOffline(context, query, evidence)
     }
 
     fun openRewrite(language: KeyboardLanguage) {

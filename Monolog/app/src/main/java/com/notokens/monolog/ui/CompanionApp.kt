@@ -753,7 +753,7 @@ private fun ScreenFrame(onBack: (() -> Unit)?, content: @Composable ColumnScope.
                     verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(4.dp)
                 ) {
                     MonologIcon(Glyph.SHIELD, Modifier.size(14.dp), muted)
-                    Text("On-device", color = muted, style = MaterialTheme.typography.labelSmall, maxLines = 1)
+                    Text(if (com.notokens.monolog.ai.CloudAi.enabled(LocalContext.current)) "Gemini online" else "On-device", color = muted, style = MaterialTheme.typography.labelSmall, maxLines = 1)
                 }
                 if (onBack == null) IconControl(Glyph.SETTINGS, "Settings", onSettings, frosted = true)
             }
@@ -1000,10 +1000,15 @@ private fun NoteEditor(initial: Note?, savedPhotos: List<NotePhotoRef>, onCancel
     val keyboard = LocalSoftwareKeyboardController.current
     val scope = rememberCoroutineScope()
     var title by rememberSaveable { mutableStateOf(initial?.title.orEmpty()) }
-    var body by rememberSaveable(stateSaver = TextFieldValue.Saver) { mutableStateOf(TextFieldValue(initial?.let { TagMetadataCodec.decode(it.body).cleanBody }.orEmpty())) }
+    val capture = remember(initial?.body) { initial?.let { TagMetadataCodec.decode(it.body) } }
+    val isCapture = capture?.hasMetadata == true
+    var body by rememberSaveable(stateSaver = TextFieldValue.Saver) {
+        mutableStateOf(TextFieldValue(if (isCapture) capture.bottomComment else capture?.cleanBody.orEmpty()))
+    }
+    var formatting by rememberSaveable { mutableStateOf(false) }
     var picked by rememberSaveable { mutableStateOf(arrayListOf<String>()) }
     var removed by rememberSaveable { mutableStateOf(arrayListOf<Long>()) }
-    var preview by rememberSaveable { mutableStateOf(false) }
+    var preview by rememberSaveable { mutableStateOf(initial != null && !isCapture) }
     var saving by remember { mutableStateOf(false) }
     var error by remember { mutableStateOf<String?>(null) }
     val titleFocus = rememberEditorFocusRequester()
@@ -1024,7 +1029,7 @@ private fun NoteEditor(initial: Note?, savedPhotos: List<NotePhotoRef>, onCancel
                 value = title, onValueChange = { title = it }, label = { Text("Title") },
                 modifier = Modifier.fillMaxWidth().focusRequester(titleFocus), singleLine = true, shape = RoundedCornerShape(12.dp)
             )
-            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            if (!isCapture) Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                 FilterChip(!preview, { preview = false }, { Text("Write") })
                 FilterChip(preview, {
                     focusManager.clearFocus()
@@ -1036,15 +1041,30 @@ private fun NoteEditor(initial: Note?, savedPhotos: List<NotePhotoRef>, onCancel
                 if (body.text.isBlank()) Text("Your formatted entry will appear here.", color = muted)
                 else JournalMarkdown(body.text, Modifier.fillMaxWidth().padding(4.dp))
             } else {
-                Row(horizontalArrangement = Arrangement.spacedBy(4.dp)) {
+                if (!isCapture) TextButton(onClick = { formatting = !formatting }) {
+                    Text(if (formatting) "Hide formatting" else "Formatting")
+                }
+                if (!isCapture && formatting) Row(horizontalArrangement = Arrangement.spacedBy(4.dp)) {
                     TextButton(onClick = { body = formatSelection(body, "\n## ", "", "Heading") }) { Text("Heading") }
                     TextButton(onClick = { body = formatSelection(body, "**", "**", "Bold text") }) { Text("Bold", fontWeight = FontWeight.Bold) }
                     TextButton(onClick = { body = formatSelection(body, "\n- ", "", "List item") }) { Text("List") }
                 }
                 OutlinedTextField(
-                    value = body, onValueChange = { body = it }, label = { Text("Write in Markdown") },
+                    value = body, onValueChange = { body = it }, label = { Text("Your note") }, placeholder = { Text("What would you like to remember?") },
                     modifier = Modifier.fillMaxWidth(), minLines = 5, maxLines = 12, shape = RoundedCornerShape(12.dp)
                 )
+            }
+            if (isCapture && capture.tags.isNotEmpty()) {
+                Text("Pinned notes", color = ink, style = MaterialTheme.typography.titleSmall)
+                capture.tags.forEach { tag ->
+                    Row(Modifier.fillMaxWidth().glassSurface(16).padding(12.dp),
+                        horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                        MonologIcon(if (tag.isVoice) Glyph.MIC else Glyph.PIN, Modifier.size(18.dp))
+                        Text(tag.text, color = ink, modifier = Modifier.weight(1f))
+                    }
+                }
+                Text("Open the photo from its saved entry to edit pinned notes.", color = muted,
+                    style = MaterialTheme.typography.bodySmall)
             }
             if (photos.isNotEmpty()) {
                 JournalPhotoStrip(photos) { photo ->
@@ -1088,7 +1108,10 @@ private fun NoteEditor(initial: Note?, savedPhotos: List<NotePhotoRef>, onCancel
                                 }
                             }
                             MonologData.repository(context).saveNote(
-                                currentTitle, initial?.let { TagMetadataCodec.replaceVisibleBody(it.body, currentBody) } ?: currentBody,
+                                currentTitle, initial?.let {
+                                    if (isCapture) TagMetadataCodec.replaceCaptureComment(it.body, currentBody)
+                                    else TagMetadataCodec.replaceVisibleBody(it.body, currentBody)
+                                } ?: currentBody,
                                 initial, NotePhotoChanges(removals, bytes)
                             )
                             onCancel()

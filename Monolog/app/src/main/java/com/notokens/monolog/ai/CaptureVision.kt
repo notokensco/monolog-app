@@ -76,6 +76,14 @@ internal object CaptureVision {
 
     suspend fun ask(context: Context, bitmap: Bitmap, question: String): String {
         val instruction = AiText.answerPrompt(question) + "\nUse only what is visible in the image."
+        if (CloudAi.enabled(context)) return withAiFallback(
+            online = { CloudAi.answer(context, instruction, bitmap) },
+            offline = { askOffline(context, bitmap, question, instruction) }
+        )
+        return askOffline(context, bitmap, question, instruction)
+    }
+
+    private suspend fun askOffline(context: Context, bitmap: Bitmap, question: String, instruction: String): String {
         val nano = NanoAi.answer(context, instruction, bitmap)
         if (nano != null) return AiText.checkedAnswer(question, nano) ?: AiText.UNKNOWN_ANSWER
 
