@@ -17,15 +17,11 @@ import org.json.JSONObject
 internal object CloudAi {
     private fun key(context: Context) = File(context.noBackupFilesDir, "gemini-demo.key")
     fun configured(context: Context) = key(context).isFile
-    fun enabled(context: Context) = configured(context) &&
-        context.getSharedPreferences("online_ai", Context.MODE_PRIVATE).getBoolean("enabled", true)
-    fun setEnabled(context: Context, enabled: Boolean) {
-        context.getSharedPreferences("online_ai", Context.MODE_PRIVATE).edit().putBoolean("enabled", enabled).apply()
-    }
+    fun enabled(context: Context) = configured(context)
 
     suspend fun answer(context: Context, prompt: String, bitmap: Bitmap? = null): String =
         withContext(Dispatchers.IO) {
-            check(enabled(context)) { "Enable Gemini online in AI settings." }
+            check(enabled(context)) { "Online AI is unavailable on this device." }
             val parts = JSONArray().put(JSONObject().put("text", prompt))
             if (bitmap != null) {
                 val scale = minOf(1f, 1280f / maxOf(bitmap.width, bitmap.height))
@@ -57,15 +53,15 @@ internal object CloudAi {
                 connection.setRequestProperty("Content-Type", "application/json")
                 connection.outputStream.use { it.write(payload.toString().toByteArray(Charsets.UTF_8)) }
                 if (connection.responseCode != 200) throw IOException(when (connection.responseCode) {
-                    401, 403 -> "Gemini access was rejected. Check your API key."
-                    429 -> "Gemini quota is temporarily unavailable. Try again shortly."
-                    else -> "Gemini could not answer. Check your connection and retry."
+                    401, 403 -> "Online access is unavailable."
+                    429 -> "Online AI is temporarily unavailable. Try again shortly."
+                    else -> "Online AI could not answer. Check your connection and retry."
                 })
                 val json = connection.inputStream.bufferedReader().use { JSONObject(it.readText()) }
                 val output = json.optJSONArray("candidates")?.optJSONObject(0)?.optJSONObject("content")
-                    ?.optJSONArray("parts") ?: throw IOException("Gemini returned no answer.")
+                    ?.optJSONArray("parts") ?: throw IOException("No online answer was returned.")
                 (0 until output.length()).mapNotNull { output.optJSONObject(it)?.optString("text") }
-                    .joinToString("\n").trim().ifBlank { throw IOException("Gemini returned no answer.") }
+                    .joinToString("\n").trim().ifBlank { throw IOException("No online answer was returned.") }
             } finally {
                 connection.disconnect()
             }

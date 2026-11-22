@@ -36,7 +36,7 @@ import com.notokens.monolog.ui.theme.*
 import kotlin.math.cos
 import kotlin.math.sin
 
-enum class Glyph { DOWN, CLOSE, EXPAND, BOLT, CLOCK, BELL, ALARM, BOOK, LAYERS, PLUS, HOME, SETTINGS, MIC, GLOBE, SMILE, SHIFT, BACKSPACE, ENTER, SEARCH, SHIELD, PRIVACY, ARROW, BACK, DOT, PAPER, INK, PHOTO, CAPTURE, EDIT, DRAG_HANDLE, PIN }
+enum class Glyph { DOWN, CLOSE, EXPAND, BOLT, CLOCK, BELL, ALARM, BOOK, LAYERS, PLUS, HOME, SETTINGS, MIC, GLOBE, SMILE, SHIFT, BACKSPACE, ENTER, SEARCH, SHIELD, PRIVACY, ARROW, BACK, DOT, PAPER, INK, PHOTO, CAPTURE, EDIT, REWRITE, DRAG_HANDLE, PIN }
 
 @Composable
 fun MonologIcon(glyph: Glyph, modifier: Modifier = Modifier, color: Color = PaperKeyText) {
@@ -101,6 +101,11 @@ fun MonologIcon(glyph: Glyph, modifier: Modifier = Modifier, color: Color = Pape
                 Glyph.EDIT -> {
                     line(4f, 16f, 16f, 4f, 20f, 8f, 8f, 20f, 3f, 21f, 4f, 16f)
                     line(14f, 6f, 18f, 10f)
+                }
+                Glyph.REWRITE -> {
+                    line(3f, 16f, 13f, 6f, 17f, 10f, 7f, 20f, 2f, 21f, 3f, 16f)
+                    line(11f, 8f, 15f, 12f)
+                    line(19f, 1f, 20f, 4f, 23f, 5f, 20f, 6f, 19f, 9f, 18f, 6f, 15f, 5f, 18f, 4f, 19f, 1f)
                 }
                 Glyph.DRAG_HANDLE -> {
                     for (y in listOf(5f, 12f, 19f)) {

@@ -14,6 +14,7 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
+import androidx.compose.foundation.horizontalScroll
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.Checkbox
@@ -22,7 +23,6 @@ import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
-import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
@@ -37,15 +37,12 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
-import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.unit.dp
 import androidx.credentials.exceptions.GetCredentialCancellationException
 import com.google.android.gms.auth.api.identity.Identity
 import com.notokens.monolog.backup.BackupAccountStore
 import com.notokens.monolog.backup.BackupCoordinator
-import com.notokens.monolog.backup.BackupCrypto
 import com.notokens.monolog.backup.BackupKeyStore
-import com.notokens.monolog.backup.BackupSecrets
 import com.notokens.monolog.backup.DriveBackup
 import com.notokens.monolog.backup.DriveConsentRequired
 import com.notokens.monolog.backup.GoogleBackupAuth
@@ -69,9 +66,6 @@ internal fun AccountBackupSettings() {
     var message by remember { mutableStateOf("") }
     var files by remember { mutableStateOf(emptyList<DriveBackup>()) }
     var authorizationSession by remember { mutableStateOf("") }
-    var newSecrets by remember { mutableStateOf<BackupSecrets?>(null) }
-    var confirmed by remember { mutableStateOf(false) }
-    var recovery by remember { mutableStateOf("") }
     var recovering by remember { mutableStateOf(false) }
     val activity = remember(context) { context.activity() }
     DisposableEffect(activity) {
@@ -81,8 +75,6 @@ internal fun AccountBackupSettings() {
     }
     LaunchedEffect(account.session) {
         files = emptyList()
-        newSecrets = null
-        recovery = ""
         recovering = false
     }
 
@@ -100,7 +92,7 @@ internal fun AccountBackupSettings() {
             } catch (_: DriveConsentRequired) {
                 message = "Google needs consent again. Tap Reconnect Drive."
             } catch (_: javax.crypto.AEADBadTagException) {
-                message = "The recovery code is incorrect or this backup was changed. Local notes were kept."
+                message = "This backup could not be unlocked. Local notes were kept."
             } catch (error: com.google.android.gms.common.api.ApiException) {
                 message = "Google access failed (code ${error.statusCode}). Check the test account, package and signing SHA-1."
             } catch (_: androidx.credentials.exceptions.GetCredentialException) {
@@ -130,21 +122,19 @@ internal fun AccountBackupSettings() {
 
     suspend fun prepareBackup(mergeExisting: Boolean = false) {
         val selected = store.state.value
+        coordinator.linkExistingKey(selected)
         files = coordinator.files(selected)
-        if (keys.hasKey(selected.id)) {
-            if (mergeExisting) {
-                mergeCurrentYearAndBackUp()
-            } else {
-                val count = coordinator.backUp(selected)
-                files = coordinator.files(selected)
-                message = "Backed up $count entries."
+        if (mergeExisting && files.any { it.year == LocalDate.now().year }) {
+            try { mergeCurrentYearAndBackUp() }
+            catch (error: IllegalStateException) {
+                if (!error.message.orEmpty().contains("linked")) throw error
+                message = error.message.orEmpty()
+                recovering = true
             }
-        } else if (files.isNotEmpty()) {
-            recovering = true
-            message = "Enter this account's recovery code to load its current year and merge your guest notes."
         } else {
-            newSecrets = BackupCrypto.create()
-            confirmed = false
+            val count = coordinator.backUp(selected)
+            files = coordinator.files(selected)
+            message = "Backed up $count entries."
         }
     }
 
@@ -181,7 +171,7 @@ internal fun AccountBackupSettings() {
     }
 
     if (account.id.isNotBlank()) SettingsCard("Encrypted Drive backup") {
-        Text("Stored in your account's private app-data folder. Backups use a recovery code for a second phone.",
+        Text("Your encrypted backups and a restore key are stored in this Google account’s private Drive app data. Connect the same account on another phone to restore.",
             color = PaperKeySubText, style = MaterialTheme.typography.bodySmall)
         SelectionRow("Journal entries & notes", account.journal, !busy) {
             store.selection(it, account.context, account.attachments)
@@ -216,20 +206,32 @@ internal fun AccountBackupSettings() {
                 color = PaperKeySubText, style = MaterialTheme.typography.bodySmall)
             Button(enabled = !busy && (account.journal || account.context), onClick = {
                 run { prepareBackup() }
-            }) { Text(if (keys.hasKey(account.id)) "Back up now" else "Set up recovery & back up") }
+            }) { Text("Back up now") }
             OutlinedButton(enabled = !busy, onClick = {
                 run {
+                    coordinator.linkExistingKey(account)
                     files = coordinator.files(account)
                     if (files.isEmpty()) message = "This account has no Monolog backups."
                     else recovering = true
                 }
             }) { Text("Restore") }
-            Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-                listOf("Manual", "Daily", "Weekly").forEach { frequency ->
+            Row(Modifier.horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                listOf("Manual", "Daily", "Weekly", "Monthly").forEach { frequency ->
                     FilterChip(account.frequency == frequency, { store.frequency(frequency) },
                         { Text(frequency) }, enabled = !busy && (frequency == "Manual" ||
                             account.lastBackup > 0 && keys.hasKey(account.id) && (account.journal || account.context)))
                 }
+            }
+            if (account.frequency != "Manual") {
+                val preferred = java.time.LocalTime.ofSecondOfDay(account.backupMinute * 60L)
+                TextButton(enabled = !busy, onClick = {
+                    android.app.TimePickerDialog(context, { _, hour, minute -> store.backupTime(hour, minute) },
+                        preferred.hour, preferred.minute, android.text.format.DateFormat.is24HourFormat(context)).show()
+                }) {
+                    Text("Backup time · " + preferred.format(java.time.format.DateTimeFormatter.ofLocalizedTime(java.time.format.FormatStyle.SHORT)))
+                }
+                Text("Android runs backups around this time when the network and battery allow.", color = PaperKeySubText,
+                    style = MaterialTheme.typography.bodySmall)
             }
             Text("Years use local creation dates. After a successful backup, older years appear under Restore. Editing an older local entry makes it visible until its new version is backed up.",
                 color = PaperKeySubText, style = MaterialTheme.typography.bodySmall)
@@ -246,44 +248,18 @@ internal fun AccountBackupSettings() {
     if (busy) LinearProgressIndicator(Modifier.fillMaxWidth())
     if (message.isNotBlank()) Text(message, color = PaperKeyText, modifier = Modifier.padding(8.dp))
 
-    newSecrets?.let { secrets ->
-        AlertDialog(onDismissRequest = { if (!busy) newSecrets = null },
-            title = { Text("Save your recovery code") },
-            text = {
-                Column(Modifier.verticalScroll(rememberScrollState()), verticalArrangement = Arrangement.spacedBy(12.dp)) {
-                    Text("Keep this code somewhere private. You will need it to restore on another phone.")
-                    androidx.compose.foundation.text.selection.SelectionContainer {
-                        Text(secrets.recoveryCode(), style = MaterialTheme.typography.bodyLarge)
-                    }
-                    SelectionRow("I have saved this code", confirmed, !busy) { confirmed = it }
-                }
-            },
-            confirmButton = { Button(enabled = confirmed && !busy, onClick = {
-                run {
-                    coordinator.createRecovery(store.state.value, secrets)
-                    newSecrets = null
-                    mergeCurrentYearAndBackUp()
-                }
-            }) { Text("Confirm & back up") } },
-            dismissButton = { TextButton(enabled = !busy, onClick = { newSecrets = null }) { Text("Cancel") } })
-    }
     if (recovering) {
-        AlertDialog(onDismissRequest = { if (!busy) { recovering = false; recovery = "" } },
+        AlertDialog(onDismissRequest = { if (!busy) { recovering = false } },
             title = { Text("Restore a year") },
             text = {
                 Column(Modifier.verticalScroll(rememberScrollState()), verticalArrangement = Arrangement.spacedBy(10.dp)) {
                     Text("Existing local entries are kept. Conflicting edits are restored as separate versions.")
                     if (message.isNotBlank()) Text(message, style = MaterialTheme.typography.bodySmall)
-                    if (!keys.hasKey(account.id)) OutlinedTextField(recovery, { recovery = it },
-                        label = { Text("Recovery code") }, visualTransformation = PasswordVisualTransformation(),
-                        modifier = Modifier.fillMaxWidth(), enabled = !busy)
                     files.map { it.year }.distinct().sortedDescending().forEach { year ->
                         OutlinedButton(enabled = !busy, onClick = {
                             run {
                                 val selected = store.state.value
-                                val report = coordinator.restore(selected, files.filter { it.year == year },
-                                    recovery.takeIf { it.isNotBlank() })
-                                recovery = ""
+                                val report = coordinator.restore(selected, files.filter { it.year == year })
                                 recovering = false
                                 message = "Restored ${report.imported}, skipped ${report.skipped} duplicates, preserved ${report.conflicts} conflicts."
                                 if (selected.lastBackup == 0L) {
@@ -294,7 +270,7 @@ internal fun AccountBackupSettings() {
                     }
                 }
             },
-            confirmButton = { TextButton(enabled = !busy, onClick = { recovering = false; recovery = "" }) { Text("Close") } })
+            confirmButton = { TextButton(enabled = !busy, onClick = { recovering = false }) { Text("Close") } })
     }
 }
 

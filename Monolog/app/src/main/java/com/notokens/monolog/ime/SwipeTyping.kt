@@ -41,7 +41,7 @@ internal object QwertyLayout {
     }
 }
 
-internal class SwipeDecoder(words: List<String>) {
+internal class SwipeDecoder(words: List<String>, private val commonWords: Set<String> = emptySet()) {
     private val candidates = words.filter { word ->
         word.length in 2..24 && word.first() in 'a'..'z' && word.last() in 'a'..'z' &&
             word.all { it in 'a'..'z' || it == '\'' }
@@ -67,7 +67,7 @@ internal class SwipeDecoder(words: List<String>) {
                     var distance = 0f
                     for (i in samples.indices) distance += samples[i].distanceSquared(shape[i])
                     val cost = distance / samples.size + .55f * (startCost + endCost) +
-                        lengthCost * .45f + word.length * .006f
+                        lengthCost * .45f + word.length * .006f - if (word in commonWords) .14f else 0f
                     if (cost < bestCost) {
                         bestCost = cost
                         bestWord = word

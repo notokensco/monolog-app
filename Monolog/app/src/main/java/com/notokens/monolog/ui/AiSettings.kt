@@ -84,18 +84,6 @@ internal fun AiSettings() {
     }
     LaunchedEffect(Unit) { refreshNano() }
 
-    SettingsCard("Gemini online") {
-        var online by remember { mutableStateOf(com.notokens.monolog.ai.CloudAi.enabled(context)) }
-        val configured = com.notokens.monolog.ai.CloudAi.configured(context)
-        Row(verticalAlignment = Alignment.CenterVertically) {
-            Text("Use Gemini online", Modifier.weight(1f), color = PaperKeyText)
-            Switch(online, { online = it; com.notokens.monolog.ai.CloudAi.setEnabled(context, it) }, enabled = configured)
-        }
-        Text(if (configured) "Rewrite uses Gemini. Turn Web on in Ask to use Gemini there. Capture questions send the selected image to Google."
-            else "A Gemini API key has not been configured on this device.",
-            color = PaperKeySubText, style = MaterialTheme.typography.bodySmall)
-    }
-
     SettingsCard("Gemini Nano") {
         Text("Used automatically when available. Android manages its model downloads.",
             color = PaperKeySubText, style = MaterialTheme.typography.bodySmall)

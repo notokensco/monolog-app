@@ -54,6 +54,7 @@ import com.notokens.monolog.R
 import androidx.compose.ui.layout.ContentScale
 import com.notokens.monolog.capture.captureToJournal
 import com.notokens.monolog.capture.TagMetadataCodec
+import com.notokens.monolog.ime.vox.VoiceNoteBody
 import com.notokens.monolog.capture.copyCompanionWindow
 import com.notokens.monolog.data.*
 import com.notokens.monolog.setup.SetupScreen
@@ -93,6 +94,7 @@ private fun pickReminderTime(context: Context, initial: Long, inkMode: Boolean, 
 }
 
 enum class CompanionDestination(val route: String) {
+    NEW_NOTE("note/new"), NEW_REMINDER("reminder/new"),
     TODAY("today"), JOURNAL("journal"), LIBRARY("library"), SETTINGS("settings")
 }
 
@@ -108,6 +110,14 @@ fun CompanionApp(
     val repo = remember { MonologData.repository(context) }
     val scope = rememberCoroutineScope()
     val nav = rememberNavController()
+    val firstRunPrefs = remember { context.getSharedPreferences("first_run_setup", Context.MODE_PRIVATE) }
+    val startRoute = remember {
+        if (firstRunPrefs.getBoolean("completed", false)) CompanionDestination.TODAY.route else "onboarding"
+    }
+    val finishSetup: (String) -> Unit = { route ->
+        firstRunPrefs.edit().putBoolean("completed", true).apply()
+        nav.navigate(route) { popUpTo("onboarding") { inclusive = true }; launchSingleTop = true }
+    }
     val settingsScroll = rememberScrollState()
     val backStack by nav.currentBackStackEntryAsState()
     val route = backStack?.destination?.route ?: CompanionDestination.TODAY.route
@@ -186,7 +196,14 @@ fun CompanionApp(
                     }
                 }
             }) { padding ->
-                NavHost(nav, startDestination = CompanionDestination.TODAY.route, modifier = Modifier.padding(padding)) {
+                NavHost(nav, startDestination = startRoute, modifier = Modifier.padding(padding)) {
+                    composable("onboarding") {
+                        FirstRunSetup(settings, onRequestMicPermission,
+                            onFinish = { finishSetup("today") },
+                            onAccount = { finishSetup(SettingsPage.ACCOUNT.route) },
+                            onModels = { finishSetup(SettingsPage.MODELS.route) },
+                            onMemory = { finishSetup(SettingsPage.MEMORY.route) })
+                    }
                     composable("today") {
                         Screen("Your day, remembered.", showDate = true) {
                             val tileHeight = ((LocalConfiguration.current.screenHeightDp - 512) / 2).coerceIn(124, 152).dp
@@ -239,85 +256,16 @@ fun CompanionApp(
                     composable("journal") {
                         val allNotes by repo.notes.collectAsState(initial = emptyList())
                         val notes = visibleBackupYears(allNotes)
-                        val photoRefs by repo.notePhotos.collectAsState(initial = emptyList())
-                        val photosByNote = remember(photoRefs) { photoRefs.groupBy { it.noteId } }
-                        var activeCaptureViewerNote by remember { mutableStateOf<Pair<Note, Long>?>(null) }
-                        val locale = LocalConfiguration.current.locales[0]
-                        val sections = remember(notes, locale) {
-                            val format = SimpleDateFormat("EEEE, d MMMM yyyy", locale)
-                            notes.sortedByDescending { it.createdAt }.groupBy { format.format(Date(it.createdAt)) }
-                        }
-                        CollectionScreen("Journal", showDate = true) {
-                            item(contentType = "month") {
-                                Row(
-                                    Modifier.fillMaxWidth().glassSurface(24, GlassAccent.BLUE).padding(16.dp),
-                                    verticalAlignment = Alignment.CenterVertically
-                                ) {
-                                    MonologIcon(Glyph.CLOCK, color = ink)
-                                    Spacer(Modifier.width(12.dp))
-                                    Text(
-                                        SimpleDateFormat("MMMM yyyy", locale).format(Date()),
-                                        color = ink,
-                                        style = MaterialTheme.typography.titleMedium,
-                                        fontWeight = FontWeight.SemiBold,
-                                        modifier = Modifier.weight(1f)
-                                    )
-                                    IconControl(Glyph.PLUS, "Add note", { nav.navigate("note/new") })
-                                }
+                        CollectionScreen("Journal") {
+                            item(contentType = "memory") {
+                                MemoryJournal(
+                                    onOpenNote = { nav.navigate("note/$it") },
+                                    onOpenReminder = { nav.navigate("reminder/edit/$it") },
+                                    onNewNote = { nav.navigate("note/new") },
+                                    visibleNotes = notes
+                                )
                             }
                             item { ArchivedYearsLink { nav.navigate(SettingsPage.ACCOUNT.route) } }
-                            if (notes.isEmpty()) item {
-                                EmptyCard("Your story, one day at a time.", "Save a thought from here or the keyboard's context key.")
-                            }
-                            sections.forEach { (day, entries) ->
-                                item(key = day, contentType = "heading") {
-                                    Text(
-                                        day,
-                                        color = muted,
-                                        modifier = Modifier.padding(start = 12.dp, top = 8.dp, bottom = 4.dp),
-                                        fontWeight = FontWeight.SemiBold,
-                                        fontSize = 14.sp
-                                    )
-                                }
-                                item(key = "grid_$day", contentType = "entries_grid") {
-                                    Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
-                                        entries.chunked(2).forEach { pair ->
-                                            Row(
-                                                modifier = Modifier.fillMaxWidth(),
-                                                horizontalArrangement = Arrangement.spacedBy(10.dp)
-                                            ) {
-                                                pair.forEach { note ->
-                                                    Box(modifier = Modifier.weight(1f)) {
-                                                        NoteTile(
-                                                            note = note,
-                                                            photos = photosByNote[note.id].orEmpty(),
-                                                            onPhotoClick = { photoId ->
-                                                                activeCaptureViewerNote = note to photoId
-                                                            },
-                                                            onClick = {
-                                                                nav.navigate("note/${note.id}")
-                                                            }
-                                                        )
-                                                    }
-                                                }
-                                                if (pair.size == 1) {
-                                                    Spacer(modifier = Modifier.weight(1f))
-                                                }
-                                            }
-                                        }
-                                    }
-                                }
-                            }
-                        }
-                        activeCaptureViewerNote?.let { (n, photoId) ->
-                            InteractiveCaptureViewer(
-                                note = n,
-                                photoId = photoId,
-                                onDismiss = { activeCaptureViewerNote = null },
-                                onSaveUpdated = { newTitle, newBody ->
-                                    scope.launch { repo.saveNote(newTitle, newBody, n) }
-                                }
-                            )
                         }
                     }
                     composable("library") {
@@ -336,7 +284,7 @@ fun CompanionApp(
                                 when (filter) {
                                     "Photos" -> note.id in photosByNote
                                     "Screenshots" -> metadata.tags.isNotEmpty() || note.body.contains("<!-- MONOLOG_CAPTURE:")
-                                    "Voice" -> metadata.bottomIsVoice || metadata.tags.any { it.isVoice }
+                                    "Voice" -> metadata.bottomIsVoice || metadata.tags.any { it.isVoice } || VoiceNoteBody.audio(note.body) != null
                                     else -> true
                                 }
                             }
@@ -471,7 +419,7 @@ fun CompanionApp(
                                             ) {
                                                 MonologIcon(Glyph.EXPAND, Modifier.size(14.dp), Color.White)
                                                 Text(
-                                                    if (decoded.tags.isNotEmpty()) "Inspect ${decoded.tags.size} pins" else "Inspect screenshot",
+                                                    when (decoded.tags.size) { 0 -> "Open screenshot"; 1 -> "Open pinned note"; else -> "Open ${decoded.tags.size} pinned notes" },
                                                     color = Color.White,
                                                     fontSize = 12.sp,
                                                     fontWeight = FontWeight.Medium
@@ -484,10 +432,14 @@ fun CompanionApp(
                                         JournalPhotoStrip(photos.drop(1).map { JournalPhoto.Saved(it.id) })
                                     }
                                 }
-                                if (decoded.cleanBody.isNotBlank()) {
+                                if (decoded.hasMetadata) {
+                                    Spacer(Modifier.height(14.dp))
+                                    CaptureDetails(decoded)
+                                } else if (decoded.cleanBody.isNotBlank()) {
                                     Spacer(Modifier.height(14.dp))
                                     JournalMarkdown(decoded.cleanBody, Modifier.fillMaxWidth().glassSurface().padding(16.dp))
                                 }
+                                VoiceNoteBody.audio(note.body)?.let { VoiceNotePlayback(it) }
                                 Spacer(Modifier.height(20.dp))
                                 Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                                     Button(onClick = { nav.navigate("note/edit/${note.id}") }) { Text("Edit") }
@@ -549,6 +501,7 @@ fun CompanionApp(
                         Screen("Settings", onBack = navigateBack, scrollState = settingsScroll) {
                             Column(verticalArrangement = Arrangement.spacedBy(14.dp)) {
                                 SettingsCard("Personalization") {
+                                    TextButton(onClick = { nav.navigate("onboarding") }) { Text("Quick setup") }
                                     SettingsLink(SettingsPage.ACCOUNT) { nav.navigate(it.route) }
                                     SettingsLink(SettingsPage.APPEARANCE) { nav.navigate(it.route) }
                                     SettingsLink(SettingsPage.KEYBOARD) { nav.navigate(it.route) }
@@ -556,6 +509,7 @@ fun CompanionApp(
                                 }
                                 SettingsCard("Intelligence & privacy") {
                                     SettingsLink(SettingsPage.MODELS) { nav.navigate(it.route) }
+                                    SettingsLink(SettingsPage.MEMORY) { nav.navigate(it.route) }
                                     SettingsLink(SettingsPage.CAPTURE) { nav.navigate(it.route) }
                                     SettingsLink(SettingsPage.PRIVACY) { nav.navigate(it.route) }
                                 }
@@ -569,6 +523,7 @@ fun CompanionApp(
                             Column(verticalArrangement = Arrangement.spacedBy(14.dp)) {
                                 when (page) {
                                     SettingsPage.ACCOUNT -> AccountBackupSettings()
+                                    SettingsPage.MEMORY -> MemorySettings()
                                     SettingsPage.APPEARANCE -> {
                                         SettingsCard("Theme") {
                                             Column(Modifier.selectableGroup(), verticalArrangement = Arrangement.spacedBy(4.dp)) {
@@ -597,6 +552,36 @@ fun CompanionApp(
                                         }
                                     }
                                     SettingsPage.KEYBOARD -> {
+                                        val autocorrect by settings.autocorrect.collectAsState(initial = true)
+                                        val swipeTyping by settings.swipeTyping.collectAsState(initial = true)
+                                        val longPressCharacters by settings.longPressCharacters.collectAsState(initial = true)
+                                        SettingsCard("Typing") {
+                                            Row(verticalAlignment = Alignment.CenterVertically) {
+                                                Column(Modifier.weight(1f)) {
+                                                    Text("Autocorrect", color = ink)
+                                                    Text("Correct English typos on space or punctuation. Backspace immediately to undo. Paused in private fields.", color = muted,
+                                                        style = MaterialTheme.typography.bodySmall)
+                                                }
+                                                Switch(autocorrect, { scope.launch { settings.setAutocorrect(it) } },
+                                                    modifier = Modifier.semantics { contentDescription = "Autocorrect" })
+                                            }
+                                            Row(verticalAlignment = Alignment.CenterVertically) {
+                                                Column(Modifier.weight(1f)) {
+                                                    Text("Swipe to type", color = ink)
+                                                    Text("Glide across letters in English or Hinglish.", color = muted, style = MaterialTheme.typography.bodySmall)
+                                                }
+                                                Switch(checked = swipeTyping, onCheckedChange = { scope.launch { settings.setSwipeTyping(it) } },
+                                                    modifier = Modifier.semantics { contentDescription = "Swipe to type" })
+                                            }
+                                            Row(verticalAlignment = Alignment.CenterVertically) {
+                                                Column(Modifier.weight(1f)) {
+                                                    Text("Long-press numbers & symbols", color = ink)
+                                                    Text("Hold Q–P for 1–0. Hold other English letters for the symbol shown above them.", color = muted, style = MaterialTheme.typography.bodySmall)
+                                                }
+                                                Switch(checked = longPressCharacters, onCheckedChange = { scope.launch { settings.setLongPressCharacters(it) } },
+                                                    modifier = Modifier.semantics { contentDescription = "Long-press numbers and symbols" })
+                                            }
+                                        }
                                         val holdMs by settings.shortcutHoldMs.collectAsState(initial = 500)
                                         val shortcutHaptics by settings.shortcutHaptics.collectAsState(initial = true)
                                         SettingsCard("Quick shortcuts") {
@@ -619,6 +604,23 @@ fun CompanionApp(
                                     }
                                     SettingsPage.MODELS -> AiSettings()
                                     SettingsPage.CAPTURE -> {
+                                        val floatingDock by settings.floatingContextDock.collectAsState(initial = false)
+                                        val systemShortcut by com.notokens.monolog.capture.ScreenCaptureService.systemShortcutAssigned.collectAsState()
+                                        SettingsCard("Floating context button") {
+                                            Row(verticalAlignment = Alignment.CenterVertically) {
+                                                Text("Circular shortcut dock", Modifier.weight(1f), color = ink)
+                                                Switch(floatingDock, { scope.launch { settings.setFloatingContextDock(it) } })
+                                            }
+                                            Text("Enable Quick Capture in Accessibility settings. Tap the Monolog button to capture, or hold to open its dock.",
+                                                color = muted, style = MaterialTheme.typography.bodySmall)
+                                            if (floatingDock && systemShortcut) {
+                                                Text("Turn off Monolog’s Android accessibility shortcut to switch to the movable button. Keep Quick Capture enabled.",
+                                                    color = muted, style = MaterialTheme.typography.bodySmall)
+                                            }
+                                            OutlinedButton(onClick = {
+                                                com.notokens.monolog.capture.CaptureSetupActivity.openAccessibilitySettings(context)
+                                            }) { Text("Open Accessibility settings") }
+                                        }
                                         val captureBorderColorHex by settings.captureBorderColor.collectAsState(initial = "#FFB800")
                                         SettingsCard("Border color") {
                                             Row(Modifier.horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(10.dp)) {
@@ -678,6 +680,7 @@ fun CompanionApp(
 }
 
 private enum class SettingsPage(val id: String, val title: String, val summary: String, val icon: Glyph) {
+    MEMORY("memory", "Journal memory", "Meaningful moments and offline search", Glyph.BOOK),
     ACCOUNT("account", "Account & backup", "Google account, encrypted Drive backup, and past years", Glyph.SHIELD),
     APPEARANCE("appearance", "Appearance", "Paper, Ink, and transparency", Glyph.INK),
     KEYBOARD("keyboard", "Keyboard & shortcuts", "Setup, hold duration, and haptics", Glyph.SETTINGS),
@@ -755,13 +758,6 @@ private fun ScreenFrame(onBack: (() -> Unit)?, content: @Composable ColumnScope.
                     fontWeight = FontWeight.SemiBold, modifier = Modifier.weight(1f),
                     maxLines = 1, overflow = TextOverflow.Ellipsis
                 )
-                Row(
-                    Modifier.padding(start = 8.dp).glassSurface(16).padding(horizontal = 8.dp, vertical = 6.dp),
-                    verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(4.dp)
-                ) {
-                    MonologIcon(Glyph.SHIELD, Modifier.size(14.dp), muted)
-                    Text(if (com.notokens.monolog.ai.CloudAi.enabled(LocalContext.current)) "Gemini online" else "On-device", color = muted, style = MaterialTheme.typography.labelSmall, maxLines = 1)
-                }
                 if (onBack == null) IconControl(Glyph.SETTINGS, "Settings", onSettings, frosted = true)
             }
             content()
@@ -1016,6 +1012,10 @@ private fun NoteEditor(initial: Note?, savedPhotos: List<NotePhotoRef>, onCancel
     var picked by rememberSaveable { mutableStateOf(arrayListOf<String>()) }
     var removed by rememberSaveable { mutableStateOf(arrayListOf<Long>()) }
     var preview by rememberSaveable { mutableStateOf(initial != null && !isCapture) }
+    var voiceAudio by remember(initial?.id) { mutableStateOf(initial?.body?.let(VoiceNoteBody::audio)) }
+    var captureAudio by remember(initial?.id) { mutableStateOf(capture?.bottomAudio) }
+    var voiceBusy by remember { mutableStateOf(false) }
+    val micPermission = rememberLauncherForActivityResult(ActivityResultContracts.RequestPermission()) { }
     var saving by remember { mutableStateOf(false) }
     var error by remember { mutableStateOf<String?>(null) }
     val titleFocus = rememberEditorFocusRequester()
@@ -1044,6 +1044,14 @@ private fun NoteEditor(initial: Note?, savedPhotos: List<NotePhotoRef>, onCancel
                     preview = true
                 }, { Text("Preview") })
             }
+            VoiceNoteControl(enabled = !saving, onPermission = { micPermission.launch(android.Manifest.permission.RECORD_AUDIO) },
+                onBusy = { voiceBusy = it }, onVoice = { voice ->
+                    if (isCapture) captureAudio = voice.audio else voiceAudio = voice.audio
+                    val text = listOf(body.text, voice.transcript).filter(String::isNotBlank).joinToString("\n\n")
+                    body = TextFieldValue(text, TextRange(text.length))
+                    preview = false
+                })
+            (if (isCapture) captureAudio else voiceAudio)?.let { VoiceNotePlayback(it) }
             if (preview) {
                 if (body.text.isBlank()) Text("Your formatted entry will appear here.", color = muted)
                 else JournalMarkdown(body.text, Modifier.fillMaxWidth().padding(4.dp))
@@ -1098,7 +1106,7 @@ private fun NoteEditor(initial: Note?, savedPhotos: List<NotePhotoRef>, onCancel
         Spacer(Modifier.height(12.dp))
         Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
             Button(
-                enabled = !saving && (title.isNotBlank() || body.text.isNotBlank() || photos.isNotEmpty()),
+                enabled = !saving && !voiceBusy && (title.isNotBlank() || body.text.isNotBlank() || photos.isNotEmpty() || voiceAudio != null || captureAudio != null),
                 onClick = {
                     saving = true
                     error = null
@@ -1114,12 +1122,16 @@ private fun NoteEditor(initial: Note?, savedPhotos: List<NotePhotoRef>, onCancel
                                     try { PhotoCodec.jpeg(image) } finally { image.recycle() }
                                 }
                             }
+                            val savedBody = if (isCapture) {
+                                TagMetadataCodec.encodeCapture(capture.tags, capture.bottomIsVoice || captureAudio != null,
+                                    currentBody, capture.additionalBody, captureAudio)
+                            } else {
+                                val updated = initial?.let { TagMetadataCodec.replaceVisibleBody(it.body, currentBody) } ?: currentBody
+                                VoiceNoteBody.attach(updated, voiceAudio)
+                            }
                             MonologData.repository(context).saveNote(
-                                currentTitle, initial?.let {
-                                    if (isCapture) TagMetadataCodec.replaceCaptureComment(it.body, currentBody)
-                                    else TagMetadataCodec.replaceVisibleBody(it.body, currentBody)
-                                } ?: currentBody,
-                                initial, NotePhotoChanges(removals, bytes)
+                                currentTitle.ifBlank { if (voiceAudio != null && currentBody.isBlank()) "Voice note" else "" },
+                                savedBody, initial, NotePhotoChanges(removals, bytes)
                             )
                             onCancel()
                         } catch (error: CancellationException) {

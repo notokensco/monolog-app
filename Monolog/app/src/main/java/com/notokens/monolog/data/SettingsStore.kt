@@ -28,6 +28,20 @@ data class Appearance(val theme: ThemeMode = ThemeMode.INK, val reduceTransparen
 enum class QuickShortcut { REMINDER, ALARM, JOURNAL }
 
 class SettingsStore(private val context: Context) {
+    private val floatingContextKey = booleanPreferencesKey("floating_context_dock")
+    val floatingContextDock = context.monologSettings.data.map { it[floatingContextKey] ?: false }.distinctUntilChanged()
+    suspend fun setFloatingContextDock(enabled: Boolean) {
+        context.monologSettings.edit { it[floatingContextKey] = enabled }
+    }
+    private val autocorrectKey = booleanPreferencesKey("autocorrect")
+    val autocorrect = context.monologSettings.data.map { it[autocorrectKey] ?: true }.distinctUntilChanged()
+    suspend fun setAutocorrect(value: Boolean) { context.monologSettings.edit { it[autocorrectKey] = value } }
+    private val swipeTypingKey = booleanPreferencesKey("swipe_typing")
+    private val longPressCharactersKey = booleanPreferencesKey("long_press_characters")
+    val swipeTyping = context.monologSettings.data.map { it[swipeTypingKey] ?: true }.distinctUntilChanged()
+    val longPressCharacters = context.monologSettings.data.map { it[longPressCharactersKey] ?: true }.distinctUntilChanged()
+    suspend fun setSwipeTyping(value: Boolean) { context.monologSettings.edit { it[swipeTypingKey] = value } }
+    suspend fun setLongPressCharacters(value: Boolean) { context.monologSettings.edit { it[longPressCharactersKey] = value } }
     private val shortcutHoldKey = intPreferencesKey("shortcut_hold_ms")
     private val shortcutHapticsKey = booleanPreferencesKey("shortcut_haptics")
     private val captureBorderColorKey = stringPreferencesKey("capture_border_color")

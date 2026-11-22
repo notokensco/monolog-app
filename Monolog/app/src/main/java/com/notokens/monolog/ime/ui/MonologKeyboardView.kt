@@ -100,6 +100,7 @@ internal fun MonologKeyboardView(
     onToggleEmoji: () -> Unit,
     onCloseKeyboard: () -> Unit,
     onToggleIncognito: () -> Unit,
+    longPressCharacters: Boolean = true,
     modifier: Modifier = Modifier
 ) {
     val configuration = LocalConfiguration.current
@@ -217,7 +218,8 @@ internal fun MonologKeyboardView(
                         editorContext = editorContext,
                         language = language,
                         onCharTyped = onCharTyped,
-                        swipeEnabled = swipeAllowed && language.id == "en" && (!isShortcutsOpen || shortcutDraft.isEditing),
+                        swipeEnabled = swipeAllowed && language.supportsLatinSwipe && (!isShortcutsOpen || shortcutDraft.isEditing),
+                        longPressCharacters = longPressCharacters,
                         onSwipe = onSwipe,
                         onShiftClick = onShiftClick,
                         onCapsLock = onCapsLock,
@@ -309,6 +311,7 @@ private fun LettersLayout(
     language: KeyboardLanguage,
     onCharTyped: (String) -> Unit,
     swipeEnabled: Boolean,
+    longPressCharacters: Boolean,
     onSwipe: (List<SwipePoint>) -> Unit,
     onShiftClick: () -> Unit,
     onCapsLock: () -> Unit,
@@ -345,15 +348,21 @@ private fun LettersLayout(
                 QwertyLayout.rows[0].forEachIndexed { index, letter ->
                     val display = (if (isUpper) letter.uppercaseChar() else letter).toString()
                     val number = "1234567890"[index].toString()
-                    KeyButton(Modifier.weight(1f), text = display, subText = number,
-                        onLongClick = { onCharTyped(number) }, onClick = { onCharTyped(display) })
+                    KeyButton(Modifier.weight(1f), text = display, subText = number.takeIf { longPressCharacters },
+                        longClickLabel = "Type $number",
+                        onLongClick = if (longPressCharacters) ({ onCharTyped(number) }) else null,
+                        onClick = { onCharTyped(display) })
                 }
             }
             Row(Modifier.fillMaxWidth().height(rowHeight)) {
                 Spacer(Modifier.weight(QwertyLayout.homeRowInset))
-                QwertyLayout.rows[1].forEach { letter ->
+                QwertyLayout.rows[1].forEachIndexed { index, letter ->
                     val display = (if (isUpper) letter.uppercaseChar() else letter).toString()
-                    KeyButton(Modifier.weight(1f), text = display, onClick = { onCharTyped(display) })
+                    val symbol = "@#\u00a3_&-+()"[index].toString()
+                    KeyButton(Modifier.weight(1f), text = display, subText = symbol.takeIf { longPressCharacters },
+                        longClickLabel = "Type $symbol",
+                        onLongClick = if (longPressCharacters) ({ onCharTyped(symbol) }) else null,
+                        onClick = { onCharTyped(display) })
                 }
                 Spacer(Modifier.weight(QwertyLayout.homeRowInset))
             }
@@ -372,9 +381,13 @@ private fun LettersLayout(
                     onLongClick = onCapsLock,
                     onClick = onShiftClick
                 )
-                QwertyLayout.rows[2].forEach { letter ->
+                QwertyLayout.rows[2].forEachIndexed { index, letter ->
                     val display = (if (isUpper) letter.uppercaseChar() else letter).toString()
-                    KeyButton(Modifier.weight(1f), text = display, onClick = { onCharTyped(display) })
+                    val symbol = "*/:;!?'"[index].toString()
+                    KeyButton(Modifier.weight(1f), text = display, subText = symbol.takeIf { longPressCharacters },
+                        longClickLabel = "Type $symbol",
+                        onLongClick = if (longPressCharacters) ({ onCharTyped(symbol) }) else null,
+                        onClick = { onCharTyped(display) })
                 }
                 KeyButton(Modifier.weight(QwertyLayout.shiftWeight), glyph = Glyph.BACKSPACE,
                     isSpecial = true, onClick = onBackspace)

@@ -1,5 +1,5 @@
 # Quick Capture
 
-Keep the existing keyboard M-key and companion Quick Capture flows unless the user explicitly asks to change them. Do not add an app shortcut or request an accessibility button for Quick Capture. Android owns the optional shortcut row on its Accessibility Settings screen.
+Keep the existing keyboard M-key and companion Quick Capture flows unless the user explicitly asks to change them. The optional Monolog floating button is translucent, movable, and opens the circular dock on hold. Hide it while Monolog also has an Android accessibility button assigned. Both entry points use the same protected capture flow.
 
-Captures now require an explicit, nonblank note name and Save confirmation. Dismissing the prompt or leaving it blank for 30 seconds discards the in-memory capture. Preserve this behavior unless the user asks to change it.
+Tapping Save in the capture editor generates a title from the user's notes or on-device screenshot analysis and saves directly. The title can be edited later. Closing the editor discards an unsaved capture.

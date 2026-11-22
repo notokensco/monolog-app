@@ -28,6 +28,7 @@ internal data class KeyboardLanguage(
     val speechTag: String,
     val script: IntRange? = null
 ) {
+    val supportsLatinSwipe get() = id == "en" || id == "hi-Latn"
     val translationCode: String?
         get() = if (id == "en" || id == "hi-Latn") null else TranslateLanguage.fromLanguageTag(id)
 
@@ -39,10 +40,11 @@ internal data class KeyboardLanguage(
 
     companion object {
         val all = listOf(
-            KeyboardLanguage("en", "English", "en-IN"),
+            KeyboardLanguage("en", "English (India)", "en-IN"),
             KeyboardLanguage("hi", "Hindi · हिन्दी", "hi-IN", 0x0901..0x094d),
             KeyboardLanguage("hi-Latn", "Hinglish · Romanized Hindi", "hi-IN"),
             KeyboardLanguage("bn", "Bengali · বাংলা", "bn-IN", 0x0981..0x09cd),
+            KeyboardLanguage("as", "Assamese · অসমীয়া", "as-IN", 0x0981..0x09f1),
             KeyboardLanguage("gu", "Gujarati · ગુજરાતી", "gu-IN", 0x0a81..0x0acd),
             KeyboardLanguage("kn", "Kannada · ಕನ್ನಡ", "kn-IN", 0x0c81..0x0ccd),
             KeyboardLanguage("ml", "Malayalam · മലയാളം", "ml-IN", 0x0d02..0x0d4d),

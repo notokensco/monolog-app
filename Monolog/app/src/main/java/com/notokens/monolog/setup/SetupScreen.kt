@@ -130,13 +130,13 @@ private fun TestInputField(label: String, type: KeyboardType, action: ImeAction,
     )
 }
 
-private fun hasMicrophonePermission(context: Context): Boolean =
+internal fun hasMicrophonePermission(context: Context): Boolean =
     ContextCompat.checkSelfPermission(context, Manifest.permission.RECORD_AUDIO) == PackageManager.PERMISSION_GRANTED
 
-private fun checkImeEnabled(context: Context): Boolean =
+internal fun checkImeEnabled(context: Context): Boolean =
     context.getSystemService(InputMethodManager::class.java)?.enabledInputMethodList.orEmpty()
         .any { it.packageName == context.packageName }
 
-private fun checkImeSelected(context: Context): Boolean =
+internal fun checkImeSelected(context: Context): Boolean =
     Settings.Secure.getString(context.contentResolver, Settings.Secure.DEFAULT_INPUT_METHOD)
         ?.substringBefore('/') == context.packageName

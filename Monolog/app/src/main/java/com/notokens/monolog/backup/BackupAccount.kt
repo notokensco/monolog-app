@@ -24,7 +24,8 @@ internal data class BackupAccount(
     val id: String = "", val email: String = "", val name: String = "", val session: String = "",
     val connected: Boolean = false, val reconnect: Boolean = false,
     val journal: Boolean = true, val context: Boolean = true, val attachments: Boolean = true,
-    val frequency: String = "Manual", val lastBackup: Long = 0, val loadedYears: Set<Int> = emptySet()
+    val frequency: String = "Manual", val lastBackup: Long = 0, val loadedYears: Set<Int> = emptySet(),
+    val backupMinute: Int = 4 * 60
 )
 
 internal class BackupAccountStore private constructor(private val context: Context) {
@@ -35,7 +36,8 @@ internal class BackupAccountStore private constructor(private val context: Conte
         prefs.getBoolean("connected", false), prefs.getBoolean("reconnect", false),
         prefs.getBoolean("journal", true), prefs.getBoolean("context", true), prefs.getBoolean("attachments", true),
         prefs.getString("frequency", "Manual").orEmpty(), prefs.getLong("lastBackup", 0),
-        prefs.getStringSet("loadedYears", emptySet()).orEmpty().mapNotNull { it.toIntOrNull() }.toSet()
+        prefs.getStringSet("loadedYears", emptySet()).orEmpty().mapNotNull { it.toIntOrNull() }.toSet(),
+        prefs.getInt("backupMinute", 4 * 60).coerceIn(0, 1439)
     )
     private val mutableState = MutableStateFlow(read())
     val state = mutableState.asStateFlow()
@@ -80,8 +82,13 @@ internal class BackupAccountStore private constructor(private val context: Conte
         BackupWork.schedule(this.context, state.value)
     }
     fun frequency(value: String) {
-        require(value in listOf("Manual", "Daily", "Weekly"))
+        require(value in listOf("Manual", "Daily", "Weekly", "Monthly"))
         prefs.edit().putString("frequency", value).persist()
+        BackupWork.schedule(context, state.value)
+    }
+    fun backupTime(hour: Int, minute: Int) {
+        require(hour in 0..23 && minute in 0..59)
+        prefs.edit().putInt("backupMinute", hour * 60 + minute).persist()
         BackupWork.schedule(context, state.value)
     }
     fun success(session: String) {

@@ -27,7 +27,7 @@ internal object RewritePipeline {
         if (CloudAi.enabled(context)) {
             return withAiFallback(online = {
                 val result = CloudAi.answer(context, AiText.rewritePrompt(draft, style))
-                AiText.checkedRewrite(draft, result)?.let { edit(it, detail = "Gemini online") }
+                AiText.checkedRewrite(draft, result)?.let { edit(it) }
                     ?: error("The online rewrite did not preserve the draft.")
             }, offline = { rewriteEnglishOffline(context, draft, style) })
         }

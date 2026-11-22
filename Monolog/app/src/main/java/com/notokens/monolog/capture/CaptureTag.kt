@@ -8,7 +8,8 @@ data class CaptureTag(
     val xRatio: Float,
     val yRatio: Float,
     val text: String,
-    val isVoice: Boolean = false
+    val isVoice: Boolean = false,
+    val audio: String? = null
 )
 
 object PendingCaptureHolder {
@@ -23,7 +24,8 @@ object TagMetadataCodec {
     private val analysisHeading = Regex("(?m)^(?:$ANALYSIS_HEADING|$LEGACY_ANALYSIS_HEADING)[ \t]*\r?$")
     private const val LEGACY_PREFIX = "<!-- MONOLOG_TAGS:"
 
-    fun encodeCapture(tags: List<CaptureTag>, bottomIsVoice: Boolean, bottomComment: String, additionalBody: String): String {
+    fun encodeCapture(tags: List<CaptureTag>, bottomIsVoice: Boolean, bottomComment: String, additionalBody: String,
+        bottomAudio: String? = null): String {
         val displayBody = buildString {
             if (bottomComment.isNotBlank()) appendLine(bottomComment).appendLine()
             if (tags.isNotEmpty()) {
@@ -36,7 +38,7 @@ object TagMetadataCodec {
             }
             append(visibleBody(additionalBody))
         }
-        return encode(displayBody, tags, bottomIsVoice, bottomComment, additionalBody.trim())
+        return encode(displayBody, tags, bottomIsVoice, bottomComment, additionalBody.trim(), bottomAudio)
     }
 
     private fun encode(
@@ -44,7 +46,7 @@ object TagMetadataCodec {
         tags: List<CaptureTag>,
         bottomIsVoice: Boolean,
         bottomComment: String,
-        additionalBody: String
+        additionalBody: String, bottomAudio: String? = null
     ): String {
         val root = JSONObject()
         val tagsArray = JSONArray()
@@ -54,11 +56,13 @@ object TagMetadataCodec {
                 put("y", tag.yRatio.toDouble())
                 put("text", tag.text)
                 put("isVoice", tag.isVoice)
+                if (tag.audio != null) put("audio", tag.audio)
             }
             tagsArray.put(obj)
         }
         root.put("tags", tagsArray)
         root.put("bottomIsVoice", bottomIsVoice)
+        if (bottomAudio != null) root.put("bottomAudio", bottomAudio)
         root.put("additionalBody", additionalBody)
         if (bottomComment.isNotBlank()) {
             root.put("bottomComment", bottomComment)
@@ -73,7 +77,8 @@ object TagMetadataCodec {
         val bottomIsVoice: Boolean,
         val bottomComment: String,
         val additionalBody: String = "",
-        val hasMetadata: Boolean = false
+        val hasMetadata: Boolean = false,
+        val bottomAudio: String? = null
     ) {
         val analysis: String
             get() = analysisHeading.find(additionalBody)?.let { heading ->
@@ -86,13 +91,23 @@ object TagMetadataCodec {
 
     fun replaceVisibleBody(original: String, visible: String): String {
         val existing = decode(original)
-        if (!existing.hasMetadata && existing.analysis.isBlank()) return visible
-        return encode(visible, existing.tags, existing.bottomIsVoice, existing.bottomComment, existing.additionalBody)
+        if (!existing.hasMetadata && existing.analysis.isBlank()) return com.notokens.monolog.ime.vox.VoiceNoteBody.attach(
+            visible, com.notokens.monolog.ime.vox.VoiceNoteBody.audio(original))
+        return encode(visible, existing.tags, existing.bottomIsVoice, existing.bottomComment, existing.additionalBody, existing.bottomAudio)
     }
 
     fun replaceCaptureComment(original: String, comment: String): String {
         val existing = decode(original)
-        return encodeCapture(existing.tags, existing.bottomIsVoice, comment, existing.additionalBody)
+        return encodeCapture(existing.tags, existing.bottomIsVoice, comment, existing.additionalBody, existing.bottomAudio)
+    }
+
+    fun withoutAudio(body: String): String {
+        val capture = decode(body)
+        if (capture.hasMetadata && (capture.bottomAudio != null || capture.tags.any { it.audio != null })) {
+            return encodeCapture(capture.tags.map { it.copy(audio = null) }, capture.bottomIsVoice,
+                capture.bottomComment, capture.additionalBody)
+        }
+        return com.notokens.monolog.ime.vox.VoiceNoteBody.strip(body)
     }
 
     fun decode(rawBody: String): DecodedCapture {
@@ -115,7 +130,8 @@ object TagMetadataCodec {
                 return DecodedCapture(visibleBody(clean), tags, false, "", clean, hasMetadata = true)
             }
         }
-        return DecodedCapture(visibleBody(rawBody), emptyList(), false, "", rawBody)
+        val text = com.notokens.monolog.ime.vox.VoiceNoteBody.strip(rawBody)
+        return DecodedCapture(visibleBody(text), emptyList(), false, "", text)
     }
 
     private fun parseJson(cleanBody: String, jsonStr: String): DecodedCapture {
@@ -123,6 +139,7 @@ object TagMetadataCodec {
         var bottomIsVoice = false
         var bottomComment = ""
         var additionalBody = ""
+        var bottomAudio: String? = null
         runCatching {
             val obj = JSONObject(jsonStr)
             val array = obj.optJSONArray("tags")
@@ -134,18 +151,20 @@ object TagMetadataCodec {
                             xRatio = item.optDouble("x", 0.5).toFloat(),
                             yRatio = item.optDouble("y", 0.5).toFloat(),
                             text = item.optString("text", ""),
-                            isVoice = item.optBoolean("isVoice", false)
+                            isVoice = item.optBoolean("isVoice", false),
+                            audio = item.optString("audio").takeIf { it.isNotBlank() && it.length <= 225_000 }
                         )
                     )
                 }
             }
             bottomIsVoice = obj.optBoolean("bottomIsVoice", false)
             bottomComment = obj.optString("bottomComment", "")
+            bottomAudio = obj.optString("bottomAudio").takeIf { it.isNotBlank() && it.length <= 225_000 }
             additionalBody = obj.optString("additionalBody", "")
         }
         return DecodedCapture(visibleBody(cleanBody), tags, bottomIsVoice, bottomComment, additionalBody.ifBlank {
             if (analysisHeading.containsMatchIn(cleanBody)) cleanBody else ""
-        }, hasMetadata = true)
+        }, hasMetadata = true, bottomAudio = bottomAudio)
     }
 
     private fun parseLegacyArray(jsonStr: String): List<CaptureTag> {

@@ -31,6 +31,8 @@ class MainActivity : ComponentActivity() {
     companion object {
         const val ACTION_REQUEST_MIC_PERMISSION = "com.notokens.monolog.REQUEST_MIC_PERMISSION"
         const val ACTION_OPEN_JOURNAL = "com.notokens.monolog.OPEN_JOURNAL"
+        const val ACTION_NEW_NOTE = "com.notokens.monolog.NEW_NOTE"
+        const val ACTION_NEW_REMINDER = "com.notokens.monolog.NEW_REMINDER"
         const val ACTION_OPEN_TODAY = "com.notokens.monolog.OPEN_TODAY"
         const val ACTION_OPEN_SETTINGS = "com.notokens.monolog.OPEN_SETTINGS"
     }
@@ -87,12 +89,7 @@ class MainActivity : ComponentActivity() {
                 )
             }
         }
-        if (savedInstanceState == null && intent?.action == Intent.ACTION_MAIN &&
-            intent?.component?.className != "$packageName.KeyboardSettings" &&
-            ContextCompat.checkSelfPermission(this, Manifest.permission.POST_NOTIFICATIONS) != PackageManager.PERMISSION_GRANTED
-        ) {
-            notificationPermissionLauncher.launch(Manifest.permission.POST_NOTIFICATIONS)
-        }
+
     }
 
     override fun onNewIntent(intent: Intent) {
@@ -109,6 +106,8 @@ class MainActivity : ComponentActivity() {
         when (intent?.action) {
             ACTION_REQUEST_MIC_PERMISSION -> micPermissionLauncher.launch(Manifest.permission.RECORD_AUDIO)
             ACTION_OPEN_JOURNAL -> destination = CompanionDestination.JOURNAL
+            ACTION_NEW_NOTE -> destination = CompanionDestination.NEW_NOTE
+            ACTION_NEW_REMINDER -> destination = CompanionDestination.NEW_REMINDER
             ACTION_OPEN_TODAY -> destination = CompanionDestination.TODAY
             ACTION_OPEN_SETTINGS -> destination = CompanionDestination.SETTINGS
         }

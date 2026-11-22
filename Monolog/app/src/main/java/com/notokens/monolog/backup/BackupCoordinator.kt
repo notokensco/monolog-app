@@ -10,6 +10,13 @@ import com.notokens.monolog.data.JournalCipher
 import com.notokens.monolog.data.MonologDatabase
 import com.notokens.monolog.data.Note
 import com.notokens.monolog.data.NotePhoto
+import com.notokens.monolog.data.MemoryBackupReceipt
+import com.notokens.monolog.data.MemoryRecord
+import com.notokens.monolog.data.Reminder
+import com.notokens.monolog.data.YearDownload
+import com.notokens.monolog.data.YearDownloadNote
+import com.notokens.monolog.memory.MemoryRepository
+import com.notokens.monolog.memory.MemoryIndexWork
 import java.time.Instant
 import java.time.ZoneId
 import java.util.UUID
@@ -21,7 +28,8 @@ import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
 
-internal data class BackupSnapshot(val payloads: List<BackupPayload>, val archives: List<BackupArchive>)
+internal data class BackupSnapshot(val payloads: List<BackupPayload>, val archives: List<BackupArchive>,
+    val memoryReceipts: List<MemoryBackupReceipt> = emptyList())
 internal data class RestoreReport(val imported: Int, val skipped: Int, val conflicts: Int)
 
 internal class BackupCoordinator(
@@ -40,13 +48,24 @@ internal class BackupCoordinator(
         return authorized(account) { it.list() }
     }
 
+    suspend fun linkExistingKey(account: BackupAccount) = operations.withLock {
+        requireConnected(account)
+        val local = withContext(Dispatchers.IO) { if (keys.hasKey(account.id)) keys.load(account.id) else null }
+        if (local != null) authorized(account) { it.linkRecovery(local.recovery) }
+    }
+
     suspend fun backUp(account: BackupAccount): Int = operations.withLock {
         requireConnected(account)
         require(account.journal || account.context) { "Select journal entries or saved context." }
-        val secrets = withContext(Dispatchers.IO) { keys.load(account.id) }
         val snapshot = snapshot(account)
         require(snapshot.payloads.isNotEmpty()) { "There are no selected entries to back up." }
         authorized(account) { drive ->
+            val secrets = withContext(Dispatchers.IO) {
+                if (keys.hasKey(account.id)) keys.load(account.id)
+                else BackupCrypto.create().also { keys.save(account.id, it) }
+            }
+            accounts.requireSession(account.session)
+            drive.linkRecovery(secrets.recovery)
             for (payload in snapshot.payloads) {
                 accounts.requireSession(account.session)
                 val bytes = withContext(Dispatchers.Default) {
@@ -60,9 +79,10 @@ internal class BackupCoordinator(
         db.withTransaction {
             accounts.requireSession(account.session)
             db.backups().archive(snapshot.archives)
+            db.memories().receipt(snapshot.memoryReceipts)
         }
         accounts.success(account.session)
-        snapshot.payloads.sumOf { it.entries.size }
+        snapshot.payloads.sumOf { it.entries.size + it.memories.size }
     }
 
     /** Validate every selected file before the first database write. The import is a single transaction. */
@@ -70,19 +90,26 @@ internal class BackupCoordinator(
         operations.withLock {
             requireConnected(account)
             require(files.isNotEmpty()) { "Select a year with a backup." }
-            val recovery = withContext(Dispatchers.IO) {
-                if (code != null) BackupCrypto.recoveryBytes(code) else keys.load(account.id).recovery
+            val localRecovery = withContext(Dispatchers.IO) {
+                if (code != null) BackupCrypto.recoveryBytes(code)
+                else if (keys.hasKey(account.id)) keys.load(account.id).recovery else null
             }
             var recoveredSecrets: BackupSecrets? = null
             var downloadedBytes = 0L
             val payloads = authorized(account) { drive ->
+                val seeds = if (code == null) (listOfNotNull(localRecovery) + drive.recoverySeeds())
+                    .distinctBy { BackupCrypto.digest(it) } else listOfNotNull(localRecovery)
+                check(seeds.isNotEmpty()) { "These older backups are not linked yet. Back up from the original device to enable account restore." }
                 files.map { file ->
                     accounts.requireSession(account.session)
                     val bytes = drive.download(file)
                     downloadedBytes += bytes.size
                     require(downloadedBytes <= BackupCrypto.MAX_BYTES) { "Select fewer backup files to restore at once." }
                     withContext(Dispatchers.Default) {
-                        val (plain, secrets) = BackupCrypto.decrypt(bytes, account.id, file.year, recovery)
+                        val (plain, secrets) = seeds.firstNotNullOfOrNull { seed ->
+                            try { BackupCrypto.decrypt(bytes, account.id, file.year, seed) }
+                            catch (_: javax.crypto.AEADBadTagException) { null }
+                        } ?: error("This backup could not be unlocked by the linked account. Back up from the original device to link older backups.")
                         recoveredSecrets = secrets
                         BackupPayload.decode(plain, account.id, file.year).also { payload ->
                             payload.entries.flatMap { it.photos }.forEach { photo ->
@@ -100,8 +127,11 @@ internal class BackupCoordinator(
             accounts.requireSession(account.session)
             val report = importPayloads(account, payloads)
             accounts.requireSession(account.session)
-            withContext(Dispatchers.IO) { keys.save(account.id, checkNotNull(recoveredSecrets)) }
+            withContext(Dispatchers.IO) {
+                if (!keys.hasKey(account.id) || code != null) keys.save(account.id, checkNotNull(recoveredSecrets))
+            }
             accounts.loaded(account.session, payloads.map { it.year }.toSet())
+            MemoryIndexWork.enqueue(context)
             report
         }
 
@@ -128,13 +158,28 @@ internal class BackupCoordinator(
                 val photos = if (account.attachments) refs[note.id].orEmpty().map {
                     JournalCipher.open(checkNotNull(db.photos().image(it.id)), "note-photo")
                 } else emptyList()
-                if (account.attachments || refs[note.id].isNullOrEmpty()) {
+                val body = if (account.attachments) note.body else TagMetadataCodec.withoutAudio(note.body)
+                if (account.attachments || refs[note.id].isNullOrEmpty() && body == note.body) {
                     archives.add(BackupArchive(account.id, note.id, fingerprint(note)))
                 }
-                BackupEntry(identity.recordId, note.title, note.body, note.createdAt, note.updatedAt, kind, photos)
+                BackupEntry(identity.recordId, note.title, body, note.createdAt, note.updatedAt, kind, photos)
             }
-            BackupSnapshot(entries.distinctBy { it.id to it.digest() }.groupBy { Instant.ofEpochMilli(it.createdAt).atZone(ZoneId.systemDefault()).year }.map { (year, rows) ->
-                BackupPayload(account.id, year, rows, ZoneId.systemDefault().id) }, archives)
+            val reminders = db.reminders().all().associateBy { it.id }
+            val memories = db.memories().all().filter {
+                if (it.source == "Saved context") account.context else account.journal
+            }.map { row ->
+                val reminder = reminders[row.reminderId]
+                BackupMemory(row.id, row.timestamp, row.localDay, row.revision, row.source,
+                    JournalCipher.open(row.payload, "memory-payload"), row.pinned,
+                    records[row.noteId]?.recordId, reminder?.title, reminder?.dueAt)
+            }
+            val noteYears = entries.distinctBy { it.id to it.digest() }.groupBy {
+                Instant.ofEpochMilli(it.createdAt).atZone(ZoneId.systemDefault()).year }
+            val memoryYears = memories.groupBy { java.time.LocalDate.parse(it.day).year }
+            val receipts = memories.map { MemoryBackupReceipt(account.id, it.id, it.revision, it.digest()) }
+            BackupSnapshot((noteYears.keys + memoryYears.keys).sorted().map { year ->
+                BackupPayload(account.id, year, noteYears[year].orEmpty(), ZoneId.systemDefault().id,
+                    memoryYears[year].orEmpty()) }, archives, receipts)
         }
     }
 
@@ -154,7 +199,8 @@ internal class BackupCoordinator(
                     accounts.requireSession(account.session)
                     if (original.kind == "journal" && !account.journal ||
                         original.kind == "context" && !account.context) continue
-                    val entry = if (account.attachments) original else original.copy(photos = emptyList())
+                    val entry = if (account.attachments) original else original.copy(
+                        photos = emptyList(), body = TagMetadataCodec.withoutAudio(original.body))
                     val digest = entry.digest()
                     val existing = records.filter { it.recordId == entry.id }
                     val identical = existing.firstOrNull { identity ->
@@ -185,11 +231,58 @@ internal class BackupCoordinator(
                         records.add(record)
                         notes[id] = note.copy(id = id, title = entry.title, body = entry.body)
                         currentDigests[id] = digest
+                        val oldYear = java.time.LocalDate.now().year
+                        val entryYear = Instant.ofEpochMilli(entry.createdAt).atZone(ZoneId.systemDefault()).year
+                        if (entryYear < oldYear) db.memories().downloadedNote(
+                            YearDownloadNote(account.id, entryYear, id, fingerprint(notes.getValue(id))))
                         imported++
                         id
                     }
                     db.backups().insertVersion(BackupVersion(account.id, entry.id, digest, noteId))
                 }
+                val reminders = db.reminders().all().toMutableList()
+                for (moment in payloads.flatMap { it.memories }) {
+                    accounts.requireSession(account.session)
+                    currentCoroutineContext().ensureActive()
+                    if (moment.source == "Saved context" && !account.context ||
+                        moment.source != "Saved context" && !account.journal) continue
+                    var id = moment.id
+                    var local = db.memories().get(id)
+                    fun same(row: MemoryRecord) = row.payload.let { JournalCipher.open(it, "memory-payload") } == moment.payload &&
+                        row.timestamp == moment.timestamp && row.source == moment.source && row.pinned == moment.pinned
+                    if (local != null && !same(local)) {
+                        conflicts++
+                        id = UUID.nameUUIDFromBytes("${moment.id}|${moment.digest()}".toByteArray()).toString()
+                        local = db.memories().get(id)
+                        // A locally edited conflict must also be preserved on repeated restores.
+                        var suffix = 0
+                        while (local != null && !same(local)) {
+                            id = UUID.nameUUIDFromBytes("${moment.id}|${moment.digest()}|${++suffix}".toByteArray()).toString()
+                            local = db.memories().get(id)
+                        }
+                    }
+                    if (local != null) { skipped++; continue }
+                    val noteId = moment.noteRef?.let { ref -> records.lastOrNull { it.recordId == ref }?.noteId }
+                    val reminderId = if (moment.reminderTitle != null && moment.reminderDue != null) {
+                        reminders.firstOrNull { it.title == moment.reminderTitle && it.dueAt == moment.reminderDue }?.id
+                            ?: Reminder(title = moment.reminderTitle, dueAt = moment.reminderDue,
+                                createdAt = moment.timestamp).let { reminder ->
+                                db.reminders().insert(reminder).also { reminders.add(reminder.copy(id = it)) }
+                            }
+                    } else null
+                    val year = java.time.LocalDate.parse(moment.day).year
+                    val cached = year < java.time.LocalDate.now().year
+                    db.memories().insert(MemoryRecord(id, moment.timestamp, moment.day, year, moment.revision,
+                        moment.source, JournalCipher.seal(moment.payload, "memory-payload"),
+                        MemoryRepository.fingerprint("restored|$id"), moment.pinned, noteId, reminderId,
+                        cacheOwner = if (cached) account.id else null, cacheYear = if (cached) year else null,
+                        cacheExpiresAt = if (cached) System.currentTimeMillis() + 7L * 86400000 else null))
+                    imported++
+                }
+                for (year in payloads.map { it.year }.distinct().filter { it < java.time.LocalDate.now().year }) {
+                    db.memories().download(YearDownload(account.id, year, System.currentTimeMillis() + 7L * 86400000))
+                }
+                db.memories().clearRecaps()
                 accounts.requireSession(account.session)
                 RestoreReport(imported, skipped, conflicts)
             }

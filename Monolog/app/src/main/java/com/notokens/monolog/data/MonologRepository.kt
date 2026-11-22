@@ -59,7 +59,7 @@ class RoomMonologRepository(private val context: Context) : MonologRepository {
     override suspend fun saveNote(title: String, body: String, existing: Note?, photos: NotePhotoChanges?): Long {
         require(title.isNotBlank() || body.isNotBlank() || photos?.added?.isNotEmpty() == true || existing != null)
         val cleanTitle = title.trim().ifBlank { body.trim().lineSequence().first().take(60).ifBlank { "Untitled note" } }
-        return database.withTransaction {
+        val savedId = database.withTransaction {
             val sealedTitle = JournalCipher.seal(cleanTitle, "note-title")
             val sealedBody = JournalCipher.seal(body, "note-body")
             val id = if (existing == null) {
@@ -77,6 +77,8 @@ class RoomMonologRepository(private val context: Context) : MonologRepository {
             }
             id
         }
+        com.notokens.monolog.memory.MemoryRepository.queueNote(context, savedId)
+        return savedId
     }
 
     override suspend fun deleteNote(note: Note) = database.notes().delete(note)
@@ -88,6 +90,7 @@ class RoomMonologRepository(private val context: Context) : MonologRepository {
         val id = if (reminder == null) database.reminders().insert(Reminder(title = title.trim(), dueAt = dueAt))
         else { scheduler.cancel(reminder.id); database.reminders().update(reminder); reminder.id }
         scheduler.schedule(Reminder(id = id, title = title.trim(), dueAt = dueAt))
+        com.notokens.monolog.memory.MemoryRepository.queueReminder(context, id)
         return id
     }
 

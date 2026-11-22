@@ -2,12 +2,8 @@ package com.notokens.monolog.ui
 
 import android.Manifest
 import android.content.Intent
-import android.content.pm.PackageManager
 import android.graphics.Bitmap
 import android.os.Bundle
-import android.speech.RecognitionListener
-import android.speech.RecognizerIntent
-import android.speech.SpeechRecognizer
 import android.widget.Toast
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
@@ -36,6 +32,8 @@ import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.layout.onGloballyPositioned
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.platform.LocalFocusManager
+import androidx.compose.ui.platform.LocalSoftwareKeyboardController
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.IntSize
@@ -43,9 +41,8 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.window.Dialog
 import androidx.compose.ui.window.DialogProperties
-import androidx.core.content.ContextCompat
-import com.notokens.monolog.ai.KeyboardLanguage
 import com.notokens.monolog.capture.CaptureTag
+import com.notokens.monolog.capture.CaptureAnnotationActivity
 import com.notokens.monolog.capture.TagMetadataCodec
 import com.notokens.monolog.data.MonologData
 import com.notokens.monolog.data.Note
@@ -65,9 +62,10 @@ fun InteractiveCaptureViewer(
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
     val density = LocalDensity.current
+    val focus = LocalFocusManager.current
+    val keyboard = LocalSoftwareKeyboardController.current
     val settings = remember { SettingsStore(context) }
 
-    val language by settings.keyboardLanguage.collectAsState(initial = "en")
     val incognito by settings.incognito.collectAsState(initial = true)
     val borderColorHex by settings.captureBorderColor.collectAsState(initial = "#FFB800")
     val accentColor = remember(borderColorHex) {
@@ -82,13 +80,14 @@ fun InteractiveCaptureViewer(
     val decoded = remember(note.body) { TagMetadataCodec.decode(note.body) }
     val tags = remember { mutableStateListOf<CaptureTag>().apply { addAll(decoded.tags) } }
     var bottomComment by remember { mutableStateOf(decoded.bottomComment) }
+    var bottomAudio by remember { mutableStateOf(decoded.bottomAudio) }
     var isBottomVoice by remember { mutableStateOf(decoded.bottomIsVoice) }
 
     var hasChanges by remember { mutableStateOf(false) }
 
     // Load bitmap from repository
     var bitmap by remember(photoId) { mutableStateOf<Bitmap?>(null) }
-    LaunchedEffect(photoId) {
+    LaunchedEffect(photoId, note.updatedAt) {
         withContext(Dispatchers.IO) {
             val bytes = MonologData.repository(context).photoImage(photoId)
             if (bytes != null) {
@@ -101,75 +100,21 @@ fun InteractiveCaptureViewer(
     var pendingTagLocation by remember { mutableStateOf<Pair<Float, Float>?>(null) }
     var editingTagIndex by remember { mutableStateOf<Int?>(null) }
     var tagInputText by remember { mutableStateOf("") }
-    var isRecordingVoice by remember { mutableStateOf(false) }
-    var activeRecognizer by remember { mutableStateOf<SpeechRecognizer?>(null) }
-    val recognizerOnDispose = rememberUpdatedState(activeRecognizer)
-    DisposableEffect(Unit) {
-        onDispose { recognizerOnDispose.value?.destroy() }
-    }
     var editingBottomNote by remember { mutableStateOf(false) }
+    LaunchedEffect(pendingTagLocation, editingTagIndex, editingBottomNote) {
+        if (pendingTagLocation == null && editingTagIndex == null && !editingBottomNote) {
+            focus.clearFocus(force = true)
+            keyboard?.hide()
+        }
+    }
 
     val micLauncher = rememberLauncherForActivityResult(ActivityResultContracts.RequestPermission()) { granted ->
         if (!granted) Toast.makeText(context, "Microphone permission required for voice notes", Toast.LENGTH_SHORT).show()
     }
 
-    fun startVoiceRecognition(onResult: (String) -> Unit) {
-        if (incognito || activeRecognizer != null) return
-        if (ContextCompat.checkSelfPermission(context, Manifest.permission.RECORD_AUDIO) != PackageManager.PERMISSION_GRANTED) {
-            micLauncher.launch(Manifest.permission.RECORD_AUDIO)
-            return
-        }
-        if (!SpeechRecognizer.isOnDeviceRecognitionAvailable(context)) {
-            Toast.makeText(context, "On-device voice recognition is unavailable", Toast.LENGTH_SHORT).show()
-            return
-        }
-        val recognizer = try {
-            SpeechRecognizer.createOnDeviceSpeechRecognizer(context)
-        } catch (_: Exception) {
-            Toast.makeText(context, "On-device voice recognition could not start", Toast.LENGTH_SHORT).show()
-            return
-        }
-        activeRecognizer = recognizer
-        val intent = Intent(RecognizerIntent.ACTION_RECOGNIZE_SPEECH).apply {
-            putExtra(RecognizerIntent.EXTRA_LANGUAGE_MODEL, RecognizerIntent.LANGUAGE_MODEL_FREE_FORM)
-            putExtra(RecognizerIntent.EXTRA_LANGUAGE, KeyboardLanguage.of(language).speechTag)
-            putExtra(RecognizerIntent.EXTRA_PREFER_OFFLINE, true)
-            putExtra(RecognizerIntent.EXTRA_MAX_RESULTS, 1)
-        }
-        recognizer.setRecognitionListener(object : RecognitionListener {
-            override fun onReadyForSpeech(params: Bundle?) { isRecordingVoice = true }
-            override fun onBeginningOfSpeech() {}
-            override fun onRmsChanged(rmsdB: Float) {}
-            override fun onBufferReceived(buffer: ByteArray?) {}
-            override fun onEndOfSpeech() { isRecordingVoice = false }
-            override fun onError(error: Int) {
-                isRecordingVoice = false
-                activeRecognizer = null
-                recognizer.destroy()
-            }
-            override fun onResults(results: Bundle?) {
-                isRecordingVoice = false
-                val matches = results?.getStringArrayList(SpeechRecognizer.RESULTS_RECOGNITION)
-                if (!matches.isNullOrEmpty()) {
-                    onResult(matches[0])
-                }
-                activeRecognizer = null
-                recognizer.destroy()
-            }
-            override fun onPartialResults(partialResults: Bundle?) = Unit
-            override fun onEvent(eventType: Int, params: Bundle?) {}
-        })
-        try {
-            recognizer.startListening(intent)
-        } catch (_: Exception) {
-            activeRecognizer = null
-            recognizer.destroy()
-            Toast.makeText(context, "On-device voice recognition could not start", Toast.LENGTH_SHORT).show()
-        }
-    }
 
     fun saveAllChanges() {
-        val newBody = TagMetadataCodec.encodeCapture(tags.toList(), isBottomVoice, bottomComment, decoded.additionalBody)
+        val newBody = TagMetadataCodec.encodeCapture(tags.toList(), isBottomVoice, bottomComment, decoded.additionalBody, bottomAudio)
         onSaveUpdated(note.title, newBody)
         hasChanges = false
         Toast.makeText(context, "Memory updated", Toast.LENGTH_SHORT).show()
@@ -185,13 +130,15 @@ fun InteractiveCaptureViewer(
         BoxWithConstraints(
             modifier = Modifier
                 .fillMaxSize()
-                .background(Color.Black.copy(alpha = 0.95f))
+                .background(Color(0xFF101014))
+                .imePadding()
                 .systemBarsPadding()
         ) {
-            val previewHeight = (maxHeight * .82f).coerceIn(200.dp, 720.dp)
+            val previewHeight = (maxHeight - 180.dp).coerceIn(140.dp, 660.dp)
+            val scroll = rememberScrollState()
             Column(
-                modifier = Modifier.fillMaxSize().imePadding().verticalScroll(rememberScrollState())
-                    .padding(bottom = 32.dp),
+                modifier = Modifier.fillMaxSize().verticalScroll(scroll)
+                    .padding(bottom = 12.dp),
                 horizontalAlignment = Alignment.CenterHorizontally
             ) {
                 // Top header
@@ -209,7 +156,8 @@ fun InteractiveCaptureViewer(
                         MonologIcon(Glyph.CLOSE, Modifier.size(24.dp), Color.White)
                     }
 
-                    Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                    Column(Modifier.weight(1f).padding(horizontal = 8.dp),
+                        horizontalAlignment = Alignment.CenterHorizontally) {
                         Text(
                             text = note.title,
                             color = Color.White,
@@ -223,18 +171,36 @@ fun InteractiveCaptureViewer(
                             color = Color.White.copy(alpha = 0.6f),
                             fontSize = 12.sp
                         )
+                        TextButton(onClick = { scope.launch { scroll.animateScrollTo(scroll.maxValue) } }) {
+                            Text("Overall note", color = accentColor, fontSize = 12.sp)
+                        }
                     }
 
-                    if (hasChanges) {
-                        Button(
-                            onClick = { saveAllChanges() },
-                            colors = ButtonDefaults.buttonColors(containerColor = accentColor),
-                            contentPadding = PaddingValues(horizontal = 14.dp, vertical = 6.dp)
-                        ) {
-                            Text("Save", color = Color.Black, fontWeight = FontWeight.SemiBold, fontSize = 13.sp)
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        TextButton(enabled = bitmap != null && !incognito, onClick = {
+                            focus.clearFocus(force = true)
+                            keyboard?.hide()
+                            try {
+                                val body = TagMetadataCodec.encodeCapture(tags.toList(), isBottomVoice, bottomComment, decoded.additionalBody, bottomAudio)
+                                CaptureAnnotationActivity.openCrop(context, note.copy(body = body), photoId)
+                                onDismiss()
+                            } catch (_: Exception) {
+                                Toast.makeText(context, "Could not open the crop editor", Toast.LENGTH_SHORT).show()
+                            }
+                        }) {
+                            MonologIcon(Glyph.EXPAND, Modifier.size(18.dp), Color.White)
+                            Spacer(Modifier.width(5.dp))
+                            Text("Crop", color = Color.White)
                         }
-                    } else {
-                        Spacer(Modifier.size(48.dp))
+                        if (hasChanges) {
+                            Button(
+                                onClick = { saveAllChanges() },
+                                colors = ButtonDefaults.buttonColors(containerColor = accentColor),
+                                contentPadding = PaddingValues(horizontal = 14.dp, vertical = 6.dp)
+                            ) {
+                                Text("Save", color = Color.Black, fontWeight = FontWeight.SemiBold, fontSize = 13.sp)
+                            }
+                        }
                     }
                 }
 
@@ -476,7 +442,7 @@ fun InteractiveCaptureViewer(
 
             // Dialog: Add tag at pinned location
             if (pendingTagLocation != null) {
-                AlertDialog(
+                CaptureNoteSheet(
                     onDismissRequest = { pendingTagLocation = null },
                     containerColor = Color(0xFF1E1F26),
                     title = {
@@ -498,26 +464,15 @@ fun InteractiveCaptureViewer(
                                 )
                             )
 
-                            OutlinedButton(
-                                onClick = {
-                                    startVoiceRecognition {
-                                        tagInputText = it
-                                        val loc = pendingTagLocation
-                                        if (loc != null && it.isNotBlank()) {
-                                            tags.add(CaptureTag(loc.first, loc.second, it, isVoice = true))
-                                            hasChanges = true
-                                            pendingTagLocation = null
-                                        }
-                                    }
-                                },
-                                colors = ButtonDefaults.outlinedButtonColors(
-                                    contentColor = if (isRecordingVoice) accentColor else Color.White
-                                )
-                            ) {
-                                MonologIcon(Glyph.MIC, Modifier.size(16.dp), if (isRecordingVoice) accentColor else Color.White)
-                                Spacer(Modifier.width(6.dp))
-                                Text(if (isRecordingVoice) "Listening..." else "Dictate voice note")
-                            }
+                            VoiceNoteControl(enabled = !incognito, onPermission = { micLauncher.launch(Manifest.permission.RECORD_AUDIO) },
+                                onVoice = { voice ->
+                                    val location = pendingTagLocation ?: return@VoiceNoteControl
+                                    tags.add(CaptureTag(location.first, location.second, voice.transcript.ifBlank { "Voice note" },
+                                        isVoice = true, audio = voice.audio))
+                                    hasChanges = true
+                                    pendingTagLocation = null
+                                })
+
                         }
                     },
                     confirmButton = {
@@ -548,7 +503,7 @@ fun InteractiveCaptureViewer(
             editingTagIndex?.let { idx ->
                 if (idx in tags.indices) {
                     val tag = tags[idx]
-                    AlertDialog(
+                    CaptureNoteSheet(
                         onDismissRequest = { editingTagIndex = null },
                         containerColor = Color(0xFF1E1F26),
                         title = {
@@ -569,17 +524,15 @@ fun InteractiveCaptureViewer(
                                     )
                                 )
 
-                                OutlinedButton(
-                                    onClick = {
-                                        startVoiceRecognition {
-                                            tagInputText = it
-                                        }
-                                    }
-                                ) {
-                                    MonologIcon(Glyph.MIC, Modifier.size(16.dp), accentColor)
-                                    Spacer(Modifier.width(6.dp))
-                                    Text("Re-dictate voice", color = Color.White)
-                                }
+                                tag.audio?.let { VoiceNotePlayback(it) }
+                                VoiceNoteControl(enabled = !incognito, onPermission = { micLauncher.launch(Manifest.permission.RECORD_AUDIO) },
+                                    onVoice = { voice ->
+                                        tags[idx] = tag.copy(audio = voice.audio, isVoice = true,
+                                            text = voice.transcript.ifBlank { tagInputText.ifBlank { "Voice note" } })
+                                        tagInputText = tags[idx].text
+                                        hasChanges = true
+                                    })
+
                             }
                         },
                         confirmButton = {
@@ -619,7 +572,9 @@ fun InteractiveCaptureViewer(
             // Dialog: Edit bottom overall note
             if (editingBottomNote) {
                 var tempBottom by remember { mutableStateOf(bottomComment) }
-                AlertDialog(
+                var tempAudio by remember { mutableStateOf(bottomAudio) }
+                var tempIsVoice by remember { mutableStateOf(isBottomVoice) }
+                CaptureNoteSheet(
                     onDismissRequest = { editingBottomNote = false },
                     containerColor = Color(0xFF1E1F26),
                     title = {
@@ -641,24 +596,22 @@ fun InteractiveCaptureViewer(
                                 )
                             )
 
-                            OutlinedButton(
-                                onClick = {
-                                    startVoiceRecognition {
-                                        tempBottom = it
-                                        isBottomVoice = true
-                                    }
-                                }
-                            ) {
-                                MonologIcon(Glyph.MIC, Modifier.size(16.dp), accentColor)
-                                Spacer(Modifier.width(6.dp))
-                                Text("Record Voice Note", color = Color.White)
-                            }
+                            tempAudio?.let { VoiceNotePlayback(it) }
+                            VoiceNoteControl(enabled = !incognito, onPermission = { micLauncher.launch(Manifest.permission.RECORD_AUDIO) },
+                                onVoice = { voice ->
+                                    tempAudio = voice.audio
+                                    if (voice.transcript.isNotBlank()) tempBottom = voice.transcript
+                                    tempIsVoice = true
+                                })
+
                         }
                     },
                     confirmButton = {
                         Button(
                             onClick = {
                                 bottomComment = tempBottom
+                                bottomAudio = tempAudio
+                                isBottomVoice = tempIsVoice
                                 hasChanges = true
                                 editingBottomNote = false
                             },

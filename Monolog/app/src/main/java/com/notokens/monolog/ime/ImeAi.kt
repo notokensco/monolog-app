@@ -36,7 +36,10 @@ internal class ImeAi(
     private val settings: SettingsStore,
     private val dictionary: EnglishSuggestions,
     private val connection: () -> InputConnection?,
-    private val canUse: () -> Boolean
+    private val canUse: () -> Boolean,
+    private val proactiveAllowed: () -> Boolean = { true },
+    private val automaticNetworkAllowed: () -> Boolean = { true },
+    private val onTextApplied: (String?, String) -> Unit = { _, _ -> }
 ) {
     private data class Draft(val text: String, val selected: Boolean, val afterCursor: Int = 0)
     var hasDraft by mutableStateOf(false)
@@ -143,7 +146,7 @@ internal class ImeAi(
             if (typing && selected.isEmpty()) suggest(before.substringAfterLast('\n'), replaceTypedDraft = true)
             val language = settings.keyboardLanguage.first()
             suggestions = if (selected.isEmpty() && (language == "en" || language == "hi-Latn")) {
-                dictionary.suggest(before)
+                dictionary.suggest(before, hinglish = language == "hi-Latn")
             } else emptyList()
         }
     }
@@ -156,6 +159,7 @@ internal class ImeAi(
         if (target.text.isEmpty() && (!ic.getSelectedText(0).isNullOrEmpty() ||
                 ic.getTextBeforeCursor(1, 0)?.toString() != " ")) return
         if (ic.commitText(suggestion.replacement, 1)) {
+            onTextApplied(suggestion.typed, suggestion.replacement)
             clearDraft()
             refreshDraft(typing = true)
         }
@@ -176,6 +180,8 @@ internal class ImeAi(
         lookup?.cancel()
         toolbar = null
         toolbarDraft = null
+        // Journal queries in the companion must remain on its explicit offline path.
+        if (!proactiveAllowed()) return
         AiText.deviceAnswer(text)?.let {
             toolbar = AiPreview(it, insertable = true)
             if (replaceTypedDraft) toolbarDraft = Draft(text, false)
@@ -196,7 +202,7 @@ internal class ImeAi(
             try {
                 val answer = if (forecast != null) {
                     val city = settings.weatherCity.first()
-                    if (!WebLookup.configured || !web || !settings.webSuggestions.first() || city.isBlank()) {
+                    if (!automaticNetworkAllowed() || !WebLookup.configured || !web || !settings.webSuggestions.first() || city.isBlank()) {
                         AiPreview(if (!WebLookup.configured) "Live forecasts need a configured weather service."
                             else "Turn Web on and set a city under Privacy & data for live forecasts.")
                     } else {
@@ -205,15 +211,22 @@ internal class ImeAi(
                             webPreview(question ?: "What is the forecast for $city?", it).also { card -> lastLookup = key to card }
                         }
                     }
-                } else if (question != null && web && settings.webQuestionSuggestions.first()) {
+                } else if (question != null && automaticNetworkAllowed() && web && settings.webQuestionSuggestions.first()) {
                     webPreview(question, WebLookup.ask(question))
                 } else if (question != null) {
-                    RewritePipeline.askOffline(context, question)
+                    val prompt = AiText.answerPrompt(question) +
+                        "\nUse at most two short sentences. Correct a mistaken premise or ask for clarification rather than inventing facts."
+                    if (automaticNetworkAllowed() && com.notokens.monolog.ai.CloudAi.enabled(context)) {
+                        com.notokens.monolog.ai.withAiFallback(online = {
+                            AiPreview(com.notokens.monolog.ai.CloudAi.answer(context, prompt), insertable = true)
+                        }, offline = { RewritePipeline.askOffline(context, question) })
+                    } else RewritePipeline.askOffline(context, question)
                 } else return@launch
                 if (!canUse() || settings.incognito.first() || busy || rewriteOpen || askOpen) return@launch
                 // A late result must belong to the same draft that launched the request.
                 if (replaceTypedDraft && connection()?.getTextBeforeCursor(text.length, 0)?.toString() != text) return@launch
-                if (answer.insertable || forecast != null) toolbar = answer
+                toolbar = answer
+                if (replaceTypedDraft && answer.insertable) toolbarDraft = Draft(text, false)
             } catch (error: CancellationException) {
                 throw error
             } catch (_: Exception) {
@@ -262,7 +275,7 @@ internal class ImeAi(
                     if (com.notokens.monolog.ai.CloudAi.enabled(context)) {
                         return@launchRequest com.notokens.monolog.ai.withAiFallback(online = {
                             AiPreview(com.notokens.monolog.ai.CloudAi.answer(context, AiText.answerPrompt(query)),
-                                insertable = true, detail = "Gemini online")
+                                insertable = true)
                         }, offline = { offlineAnswer(query) })
                     }
                     webPreview(query, WebLookup.ask(query))
@@ -376,6 +389,7 @@ internal class ImeAi(
         }
         if (target?.selected == false && !selectDraft(ic, target)) return
         if (!ic.commitText(card.text, 1)) return
+        onTextApplied(target?.text, card.text)
         if (askOpen) {
             abortAction()
             return

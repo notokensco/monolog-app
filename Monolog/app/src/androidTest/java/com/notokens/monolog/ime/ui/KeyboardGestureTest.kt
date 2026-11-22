@@ -89,5 +89,15 @@ class KeyboardGestureTest {
             up()
         }
         compose.runOnIdle { assertEquals(1, taps.get()) }
+        // Some devices coalesce a fast glide into a down and displaced up.
+        compose.onNodeWithTag("letters").performTouchInput {
+            down(Offset(width * .15f, height / 6f))
+            updatePointerTo(0, Offset(width * .65f, height / 6f))
+            up()
+        }
+        compose.runOnIdle {
+            assertEquals(2, swipes.size)
+            assertEquals(1, taps.get())
+        }
     }
 }

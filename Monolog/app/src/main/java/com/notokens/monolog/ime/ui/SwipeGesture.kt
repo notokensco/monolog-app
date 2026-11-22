@@ -65,9 +65,13 @@ internal fun swipeTypingModifier(enabled: Boolean, onSwipe: (List<SwipePoint>) -
                         val change = event.changes.singleOrNull() ?: break
                         if (change.id != down.id || change.isConsumed) break
                         if (!swiping) {
-                            if (!change.pressed || change.uptimeMillis - down.uptimeMillis >=
+                            if (change.uptimeMillis - down.uptimeMillis >=
                                 viewConfiguration.longPressTimeoutMillis) break
-                            if ((change.position - down.position).getDistance() < slop) continue
+                            // Fast glides may arrive as a down and displaced up with no move frame.
+                            if ((change.position - down.position).getDistance() < slop) {
+                                if (!change.pressed) break
+                                continue
+                            }
                             swiping = true
                             points.add(down.position)
                         }

@@ -56,7 +56,8 @@
             android:name=".capture.CaptureAnnotationActivity"
             android:exported="false"
             android:excludeFromRecents="true"
-            android:theme="@style/Theme.Monolog.Capture" />
+            android:theme="@style/Theme.Monolog.Capture"
+            android:windowSoftInputMode="adjustResize|stateAlwaysHidden" />
         <service
             android:name=".capture.ScreenCaptureService"
             android:exported="true"
@@ -80,6 +81,10 @@
                 android:name="android.view.im"
                 android:resource="@xml/method" />
         </service>
+        <service
+            android:name=".memory.BriefSummarizerService"
+            android:exported="false"
+            android:process=":journal_brief" />
         <receiver android:name=".reminders.ReminderReceiver" android:exported="false" />
         <receiver android:name=".reminders.ReminderRescheduleReceiver" android:exported="true">
             <intent-filter>

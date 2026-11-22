@@ -83,6 +83,8 @@ fun QuickShortcutsPanel(
     var saving by remember { mutableStateOf(false) }
     var pickingTime by remember(draft.page) { mutableStateOf(false) }
     val isNote = draft.page == ShortcutPage.NOTE
+    var audio by remember(draft.page) { mutableStateOf<String?>(null) }
+    var voiceBusy by remember(draft.page) { mutableStateOf(false) }
     val screenHeight = LocalConfiguration.current.screenHeightDp
     val panelHeight = (screenHeight - 220).coerceIn(100, 290).dp
 
@@ -102,6 +104,17 @@ fun QuickShortcutsPanel(
             DraftInput(draft, DraftField.TITLE, if (isNote) "Title" else "What should I remind you?", onDraftChange)
             if (isNote) {
                 DraftInput(draft, DraftField.BODY, "Write your note…", onDraftChange)
+                com.notokens.monolog.ui.VoiceNoteControl(enabled = !saving && !editorContext.isIncognito,
+                    onPermission = {
+                        context.startActivity(Intent(context, MainActivity::class.java)
+                            .setAction(MainActivity.ACTION_REQUEST_MIC_PERMISSION).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK))
+                    }, onBusy = { voiceBusy = it }, onVoice = { voice ->
+                        audio = voice.audio
+                        val text = listOf(draft.body.text, voice.transcript).filter(String::isNotBlank).joinToString("\n\n")
+                        onDraftChange(draft.copy(body = androidx.compose.ui.text.input.TextFieldValue(text,
+                            androidx.compose.ui.text.TextRange(text.length))))
+                    })
+                audio?.let { com.notokens.monolog.ui.VoiceNotePlayback(it) }
             } else {
                 Row(Modifier.fillMaxWidth().glassSurface(22).clickable { pickingTime = !pickingTime }.padding(12.dp), verticalAlignment = Alignment.CenterVertically) {
                     MonologIcon(Glyph.CLOCK)
@@ -119,11 +132,13 @@ fun QuickShortcutsPanel(
                 }
             }
             if (error.isNotEmpty()) Text(error, color = MaterialTheme.colorScheme.error, fontSize = 12.sp)
-            Button(modifier = Modifier.fillMaxWidth().height(44.dp), enabled = !saving && (if (isNote) draft.title.text.isNotBlank() || draft.body.text.isNotBlank() else draft.title.text.isNotBlank() && draft.dueAt > System.currentTimeMillis()), onClick = {
+            Button(modifier = Modifier.fillMaxWidth().height(44.dp), enabled = !saving && !voiceBusy && (if (isNote) draft.title.text.isNotBlank() || draft.body.text.isNotBlank() || audio != null else draft.title.text.isNotBlank() && draft.dueAt > System.currentTimeMillis()), onClick = {
                 saving = true
                 scope.launch {
                     try {
-                        if (isNote) actions.saveNote(editorContext, draft.title.text, draft.body.text)
+                        if (isNote) actions.saveNote(editorContext,
+                            draft.title.text.ifBlank { if (audio != null && draft.body.text.isBlank()) "Voice note" else "" },
+                            com.notokens.monolog.ime.vox.VoiceNoteBody.attach(draft.body.text, audio))
                         else actions.saveReminder(editorContext, draft.title.text, draft.dueAt)
                         val allowed = ContextCompat.checkSelfPermission(context, Manifest.permission.POST_NOTIFICATIONS) == PackageManager.PERMISSION_GRANTED
                         Toast.makeText(context, if (!isNote && !allowed) "Saved. Enable notifications in Monolog to receive alerts." else if (isNote) "Saved to Journal" else "Reminder set", Toast.LENGTH_LONG).show()

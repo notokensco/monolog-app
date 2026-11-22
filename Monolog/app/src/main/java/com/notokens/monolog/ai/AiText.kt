@@ -70,9 +70,13 @@ internal object AiText {
 
     fun proactiveQuestion(draft: String): String? {
         val trimmed = draft.trim()
-        if (trimmed.length !in 8..180 || '\n' in trimmed) return null
-        val question = greeting.replaceFirst(trimmed, "")
-        return question.takeIf { directQuestion.matches(it) && it.count { c -> c == '?' } == 1 }
+        if (!trimmed.endsWith('?')) return null
+        val last = trimmed.dropLast(1).substringAfterLast('?').substringAfterLast('\n')
+            .split(Regex("[.!]\\s+")).last().trim() + "?"
+        if (last.length !in 8..240) return null
+        val question = greeting.replaceFirst(last, "")
+        val conversational = Regex("^(?:who|what|when|where|why|how|which|whose|can|could|would|should|is|are|do|does|did|kya|कौन|क्या|कब|कैसे|कहाँ)\\b.+\\?$", RegexOption.IGNORE_CASE)
+        return question.takeIf { directQuestion.matches(it) || conversational.matches(it) }
     }
 
     fun needsWeb(text: String): Boolean {

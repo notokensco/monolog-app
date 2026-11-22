@@ -20,8 +20,8 @@ android {
         applicationId = "com.notokens.monolog"
         minSdk = 35
         targetSdk = 35
-        versionCode = 1
-        versionName = "1.0"
+        versionCode = 2
+        versionName = "0.1.0-prototype.2"
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
         val webEndpoint = providers.gradleProperty("monologWebEndpoint").orElse("").get()
@@ -102,6 +102,7 @@ monologTestingKeystore?.let { keystore ->
 }
 
 dependencies {
+    implementation("com.google.mediapipe:tasks-text:1.2.3")
     implementation("com.microsoft.onnxruntime:onnxruntime-android:1.20.0")
     implementation("androidx.credentials:credentials:1.5.0")
     implementation("androidx.credentials:credentials-play-services-auth:1.5.0")

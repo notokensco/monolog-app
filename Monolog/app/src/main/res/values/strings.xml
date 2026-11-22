@@ -5,7 +5,7 @@
     <string name="companion_brand_line">Companion by NoTokens</string>
     <string name="subtype_en_us">English (US)</string>
     <string name="quick_capture_name">Monolog Quick Capture</string>
-    <string name="quick_capture_description">Takes one screenshot when you tap the Monolog context key on the keyboard. The screenshot and recognized text are saved to your private Journal on this device.</string>
+    <string name="quick_capture_description">Tap the Monolog context key or floating shortcut to capture a screen, even with the keyboard closed. Add pins or a voice note and save the capture to your private Journal. Incognito pauses capture. Screens that block screenshots cannot be captured.</string>
     
     <!-- Setup Screen -->
     <string name="setup_tagline">Type. Speak. Act. Remember.</string>

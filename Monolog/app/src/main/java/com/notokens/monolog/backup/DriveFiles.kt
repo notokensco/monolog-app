@@ -24,6 +24,8 @@ internal interface DriveStorage {
     suspend fun list(): List<DriveBackup>
     suspend fun upload(year: Int, bytes: ByteArray)
     suspend fun download(file: DriveBackup): ByteArray
+    suspend fun recoverySeeds(): List<ByteArray> = emptyList()
+    suspend fun linkRecovery(seed: ByteArray) = Unit
 }
 
 internal class DriveFiles(private val token: String, private val source: String, private val selection: String) : DriveStorage {
@@ -55,12 +57,55 @@ internal class DriveFiles(private val token: String, private val source: String,
         return files.distinctBy { Triple(it.year, it.source.ifBlank { it.id }, it.selection) }
     }
 
+    override suspend fun recoverySeeds(): List<ByteArray> {
+        val files = mutableListOf<ByteArray>()
+        var page = ""
+        do {
+            val url = Uri.parse("https://www.googleapis.com/drive/v3/files").buildUpon()
+                .appendQueryParameter("spaces", "appDataFolder")
+                .appendQueryParameter("q", "trashed = false and appProperties has { key='monologRecovery' and value='1' }")
+                .appendQueryParameter("fields", "nextPageToken,files(id,size)")
+            if (page.isNotBlank()) url.appendQueryParameter("pageToken", page)
+            val response = JSONObject(request(url.build().toString()).toString(Charsets.UTF_8))
+            val rows = response.getJSONArray("files")
+            for (index in 0 until rows.length()) {
+                val row = rows.getJSONObject(index)
+                val id = row.getString("id")
+                if (row.optLong("size") == 32L && id.matches(Regex("[A-Za-z0-9_-]+"))) {
+                    val seed = request("https://www.googleapis.com/drive/v3/files/$id?alt=media")
+                    if (seed.size == 32) files.add(seed)
+                }
+                check(files.size <= 100) { "This account has too many linked backup keys." }
+            }
+            page = response.optString("nextPageToken")
+        } while (page.isNotBlank())
+        return files
+    }
+
+    override suspend fun linkRecovery(seed: ByteArray) {
+        require(seed.size == 32)
+        val fingerprint = BackupCrypto.digest(seed)
+        val query = Uri.parse("https://www.googleapis.com/drive/v3/files").buildUpon()
+            .appendQueryParameter("spaces", "appDataFolder")
+            .appendQueryParameter("q", "trashed = false and appProperties has { key='recoveryId' and value='$fingerprint' }")
+            .appendQueryParameter("fields", "files(id)").build()
+        if (JSONObject(request(query.toString()).toString(Charsets.UTF_8)).getJSONArray("files").length() > 0) return
+        val metadata = JSONObject().put("name", "monolog-linked-recovery.key")
+            .put("parents", org.json.JSONArray().put("appDataFolder"))
+            .put("appProperties", JSONObject().put("monologRecovery", "1").put("recoveryId", fingerprint))
+        uploadFile(metadata, seed)
+    }
+
     override suspend fun upload(year: Int, bytes: ByteArray) {
-        val boundary = "monolog-" + UUID.randomUUID()
         val metadata = JSONObject().put("name", "monolog-v1-$year-${UUID.randomUUID()}.monolog")
             .put("parents", org.json.JSONArray().put("appDataFolder"))
             .put("appProperties", JSONObject().put("monologBackup", "1").put("year", year.toString())
                 .put("source", source).put("selection", selection))
+        uploadFile(metadata, bytes)
+    }
+
+    private suspend fun uploadFile(metadata: JSONObject, bytes: ByteArray) {
+        val boundary = "monolog-" + UUID.randomUUID()
         val body = ByteArrayOutputStream().apply {
             write("--$boundary\r\nContent-Type: application/json; charset=UTF-8\r\n\r\n$metadata\r\n".toByteArray())
             write("--$boundary\r\nContent-Type: application/octet-stream\r\n\r\n".toByteArray())

@@ -8,6 +8,7 @@ import kotlinx.coroutines.withContext
 internal data class WordSuggestion(val typed: String, val replacement: String)
 
 internal class EnglishSuggestions(private val context: Context) {
+    @Volatile private var dictionaryReady = false
     private val token = Regex("[A-Za-z]+(?:'[A-Za-z]+)?$")
     private val wordLists by lazy {
         val suggestions = mutableSetOf<String>()
@@ -25,15 +26,38 @@ internal class EnglishSuggestions(private val context: Context) {
                 }
             }
         }
-        suggestions.sorted() to SwipeDecoder(swipeWords.toList())
+        (suggestions.sorted() to SwipeDecoder(swipeWords.toList(), TypingVocabulary.english)).also { dictionaryReady = true }
     }
     private val dictionary: List<String> get() = wordLists.first
     val swipeDecoder: SwipeDecoder get() = wordLists.second
+    val hinglishSwipeDecoder by lazy {
+        SwipeDecoder((TypingVocabulary.hinglish + TypingVocabulary.english).toList(), TypingVocabulary.hinglish)
+    }
+    @Volatile private var preparedCorrection: WordSuggestion? = null
 
-    suspend fun suggest(beforeCursor: String): List<WordSuggestion> = withContext(Dispatchers.Default) {
+    /** Called on the key path: only a small lookup or a precomputed candidate, no dictionary work. */
+    fun automaticCorrection(beforeCursor: String): WordSuggestion? {
+        val match = token.find(beforeCursor) ?: return null
+        val typed = match.value
+        if (typed.length !in 2..24 || typed.all(Char::isUpperCase)) return null
+        val preceding = beforeCursor.getOrNull(match.range.first - 1)
+        if (preceding != null && !preceding.isWhitespace() && preceding !in "([\"“‘") return null
+        val lower = typed.lowercase(Locale.ROOT)
+        val replacement = commonTypos[lower] ?: preparedCorrection?.takeIf { it.typed == typed }?.replacement
+            ?: if (dictionaryReady && typed == lower && typed.length in 4..16 && dictionary.binarySearch(lower) < 0) {
+                oneEdit(lower).singleOrNull()
+            } else null
+        if (replacement == null) return null
+        val cased = if (typed.first().isUpperCase()) replacement.replaceFirstChar { it.titlecase(Locale.ROOT) } else replacement
+        return WordSuggestion(typed, cased)
+    }
+
+    suspend fun suggest(beforeCursor: String, hinglish: Boolean = false): List<WordSuggestion> = withContext(Dispatchers.Default) {
+        preparedCorrection = null
         if (beforeCursor.endsWith(' ')) {
             val previous = token.find(beforeCursor.trimEnd())?.value?.lowercase(Locale.ROOT)
-            return@withContext previous?.let(nextWords::get).orEmpty().map { WordSuggestion("", "$it ") }
+            val options = if (hinglish) TypingVocabulary.hinglishPairs[previous] ?: nextWords[previous] else nextWords[previous]
+            return@withContext options.orEmpty().map { WordSuggestion("", "$it ") }
         }
         val match = token.find(beforeCursor) ?: return@withContext emptyList()
         val typed = match.value
@@ -41,10 +65,24 @@ internal class EnglishSuggestions(private val context: Context) {
             return@withContext emptyList()
         }
         val word = typed.lowercase(Locale.ROOT)
+        if (hinglish) {
+            val candidates = (TypingVocabulary.hinglish + TypingVocabulary.english).asSequence()
+                .filter { it != word && it.startsWith(word) }
+                .sortedWith(compareBy<String> { it !in TypingVocabulary.hinglish }.thenBy { it.length })
+                .take(3).map { candidate ->
+                    val cased = if (typed.first().isUpperCase()) candidate.replaceFirstChar { it.titlecase() } else candidate
+                    WordSuggestion(typed, "$cased ")
+                }.toList()
+            if (candidates.isNotEmpty() || word in TypingVocabulary.hinglish) return@withContext candidates
+        }
         val corrections = if (word.length >= 3 && dictionary.binarySearch(word) < 0) oneEdit(word) else emptyList()
+        // Ambiguous replacements remain suggestions. Never infer a correction for a name.
+        if (typed == word && word.length >= 4 && corrections.size == 1) {
+            preparedCorrection = WordSuggestion(typed, corrections.single())
+        }
         val index = dictionary.binarySearch(word).let { if (it >= 0) it else -it - 1 }
         val completions = dictionary.subList(index, dictionary.size).asSequence().takeWhile { it.startsWith(word) }
-            .filter { it != word }.take(48).sortedBy { it.length }.take(3).toList()
+            .filter { it != word }.sortedWith(compareBy<String> { it !in TypingVocabulary.english }.thenBy { it.length }).take(3).toList()
         (corrections + completions).distinct().take(3).map { candidate ->
             val cased = when {
                 typed.all { it.isUpperCase() } -> candidate.uppercase(Locale.ROOT)
@@ -66,10 +104,21 @@ internal class EnglishSuggestions(private val context: Context) {
             add(word.take(i) + c + word.drop(i))
             if (i < word.length && word[i] != c) add(word.take(i) + c + word.drop(i + 1))
         }
-        return found.take(3)
+        return found.sortedWith(compareBy<String> { it !in TypingVocabulary.english }.thenBy { it.length }).take(3)
     }
 
     private companion object {
+        val commonTypos = mapOf(
+            "teh" to "the", "thsi" to "this", "taht" to "that", "tihs" to "this",
+            "adn" to "and", "nad" to "and", "hte" to "the", "wiht" to "with",
+            "woudl" to "would", "coudl" to "could", "shoudl" to "should",
+            "recieve" to "receive", "recieved" to "received", "becuase" to "because",
+            "beacuse" to "because", "definately" to "definitely", "seperate" to "separate",
+            "alot" to "a lot", "dont" to "don't", "doesnt" to "doesn't", "didnt" to "didn't",
+            "isnt" to "isn't", "wasnt" to "wasn't", "couldnt" to "couldn't",
+            "shouldnt" to "shouldn't", "wouldnt" to "wouldn't", "youre" to "you're",
+            "youve" to "you've", "thats" to "that's", "whats" to "what's"
+        )
         val nextWords = mapOf(
             "i" to listOf("am", "will", "have"), "you" to listOf("are", "can", "will"),
             "we" to listOf("are", "can", "will"), "thank" to listOf("you"),

@@ -17,7 +17,7 @@ internal object ShortcutSuggestions {
     private val note = Regex("\\b(note|notes|jot down|save this|journal)\\b", RegexOption.IGNORE_CASE)
     private val command = Regex("^(?:(?:please\\s+)?(?:remind me(?:\\s+to)?|remember(?:\\s+to)?|set (?:an? |the )?(?:reminder|alarm|alert)(?:\\s+to)?|don['’]t forget(?:\\s+to)?|(?:save |make |take )?(?:a )?note(?:\\s+to)?|jot down|save this|journal))\\s*[:,-]?\\s*", RegexOption.IGNORE_CASE)
     private val relative = Regex("\\bin\\s+(\\d{1,3})\\s*(minutes?|mins?|hours?|hrs?|days?)\\b", RegexOption.IGNORE_CASE)
-    private val clock = Regex("\\b(?:(?:at\\s+)([01]?\\d|2[0-3]):([0-5]\\d)(?:\\s*([ap])\\.?m\\.?)?|([1-9]|1[0-2])(?::([0-5]\\d))?\\s*([ap])\\.?m\\.?)", RegexOption.IGNORE_CASE)
+    private val clock = Regex("\\b(?:(?:at\\s+)?(0?[1-9]|1[0-2])(?::([0-5]\\d))?\\s*([ap])\\.?m\\.?|(?:at\\s+)?([01]?\\d|2[0-3]):([0-5]\\d)|at\\s+([1-9]|1[0-2]))(?!\\w|:\\d)", RegexOption.IGNORE_CASE)
 
     fun detect(text: String, now: ZonedDateTime = ZonedDateTime.now()): ShortcutSuggestion? {
         val input = text.trim().takeLast(400).substringAfterLast('\n').trim()
@@ -25,7 +25,7 @@ internal object ShortcutSuggestions {
         val page = when {
             alarm.containsMatchIn(input) -> ShortcutPage.ALARM
             Regex("\\bremember that\\b", RegexOption.IGNORE_CASE).containsMatchIn(input) -> ShortcutPage.NOTE
-            reminder.containsMatchIn(input) -> ShortcutPage.REMINDER
+            reminder.containsMatchIn(input) || clock.containsMatchIn(input) || relative.containsMatchIn(input) -> ShortcutPage.REMINDER
             note.containsMatchIn(input) -> ShortcutPage.NOTE
             else -> return null
         }
@@ -41,16 +41,29 @@ internal object ShortcutSuggestions {
             val tomorrow = Regex("\\btomorrow\\b", RegexOption.IGNORE_CASE).containsMatchIn(input)
             var date = if (tomorrow) now.plusDays(1).withHour(9).withMinute(0).withSecond(0).withNano(0) else now.plusHours(1)
             clock.find(input)?.let { match ->
-                val hour = (match.groupValues[1].ifEmpty { match.groupValues[4] }).toInt()
+                val hour = match.groupValues[1].ifEmpty { match.groupValues[4] }.ifEmpty { match.groupValues[6] }.toInt()
                 val minute = (match.groupValues[2].ifEmpty { match.groupValues[5] }).toIntOrNull() ?: 0
-                val meridiem = match.groupValues[3].ifEmpty { match.groupValues[6] }
+                val meridiem = match.groupValues[3]
                 val hour24 = if (meridiem.isEmpty()) hour else hour % 12 + if (meridiem.equals("p", true)) 12 else 0
                 date = (if (tomorrow) now.plusDays(1) else now).withHour(hour24).withMinute(minute).withSecond(0).withNano(0)
                 if (!date.isAfter(now)) date = date.plusDays(1)
+                if (match.groupValues[6].isNotEmpty()) {
+                    val alternative = date.minusDays(1).plusHours(12)
+                    if (alternative.isAfter(now) && alternative.isBefore(date) && !tomorrow) date = alternative
+                }
             }
             date
         }
-        return ShortcutSuggestion(page, content.take(80), if (page == ShortcutPage.NOTE) content else "",
+        val event = clock.replace(relative.replace(content, ""), "").trim().trimEnd('.', ',', '?')
+        val title = when {
+            page == ShortcutPage.NOTE -> content
+            event.any(Char::isLetter) && (reminder.containsMatchIn(input) || alarm.containsMatchIn(input)) -> content
+            else -> event
+                .replace(Regex("^(?:i have|i need to|i am going to|i will)\\s+", RegexOption.IGNORE_CASE), "")
+                .trim().removeSuffix(" at").ifBlank { if (page == ShortcutPage.ALARM) "Alarm" else "Reminder" }
+                .replaceFirstChar { it.titlecase() }
+        }
+        return ShortcutSuggestion(page, title.take(80), if (page == ShortcutPage.NOTE) content else "",
             due.toInstant().toEpochMilli(), when (page) {
                 ShortcutPage.NOTE -> "Save note"
                 ShortcutPage.ALARM -> "Set alarm"

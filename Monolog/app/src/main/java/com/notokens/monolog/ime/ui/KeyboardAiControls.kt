@@ -13,6 +13,14 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.sizeIn
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.widthIn
+import androidx.compose.material3.IconButton
+import androidx.compose.material3.DropdownMenu
+import androidx.compose.runtime.*
+import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.semantics
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.MaterialTheme
@@ -29,6 +37,8 @@ import com.notokens.monolog.ai.KeyboardLanguage
 import com.notokens.monolog.ai.RewriteStyle
 import com.notokens.monolog.ime.ImeAi
 import com.notokens.monolog.ui.glassSurface
+import com.notokens.monolog.ui.MonologIcon
+import com.notokens.monolog.ui.Glyph
 import com.notokens.monolog.ui.theme.PaperKeyText
 
 @Composable
@@ -40,6 +50,9 @@ internal fun KeyboardSuggestionStrip(
     Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
         Row(Modifier.weight(1f).horizontalScroll(rememberScrollState()),
             verticalAlignment = Alignment.CenterVertically) {
+            if (!ai.rewriteOpen) ai.shortcutSuggestion?.let { suggestion ->
+                ToolbarAction(suggestion.label) { onShortcut(suggestion) }
+            }
             if (ai.rewriteOpen) {
                 val styles = if (language.id == "en" || language.translationCode != null) RewriteStyle.entries
                     else listOf(RewriteStyle.POLISH)
@@ -49,19 +62,31 @@ internal fun KeyboardSuggestionStrip(
                 if (language.translationCode != null) ToolbarAction("To English", enabled = !ai.busy) {
                     ai.rewrite(RewriteStyle.POLISH, language, translate = true)
                 }
-            } else {
-                ai.shortcutSuggestion?.let { suggestion ->
-                    ToolbarAction(suggestion.label) { onShortcut(suggestion) }
+            } else if (ai.toolbar != null) {
+                AnimatedContent(targetState = ai.toolbar,
+                    transitionSpec = { (slideInHorizontally { it / 3 } + fadeIn()) togetherWith fadeOut() },
+                    label = "Inline question answer") { answer ->
+                    answer?.let { card ->
+                        var expanded by remember(card) { mutableStateOf(false) }
+                        Box {
+                            Text(card.text, Modifier.widthIn(max = 224.dp).clickable { expanded = true }.padding(horizontal = 8.dp),
+                                color = PaperKeyText, style = MaterialTheme.typography.labelMedium,
+                                maxLines = 2, overflow = TextOverflow.Ellipsis)
+                            DropdownMenu(expanded, { expanded = false }) {
+                                AiResultCard(card) { expanded = false; ai.apply(it) }
+                            }
+                        }
+                    }
                 }
-                if (ai.hasDraft) ToolbarAction("Rewrite") { ai.openRewrite(language) }
+            } else {
                 ai.suggestions.forEach { suggestion ->
                     ToolbarAction(suggestion.replacement.trimEnd()) { ai.applyWord(suggestion) }
                 }
-                if (!ai.hasDraft && ai.suggestions.isEmpty()) {
-                    Text("Suggestions", Modifier.padding(horizontal = 10.dp), color = PaperKeyText.copy(alpha = .5f),
-                        style = MaterialTheme.typography.labelMedium)
-                }
             }
+        }
+        if (ai.hasDraft && !ai.rewriteOpen) IconButton(onClick = { ai.openRewrite(language) },
+            modifier = Modifier.size(36.dp).semantics { contentDescription = "Rewrite" }) {
+            MonologIcon(Glyph.REWRITE, Modifier.size(22.dp))
         }
         if (ai.rewriteOpen) ToolbarAction("Close", onClick = ai::closePanel)
     }
@@ -71,13 +96,6 @@ internal fun KeyboardSuggestionStrip(
 internal fun KeyboardAiControls(ai: ImeAi, language: KeyboardLanguage) {
     if (ai.busy) Text("Working…", Modifier.padding(horizontal = 12.dp), color = PaperKeyText)
     ai.preview?.let { AiResultCard(it, ai::apply) }
-    AnimatedContent(
-        targetState = ai.toolbar.takeIf { !ai.rewriteOpen && ai.preview == null },
-        transitionSpec = { (slideInHorizontally { it / 4 } + fadeIn()) togetherWith fadeOut() },
-        label = "Keyboard answer"
-    ) { answer ->
-        answer?.let { AiResultCard(it, ai::apply) }
-    }
 }
 
 @Composable
