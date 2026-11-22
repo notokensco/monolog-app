@@ -36,7 +36,7 @@ import com.notokens.monolog.ui.theme.*
 import kotlin.math.cos
 import kotlin.math.sin
 
-enum class Glyph { DOWN, CLOSE, EXPAND, BOLT, CLOCK, BELL, ALARM, BOOK, LAYERS, PLUS, HOME, SETTINGS, MIC, GLOBE, SMILE, SHIFT, BACKSPACE, ENTER, SEARCH, SHIELD, PRIVACY, ARROW, BACK, DOT, PAPER, INK, PHOTO, CAPTURE, EDIT, REWRITE, DRAG_HANDLE, PIN }
+enum class Glyph { DASHBOARD, CLIPBOARD, DOWN, CLOSE, EXPAND, BOLT, CLOCK, BELL, ALARM, BOOK, LAYERS, PLUS, HOME, SETTINGS, MIC, GLOBE, SMILE, SHIFT, BACKSPACE, ENTER, SEARCH, SHIELD, PRIVACY, ARROW, BACK, DOT, PAPER, INK, PHOTO, CAPTURE, EDIT, REWRITE, DRAG_HANDLE, PIN }
 
 @Composable
 fun MonologIcon(glyph: Glyph, modifier: Modifier = Modifier, color: Color = PaperKeyText) {
@@ -49,6 +49,17 @@ fun MonologIcon(glyph: Glyph, modifier: Modifier = Modifier, color: Color = Pape
             }
             fun circle(x: Float, y: Float, radius: Float) { drawCircle(color, radius, Offset(x, y), style = Stroke(1.7f)) }
             when (glyph) {
+                Glyph.DASHBOARD -> {
+                    drawCircle(color, 1.7f, Offset(5f, 12f))
+                    drawCircle(color, 1.7f, Offset(12f, 12f))
+                    drawCircle(color, 1.7f, Offset(19f, 12f))
+                }
+                Glyph.CLIPBOARD -> {
+                    line(8f, 5f, 5f, 5f, 5f, 22f, 19f, 22f, 19f, 5f, 16f, 5f)
+                    line(8f, 3f, 16f, 3f, 16f, 8f, 8f, 8f, 8f, 3f)
+                    line(9f, 13f, 15f, 13f)
+                    line(9f, 17f, 15f, 17f)
+                }
                 Glyph.DOWN -> line(5f, 9f, 12f, 16f, 19f, 9f)
                 Glyph.CLOSE -> { line(5f, 5f, 19f, 19f); line(19f, 5f, 5f, 19f) }
                 Glyph.EXPAND -> { line(14f, 4f, 20f, 4f, 20f, 10f); line(20f, 4f, 14f, 10f); line(10f, 20f, 4f, 20f, 4f, 14f); line(4f, 20f, 10f, 14f) }

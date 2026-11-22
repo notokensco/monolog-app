@@ -19,7 +19,12 @@ internal class VoiceRecorder(private val scope: CoroutineScope) {
     private var reading: Deferred<ByteArray>? = null
 
     @SuppressLint("MissingPermission")
-    fun start(onEnd: () -> Unit = {}, onSamples: ((ByteArray, Int) -> Unit)? = null) {
+    fun start(
+        onEnd: () -> Unit = {},
+        onSpeechEnd: () -> Unit = {},
+        onPreview: ((ByteArray) -> Unit)? = null,
+        onSamples: ((ByteArray, Int) -> Unit)? = null
+    ) {
         check(reading == null)
         val minimum = AudioRecord.getMinBufferSize(RATE, AudioFormat.CHANNEL_IN_MONO, AudioFormat.ENCODING_PCM_16BIT)
         check(minimum > 0)
@@ -37,12 +42,27 @@ internal class VoiceRecorder(private val scope: CoroutineScope) {
         reading = scope.async(Dispatchers.IO) {
             val samples = ByteArrayOutputStream()
             val buffer = ByteArray(2048)
+            val endpoint = if (onPreview == null) null else SpeechEndpoint()
             try {
                 while (isActive && samples.size() < LIMIT) {
                     val count = audio.read(buffer, 0, minOf(buffer.size, LIMIT - samples.size()))
                     if (count <= 0) break
                     samples.write(buffer, 0, count)
                     onSamples?.invoke(buffer, count)
+                    if (endpoint != null) {
+                        val event = endpoint.accept(buffer, count)
+                        if (event == SpeechEndpoint.Event.Finished) {
+                            onSpeechEnd()
+                            break
+                        }
+                        if (event == SpeechEndpoint.Event.Preview) {
+                            // Use a short trailing window for provisional captions.
+                            val recorded = samples.toByteArray()
+                            val window = RATE * 2 * 8
+                            onPreview?.invoke(if (recorded.size <= window) recorded
+                                else recorded.copyOfRange(recorded.size - window, recorded.size))
+                        }
+                    }
                 }
                 samples.toByteArray()
             } finally {
@@ -57,6 +77,12 @@ internal class VoiceRecorder(private val scope: CoroutineScope) {
         val pcm = finishPcm()
         val aac = withContext(Dispatchers.Default) { encode(pcm) }
         return Base64.encodeToString(aac, Base64.NO_WRAP)
+    }
+
+    suspend fun pcmForRecognition(): ByteArray {
+        val pending = checkNotNull(reading)
+        stop()
+        return pending.await()
     }
 
     private suspend fun finishPcm(): ByteArray {
@@ -131,27 +157,6 @@ internal class VoiceRecorder(private val scope: CoroutineScope) {
                 }
                 error("The audio encoder timed out.")
             } finally { codec.release() }
-        }
-
-        suspend fun combineAudio(segments: List<VoiceRecorder>): String? {
-            if (segments.isEmpty()) return null
-            val pcm = ByteArrayOutputStream()
-            for (segment in segments) {
-                val remaining = LIMIT - pcm.size()
-                if (remaining <= 0) break
-                try {
-                    val bytes = segment.finishPcm()
-                    pcm.write(bytes, 0, minOf(bytes.size, remaining))
-                } catch (cancelled: CancellationException) {
-                    throw cancelled
-                } catch (_: IllegalStateException) {
-                    // Very short recognition segments have no playable audio.
-                }
-            }
-            if (pcm.size() < RATE / 2) return null
-            return withContext(Dispatchers.Default) {
-                Base64.encodeToString(encode(pcm.toByteArray()), Base64.NO_WRAP)
-            }
         }
 
     }

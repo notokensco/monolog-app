@@ -14,6 +14,8 @@ import kotlin.math.sqrt
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.Job
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.currentCoroutineContext
 import kotlinx.coroutines.ensureActive
@@ -33,6 +35,9 @@ internal class SentenceEncoder private constructor(private val context: Context)
     private val lock = Mutex()
     private var tokenizer: SentenceTokenizer? = null
     private var session: OrtSession? = null
+    private var verified = false
+    private val idleScope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
+    private var idleClose: Job? = null
     private var downloading = false
 
     fun ready() = model.isFile && tokenizerFile.isFile && model.length() == MODEL_BYTES && tokenizerFile.length() == TOKENIZER_BYTES
@@ -93,9 +98,19 @@ internal class SentenceEncoder private constructor(private val context: Context)
     suspend fun embed(text: String): ByteArray? = withContext(Dispatchers.Default) {
         if (!ready()) return@withContext null
         lock.withLock {
+            idleClose?.cancel()
+            idleClose = idleScope.launch {
+                delay(45_000)
+                lock.withLock { closeSession() }
+            }
             val environment = OrtEnvironment.getEnvironment()
             val active = session ?: run {
-                require(sha(model) == MODEL_SHA && sha(tokenizerFile) == TOKENIZER_SHA) { "Encoder verification failed." }
+                if (!verified) {
+                    require(sha(model) == MODEL_SHA && sha(tokenizerFile) == TOKENIZER_SHA) {
+                        "Encoder verification failed."
+                    }
+                    verified = true
+                }
                 val options = OrtSession.SessionOptions().apply {
                     setIntraOpNumThreads(2)
                     setInterOpNumThreads(1)
@@ -127,7 +142,17 @@ internal class SentenceEncoder private constructor(private val context: Context)
         }
     }
 
-    suspend fun release() = lock.withLock { session?.close(); session = null; tokenizer = null }
+    suspend fun release() = lock.withLock {
+        idleClose?.cancel()
+        idleClose = null
+        closeSession()
+    }
+
+    private fun closeSession() {
+        session?.close()
+        session = null
+        tokenizer = null
+    }
 
     companion object {
         const val VERSION = "multilingual-minilm-l12-int8-2c4055b1-sources-v2"

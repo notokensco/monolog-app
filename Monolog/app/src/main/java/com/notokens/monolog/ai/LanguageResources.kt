@@ -26,9 +26,11 @@ internal data class KeyboardLanguage(
     val id: String,
     val label: String,
     val speechTag: String,
-    val script: IntRange? = null
+    val script: IntRange? = null,
+    val letterRows: List<String>? = null,
+    val alternateLetters: Map<Char, String> = emptyMap()
 ) {
-    val supportsLatinSwipe get() = id == "en" || id == "hi-Latn"
+    val supportsLatinSwipe get() = id == "en" || id == "hi-Latn" || letterRows != null
     val translationCode: String?
         get() = if (id == "en" || id == "hi-Latn") null else TranslateLanguage.fromLanguageTag(id)
 
@@ -53,7 +55,16 @@ internal data class KeyboardLanguage(
             KeyboardLanguage("pa", "Punjabi · ਪੰਜਾਬੀ", "pa-IN", 0x0a01..0x0a4d),
             KeyboardLanguage("ta", "Tamil · தமிழ்", "ta-IN", 0x0b82..0x0bcd),
             KeyboardLanguage("te", "Telugu · తెలుగు", "te-IN", 0x0c01..0x0c4d),
-            KeyboardLanguage("ur", "Urdu · اردو", "ur-IN", 0x0621..0x06d3)
+            KeyboardLanguage("ur", "Urdu · اردو", "ur-IN", 0x0621..0x06d3),
+            KeyboardLanguage("de", "German · Deutsch", "de-DE",
+                letterRows = listOf("qwertzuiop", "asdfghjkl", "yxcvbnm"),
+                alternateLetters = mapOf('a' to "ä", 'o' to "ö", 'u' to "ü", 's' to "ß")),
+            KeyboardLanguage("es", "Spanish · Español", "es-ES",
+                letterRows = listOf("qwertyuiop", "asdfghjklñ", "zxcvbnm"),
+                alternateLetters = mapOf('a' to "á", 'e' to "é", 'i' to "í", 'o' to "ó", 'u' to "úü")),
+            KeyboardLanguage("fr", "French · Français", "fr-FR",
+                letterRows = listOf("azertyuiop", "qsdfghjklm", "wxcvbn'"),
+                alternateLetters = mapOf('a' to "àâæ", 'e' to "éèêë", 'i' to "îï", 'o' to "ôœ", 'u' to "ùûü", 'c' to "ç", 'y' to "ÿ"))
         )
 
         fun of(id: String): KeyboardLanguage = all.find { it.id == id } ?: all.first()

@@ -39,11 +39,11 @@ internal sealed interface GemmaResult {
     data class Failed(val loading: Boolean) : GemmaResult
 
     fun status(): String = when (this) {
-        is Answer -> "Gemma returned text"
-        Missing -> "Gemma is not downloaded"
-        TimedOut -> "Gemma timed out"
-        Empty -> "Gemma returned no text"
-        is Failed -> if (loading) "Gemma could not start" else "Gemma could not finish the request"
+        is Answer -> "The offline text model returned text"
+        Missing -> "Download an offline text model"
+        TimedOut -> "The offline text model timed out"
+        Empty -> "The offline text model returned no text"
+        is Failed -> if (loading) "The offline text model could not start" else "The offline text model could not finish the request"
     }
 }
 
@@ -58,7 +58,8 @@ internal object LocalAi {
 
     suspend fun warm(context: Context) = withContext(Dispatchers.Default) {
         engineLock.withLock {
-            if (ModelStore.get(context).state.value is ModelState.Ready) {
+            val store = ModelStore.get(context)
+            if (store.state.value is ModelState.Ready && store.active.value == TextModel.GEMMA) {
                 try {
                     getEngine(context)
                 } finally {
@@ -84,6 +85,21 @@ internal object LocalAi {
             withTimeoutOrNull(30_000L) {
                 withContext(Dispatchers.Default) {
                     engineLock.withLock {
+                        val store = ModelStore.get(context)
+                        val selection = store.active.value ?: return@withLock GemmaResult.Missing
+                        if (store.state.value !is ModelState.Ready) return@withLock GemmaResult.Missing
+                        if (selection.isGguf) {
+                            return@withLock try {
+                                val text = GgufRuntime.complete(store.file(selection), prompt, maxTokens)
+                                if (text.isNullOrBlank()) GemmaResult.Empty else GemmaResult.Answer(text)
+                            } catch (cancelled: CancellationException) {
+                                throw cancelled
+                            } catch (_: Exception) {
+                                GemmaResult.Failed(false)
+                            } catch (_: LinkageError) {
+                                GemmaResult.Failed(true)
+                            }
+                        }
                         var loading = true
                         try {
                             val activeEngine = getEngine(context)
@@ -126,7 +142,7 @@ internal object LocalAi {
         val cache = File(context.cacheDir, "local-gemma").apply { mkdirs() }
         return Engine(
             EngineConfig(
-                modelPath = store.model.path,
+                modelPath = store.file(TextModel.GEMMA).path,
                 backend = Backend.CPU(threadCount = 2),
                 maxNumTokens = 1024,
                 cacheDir = cache.path
@@ -150,6 +166,14 @@ internal object LocalAi {
             engineLock.withLock {
                 if (lastUsed == timestamp) closeEngine()
             }
+        }
+    }
+
+    suspend fun changeModel(swap: () -> Unit) {
+        engineLock.withLock {
+            idleClose?.cancel()
+            closeEngine()
+            swap()
         }
     }
 

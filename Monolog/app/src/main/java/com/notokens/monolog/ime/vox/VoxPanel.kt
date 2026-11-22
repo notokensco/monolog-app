@@ -24,6 +24,7 @@ import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.ui.Alignment
@@ -61,6 +62,7 @@ fun VoxPanel(
     onCommitTranscript: (String) -> Unit,
     onCancel: () -> Unit,
     onRequestPermission: () -> Unit,
+    onOpenModels: () -> Unit = {},
     modifier: Modifier = Modifier
 ) {
     Column(
@@ -164,7 +166,7 @@ fun VoxPanel(
                     }
                 }
             }
-            VoxStatus.ERROR -> {
+            VoxStatus.ERROR, VoxStatus.UNAVAILABLE -> {
                 Text(
                     text = voxState.errorMessage ?: "Speech error. Tap mic to retry.",
                     fontSize = 12.sp,
@@ -172,6 +174,9 @@ fun VoxPanel(
                     color = MaterialTheme.colorScheme.error,
                     textAlign = TextAlign.Center
                 )
+                if (voxState.status == VoxStatus.UNAVAILABLE) {
+                    TextButton(onOpenModels) { Text("Open Monolog settings") }
+                }
             }
             else -> {
                 Text(
@@ -205,13 +210,15 @@ fun VoxPanel(
                 horizontalArrangement = Arrangement.SpaceBetween
             ) {
                 Text(
-                    text = if (voxState.transcript.isNotBlank()) {
-                        voxState.transcript
+                    text = if (voxState.transcript.isNotBlank() || voxState.partialTranscript.isNotBlank()) {
+                        listOf(voxState.transcript, voxState.partialTranscript)
+                            .filter(String::isNotBlank).joinToString(" ")
                     } else {
                         "Speak naturally. Words appear here for review before inserting."
                     },
                     fontSize = 13.sp,
-                    color = if (voxState.transcript.isNotBlank()) PaperKeyText else PaperKeySubText,
+                    color = if (voxState.transcript.isNotBlank() || voxState.partialTranscript.isNotBlank())
+                        PaperKeyText else PaperKeySubText,
                     lineHeight = 18.sp,
                     modifier = Modifier.weight(1f)
                 )
@@ -245,7 +252,7 @@ fun VoxPanel(
                     .padding(horizontal = 12.dp, vertical = 6.dp)
             ) {
                 Text(
-                    text = voxState.language,
+                    text = if (voxState.usesWhisper) "Whisper Small · " + voxState.language else voxState.language,
                     fontSize = 12.sp,
                     color = PaperKeyText
                 )
@@ -264,7 +271,7 @@ fun VoxPanel(
                         if (isListening) PaperAccentLavenderBorder else Color.Transparent,
                         CircleShape
                     )
-                    .clickable {
+                    .clickable(enabled = voxState.status != VoxStatus.PROCESSING) {
                         if (isListening) onPauseListening() else onStartListening()
                     }
                     .semantics { contentDescription = if (isListening) "Pause listening" else "Start listening" },
@@ -278,7 +285,8 @@ fun VoxPanel(
             }
 
             Button(
-                enabled = voxState.transcript.isNotBlank(),
+                enabled = voxState.transcript.isNotBlank() && voxState.status != VoxStatus.PROCESSING &&
+                    !(voxState.usesWhisper && isListening),
                 onClick = { onCommitTranscript(voxState.transcript) }
             ) {
                 Text("Done")

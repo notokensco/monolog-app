@@ -33,11 +33,35 @@ internal object QwertyLayout {
 
     fun center(letter: Char): SwipePoint = centers.getValue(letter)
 
-    fun startsOnLetter(point: SwipePoint): Boolean = when {
-        point.y < 0f || point.y >= rows.size * rowSpacing -> false
-        point.y < rowSpacing -> point.x in 0f..width
-        point.y < 2 * rowSpacing -> point.x in homeRowInset..(width - homeRowInset)
-        else -> point.x in (shiftWeight * lastRowKeyWidth)..(width - shiftWeight * lastRowKeyWidth)
+    fun startsOnLetter(point: SwipePoint, rows: List<String> = this.rows): Boolean {
+        val row = (point.y / rowSpacing).toInt()
+        if (point.y < 0f || row !in rows.indices) return false
+        val inset = rowInset(row, rows)
+        return point.x in inset..(width - inset)
+    }
+
+    private fun rowInset(row: Int, rows: List<String>): Float = when (row) {
+        1 -> (width - rows[row].length) / 2f
+        2 -> width * shiftWeight / (rows[row].length + 2 * shiftWeight)
+        else -> 0f
+    }
+
+    fun nativeCenters(rows: List<String>): FloatArray {
+        val centers = FloatArray(54) { 1000f }
+        rows.forEachIndexed { row, keys ->
+            val inset = rowInset(row, rows)
+            val step = (width - 2 * inset) / keys.length
+            keys.forEachIndexed { column, letter ->
+                val index = when (letter) {
+                    in 'a'..'z' -> letter - 'a'
+                    'ñ' -> 26
+                    else -> return@forEachIndexed
+                }
+                centers[index * 2] = inset + (column + .5f) * step
+                centers[index * 2 + 1] = (row + .5f) * rowSpacing
+            }
+        }
+        return centers
     }
 }
 

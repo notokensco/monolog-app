@@ -1,0 +1,16 @@
+[package]
+name = "monolog_typing"
+version = "0.1.0"
+edition = "2021"
+publish = false
+
+[lib]
+crate-type = ["cdylib"]
+
+[target.'cfg(target_os = "android")'.dependencies]
+jni = "0.21.1"
+
+[profile.release]
+opt-level = 3
+strip = "symbols"
+panic = "abort"

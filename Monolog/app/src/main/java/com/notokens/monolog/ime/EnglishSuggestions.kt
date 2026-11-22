@@ -1,6 +1,7 @@
 package com.notokens.monolog.ime
 
 import android.content.Context
+import com.notokens.monolog.ai.KeyboardLanguage
 import java.util.Locale
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
@@ -8,8 +9,7 @@ import kotlinx.coroutines.withContext
 internal data class WordSuggestion(val typed: String, val replacement: String)
 
 internal class EnglishSuggestions(private val context: Context) {
-    @Volatile private var dictionaryReady = false
-    private val token = Regex("[A-Za-z]+(?:'[A-Za-z]+)?$")
+    private val token = Regex("""[\p{L}\p{M}]+(?:'[\p{L}\p{M}]+)?\z""")
     private val wordLists by lazy {
         val suggestions = mutableSetOf<String>()
         val swipeWords = mutableSetOf<String>()
@@ -26,14 +26,26 @@ internal class EnglishSuggestions(private val context: Context) {
                 }
             }
         }
-        (suggestions.sorted() to SwipeDecoder(swipeWords.toList(), TypingVocabulary.english)).also { dictionaryReady = true }
+        (suggestions.sorted() to SwipeDecoder(swipeWords.toList(), TypingVocabulary.english))
     }
     private val dictionary: List<String> get() = wordLists.first
     val swipeDecoder: SwipeDecoder get() = wordLists.second
     val hinglishSwipeDecoder by lazy {
         SwipeDecoder((TypingVocabulary.hinglish + TypingVocabulary.english).toList(), TypingVocabulary.hinglish)
     }
-    @Volatile private var preparedCorrection: WordSuggestion? = null
+    private data class PreparedCorrection(val context: String, val replacement: String)
+    @Volatile private var preparedCorrection: PreparedCorrection? = null
+    @Volatile private var personalWords: Map<String, String> = emptyMap()
+
+    fun setPersonalWords(words: Set<String>) {
+        personalWords = words.sorted().associateBy { it.lowercase(Locale.ROOT) }
+    }
+
+    fun continuations(before: String, hinglish: Boolean): List<String> {
+        val previous = token.find(before.trimEnd())?.value?.lowercase(Locale.ROOT)
+        return (if (hinglish) TypingVocabulary.hinglishPairs[previous] ?: nextWords[previous]
+            else nextWords[previous]).orEmpty()
+    }
 
     /** Called on the key path: only a small lookup or a precomputed candidate, no dictionary work. */
     fun automaticCorrection(beforeCursor: String): WordSuggestion? {
@@ -43,21 +55,30 @@ internal class EnglishSuggestions(private val context: Context) {
         val preceding = beforeCursor.getOrNull(match.range.first - 1)
         if (preceding != null && !preceding.isWhitespace() && preceding !in "([\"“‘") return null
         val lower = typed.lowercase(Locale.ROOT)
-        val replacement = commonTypos[lower] ?: preparedCorrection?.takeIf { it.typed == typed }?.replacement
-            ?: if (dictionaryReady && typed == lower && typed.length in 4..16 && dictionary.binarySearch(lower) < 0) {
-                oneEdit(lower).singleOrNull()
-            } else null
+        if (lower in personalWords) return null
+        val replacement = commonTypos[lower]
+            ?: preparedCorrection?.takeIf { it.context == beforeCursor.takeLast(128) }?.replacement
         if (replacement == null) return null
         val cased = if (typed.first().isUpperCase()) replacement.replaceFirstChar { it.titlecase(Locale.ROOT) } else replacement
         return WordSuggestion(typed, cased)
     }
 
-    suspend fun suggest(beforeCursor: String, hinglish: Boolean = false): List<WordSuggestion> = withContext(Dispatchers.Default) {
+    fun swipe(language: KeyboardLanguage, points: List<SwipePoint>, before: String): List<String> {
+        val hinglish = language.id == "hi-Latn"
+        NativeTyping.swipe(context, language, points, continuations(before, hinglish))?.let { return it }
+        return when (language.id) {
+            "en" -> listOfNotNull(swipeDecoder.decode(points))
+            "hi-Latn" -> listOfNotNull(hinglishSwipeDecoder.decode(points))
+            else -> emptyList()
+        }
+    }
+
+    suspend fun suggest(beforeCursor: String, language: String): List<WordSuggestion> = withContext(Dispatchers.Default) {
+        val hinglish = language == "hi-Latn"
+        val legacy = language == "en" || hinglish
         preparedCorrection = null
         if (beforeCursor.endsWith(' ')) {
-            val previous = token.find(beforeCursor.trimEnd())?.value?.lowercase(Locale.ROOT)
-            val options = if (hinglish) TypingVocabulary.hinglishPairs[previous] ?: nextWords[previous] else nextWords[previous]
-            return@withContext options.orEmpty().map { WordSuggestion("", "$it ") }
+            return@withContext (if (legacy) continuations(beforeCursor, hinglish) else emptyList()).map { WordSuggestion("", "$it ") }
         }
         val match = token.find(beforeCursor) ?: return@withContext emptyList()
         val typed = match.value
@@ -65,32 +86,50 @@ internal class EnglishSuggestions(private val context: Context) {
             return@withContext emptyList()
         }
         val word = typed.lowercase(Locale.ROOT)
+        val next = if (legacy) continuations(beforeCursor.take(match.range.first), hinglish) else emptyList()
+        val personal = personalWords.entries.asSequence()
+            .filter { (key, _) -> key.startsWith(word) && key != word }
+            .map { it.value }.take(3).toList()
+        NativeTyping.suggestions(context, language, word, next)?.let { ranked ->
+            val correction = ranked.correction
+            if (language == "en" && correction != null && typed == word && word.length >= 4) {
+                preparedCorrection = PreparedCorrection(beforeCursor.takeLast(128), correction)
+            }
+            return@withContext (personal + ranked.words.map { cased(typed, it) })
+                .distinctBy { it.lowercase(Locale.ROOT) }.take(3).map { WordSuggestion(typed, "$it ") }
+        }
+        if (personal.isNotEmpty()) return@withContext personal.map { WordSuggestion(typed, "$it ") }
+        if (!legacy) return@withContext emptyList()
         if (hinglish) {
-            val candidates = (TypingVocabulary.hinglish + TypingVocabulary.english).asSequence()
+            val matches = (TypingVocabulary.hinglish + TypingVocabulary.english).asSequence()
                 .filter { it != word && it.startsWith(word) }
                 .sortedWith(compareBy<String> { it !in TypingVocabulary.hinglish }.thenBy { it.length })
-                .take(3).map { candidate ->
-                    val cased = if (typed.first().isUpperCase()) candidate.replaceFirstChar { it.titlecase() } else candidate
-                    WordSuggestion(typed, "$cased ")
-                }.toList()
+                .toList()
+            val candidates = matches.take(3).map { candidate ->
+                val cased = if (typed.first().isUpperCase()) candidate.replaceFirstChar { it.titlecase() } else candidate
+                WordSuggestion(typed, "$cased ")
+            }
             if (candidates.isNotEmpty() || word in TypingVocabulary.hinglish) return@withContext candidates
         }
         val corrections = if (word.length >= 3 && dictionary.binarySearch(word) < 0) oneEdit(word) else emptyList()
         // Ambiguous replacements remain suggestions. Never infer a correction for a name.
         if (typed == word && word.length >= 4 && corrections.size == 1) {
-            preparedCorrection = WordSuggestion(typed, corrections.single())
+            preparedCorrection = PreparedCorrection(beforeCursor.takeLast(128), corrections.single())
         }
         val index = dictionary.binarySearch(word).let { if (it >= 0) it else -it - 1 }
         val completions = dictionary.subList(index, dictionary.size).asSequence().takeWhile { it.startsWith(word) }
-            .filter { it != word }.sortedWith(compareBy<String> { it !in TypingVocabulary.english }.thenBy { it.length }).take(3).toList()
+            .filter { it != word }
+            .sortedWith(compareBy<String> { it !in TypingVocabulary.english }.thenBy { it.length })
+            .take(128).toList()
         (corrections + completions).distinct().take(3).map { candidate ->
-            val cased = when {
-                typed.all { it.isUpperCase() } -> candidate.uppercase(Locale.ROOT)
-                typed[0].isUpperCase() -> candidate.replaceFirstChar { it.titlecase(Locale.ROOT) }
-                else -> candidate
-            }
-            WordSuggestion(typed, "$cased ")
+            WordSuggestion(typed, cased(typed, candidate) + " ")
         }
+    }
+
+    private fun cased(typed: String, word: String) = when {
+        typed.all(Char::isUpperCase) -> word.uppercase(Locale.ROOT)
+        typed.first().isUpperCase() -> word.replaceFirstChar { it.titlecase(Locale.ROOT) }
+        else -> word
     }
 
     private fun oneEdit(word: String): List<String> {

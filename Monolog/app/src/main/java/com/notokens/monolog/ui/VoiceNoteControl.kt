@@ -23,7 +23,6 @@ import com.notokens.monolog.ime.vox.VoxState
 import com.notokens.monolog.ime.vox.VoxStatus
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.Job
-import kotlinx.coroutines.withTimeoutOrNull
 import com.notokens.monolog.ui.theme.PaperKeySubText
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.delay
@@ -77,10 +76,6 @@ internal fun VoiceNoteControl(
         processing = true
         saving = scope.launch {
             try {
-                vox.pauseOrStopListening()
-                withTimeoutOrNull(4_000) {
-                    snapshotFlow { captions.status }.first { it != VoxStatus.LISTENING && it != VoxStatus.PROCESSING }
-                }
                 val voice = vox.finishNote()
                 if (!settings.incognito.first()) {
                     if (voice.audio != null || voice.transcript.isNotBlank()) {
@@ -100,6 +95,9 @@ internal fun VoiceNoteControl(
                 busyCallback(false)
             }
         }
+    }
+    LaunchedEffect(recording, captions.status) {
+        if (recording && captions.usesWhisper && captions.status == VoxStatus.PAUSED) finish()
     }
     LaunchedEffect(recording) {
         if (recording) {
@@ -129,9 +127,13 @@ internal fun VoiceNoteControl(
                 else -> "Vox voice note"
             })
         }
-        if ((recording || processing) && captions.transcript.isNotBlank()) {
-            Text(captions.transcript, Modifier.padding(horizontal = 8.dp, vertical = 4.dp),
+        val caption = listOf(captions.transcript, captions.partialTranscript).filter(String::isNotBlank).joinToString(" ")
+        if ((recording || processing) && caption.isNotBlank()) {
+            Text(caption, Modifier.padding(horizontal = 8.dp, vertical = 4.dp),
                 color = PaperKeySubText)
+        }
+        if (recording && captions.usesWhisper) {
+            Text("Whisper Small · Pauses finish the recording.", color = PaperKeySubText)
         }
         if (recording) captions.errorMessage?.let { Text(it, color = PaperKeySubText) }
         if (error.isNotBlank()) Text(error, color = PaperKeySubText)

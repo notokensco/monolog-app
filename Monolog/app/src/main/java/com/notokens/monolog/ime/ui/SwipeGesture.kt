@@ -11,10 +11,7 @@ import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.drawWithContent
 import androidx.compose.ui.geometry.Offset
-import androidx.compose.ui.graphics.Path
 import androidx.compose.ui.graphics.StrokeCap
-import androidx.compose.ui.graphics.StrokeJoin
-import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.graphics.drawscope.clipRect
 import androidx.compose.ui.input.pointer.PointerEventPass
 import androidx.compose.ui.input.pointer.pointerInput
@@ -25,7 +22,11 @@ import com.notokens.monolog.ime.QwertyLayout
 import com.notokens.monolog.ime.SwipePoint
 
 @Composable
-internal fun swipeTypingModifier(enabled: Boolean, onSwipe: (List<SwipePoint>) -> Unit): Modifier {
+internal fun swipeTypingModifier(
+    enabled: Boolean,
+    rows: List<String> = QwertyLayout.rows,
+    onSwipe: (List<SwipePoint>) -> Unit
+): Modifier {
     if (!enabled) return Modifier
     val onComplete by rememberUpdatedState(onSwipe)
     val points = remember { mutableStateListOf<Offset>() }
@@ -35,16 +36,26 @@ internal fun swipeTypingModifier(enabled: Boolean, onSwipe: (List<SwipePoint>) -
         .drawWithContent {
             drawContent()
             if (points.size > 1) {
-                val path = Path().apply {
-                    moveTo(points.first().x, points.first().y)
-                    for (i in 1 until points.size) lineTo(points[i].x, points[i].y)
-                }
+                val trailLength = 68.dp.toPx()
                 clipRect {
-                    drawPath(path, color, style = Stroke(4.dp.toPx(), cap = StrokeCap.Round, join = StrokeJoin.Round))
+                    var remaining = trailLength
+                    for (index in points.lastIndex downTo 1) {
+                        val end = points[index]
+                        val start = points[index - 1]
+                        val distance = (end - start).getDistance()
+                        if (distance <= 0f) continue
+                        val fraction = (remaining / distance).coerceAtMost(1f)
+                        drawLine(
+                            color.copy(alpha = color.alpha * (remaining / trailLength)),
+                            end, end + (start - end) * fraction, 4.dp.toPx(), StrokeCap.Round
+                        )
+                        remaining -= distance
+                        if (remaining <= 0f) break
+                    }
                 }
             }
         }
-        .pointerInput(rtl) {
+        .pointerInput(rtl, rows) {
             awaitEachGesture {
                 val down = awaitFirstDown(pass = PointerEventPass.Initial)
                 val width = size.width.toFloat()
@@ -55,7 +66,7 @@ internal fun swipeTypingModifier(enabled: Boolean, onSwipe: (List<SwipePoint>) -
                     return SwipePoint(x * QwertyLayout.width / width,
                         point.y * QwertyLayout.rowSpacing * QwertyLayout.rows.size / height)
                 }
-                if (!QwertyLayout.startsOnLetter(normalize(down.position))) return@awaitEachGesture
+                if (!QwertyLayout.startsOnLetter(normalize(down.position), rows)) return@awaitEachGesture
 
                 var swiping = false
                 val slop = maxOf(viewConfiguration.touchSlop, width / QwertyLayout.width * .28f)

@@ -505,6 +505,7 @@ fun CompanionApp(
                                     SettingsLink(SettingsPage.ACCOUNT) { nav.navigate(it.route) }
                                     SettingsLink(SettingsPage.APPEARANCE) { nav.navigate(it.route) }
                                     SettingsLink(SettingsPage.KEYBOARD) { nav.navigate(it.route) }
+                                    SettingsLink(SettingsPage.TONES) { nav.navigate(it.route) }
                                     SettingsLink(SettingsPage.LANGUAGES) { nav.navigate(it.route) }
                                 }
                                 SettingsCard("Intelligence & privacy") {
@@ -582,6 +583,7 @@ fun CompanionApp(
                                                     modifier = Modifier.semantics { contentDescription = "Long-press numbers and symbols" })
                                             }
                                         }
+                                        PersonalDictionarySettings(settings)
                                         val holdMs by settings.shortcutHoldMs.collectAsState(initial = 500)
                                         val shortcutHaptics by settings.shortcutHaptics.collectAsState(initial = true)
                                         SettingsCard("Quick shortcuts") {
@@ -599,6 +601,7 @@ fun CompanionApp(
                                             SetupScreen(onRequestMicPermission = onRequestMicPermission)
                                         }
                                     }
+                                    SettingsPage.TONES -> ToneSettings(settings)
                                     SettingsPage.LANGUAGES -> SettingsCard("Keyboard language and translation") {
                                         LanguageSettings(settings)
                                     }
@@ -684,6 +687,7 @@ private enum class SettingsPage(val id: String, val title: String, val summary: 
     ACCOUNT("account", "Account & backup", "Google account, encrypted Drive backup, and past years", Glyph.SHIELD),
     APPEARANCE("appearance", "Appearance", "Paper, Ink, and transparency", Glyph.INK),
     KEYBOARD("keyboard", "Keyboard & shortcuts", "Setup, hold duration, and haptics", Glyph.SETTINGS),
+    TONES("tones", "Tones", "Smart tone suggestions for work and chat", Glyph.BOLT),
     LANGUAGES("languages", "Languages & packs", "Layouts and offline translation", Glyph.GLOBE),
     MODELS("models", "On-device AI", "Gemini Nano and Gemma downloads", Glyph.BOLT),
     CAPTURE("capture", "Quick Capture", "Screenshot border color", Glyph.CAPTURE),

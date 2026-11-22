@@ -9,10 +9,124 @@ plugins {
     alias(libs.plugins.ksp)
 }
 
+val whisperSource = providers.gradleProperty("monologWhisperSource").map { rootProject.file(it) }.orNull
+val llamaSource = providers.gradleProperty("monologLlamaSource").map { rootProject.file(it) }.orNull
+val rustTypingEnabled = providers.gradleProperty("monologRustTyping").map(String::toBoolean).orElse(true)
+val rustTypingProject = layout.projectDirectory.dir("src/main/rust")
+val rustTypingOutput = layout.buildDirectory.dir("generated/monologTyping/jniLibs")
+val rustTypingTargets = mapOf(
+    "arm64-v8a" to ("aarch64-linux-android" to "aarch64-linux-android"),
+    "armeabi-v7a" to ("armv7-linux-androideabi" to "armv7a-linux-androideabi"),
+    "x86" to ("i686-linux-android" to "i686-linux-android"),
+    "x86_64" to ("x86_64-linux-android" to "x86_64-linux-android")
+)
+val rustTypingAbi = providers.gradleProperty("monologAbi")
+val rustTypingNdk = providers.gradleProperty("monologRustNdk").orElse("25.1.8937393")
+val rustToolchain = providers.gradleProperty("monologRustToolchain").orElse("stable")
+val androidSdkDir = androidComponents.sdkComponents.sdkDirectory
+val buildRustTyping = tasks.register("buildRustTyping") {
+    onlyIf { rustTypingEnabled.get() }
+    inputs.dir(rustTypingProject.dir("src"))
+    inputs.files(rustTypingProject.file("Cargo.toml"), rustTypingProject.file("Cargo.lock"))
+    inputs.property("abi", rustTypingAbi.orElse("all"))
+    inputs.property("ndk", rustTypingNdk)
+    inputs.property("rustToolchain", rustToolchain)
+    outputs.dir(rustTypingOutput)
+    doLast {
+        val ndk = androidSdkDir.get().asFile.resolve("ndk/${rustTypingNdk.get()}")
+        val toolchainRoot = ndk.resolve("toolchains/llvm/prebuilt")
+        val toolchain = checkNotNull(toolchainRoot.listFiles()?.singleOrNull { it.isDirectory }) {
+            "Install Android NDK ${rustTypingNdk.get()} or set -PmonologRustNdk to an installed version."
+        }
+        val windows = System.getProperty("os.name").startsWith("Windows", ignoreCase = true)
+        val linker = toolchain.resolve(if (windows) "bin/clang.exe" else "bin/clang")
+        val cargoName = if (windows) "cargo.exe" else "cargo"
+        val cargoHome = System.getenv("CARGO_HOME")?.let(::File) ?: File(System.getProperty("user.home"), ".cargo")
+        val cargo = cargoHome.resolve("bin/$cargoName").takeIf { it.isFile }?.absolutePath ?: cargoName
+        val cargoTarget = layout.buildDirectory.dir("intermediates/monologTyping/cargo").get().asFile
+        val output = rustTypingOutput.get().asFile
+        val targets = rustTypingAbi.orNull?.let { mapOf(it to rustTypingTargets.getValue(it)) } ?: rustTypingTargets
+        for ((abi, triples) in targets) {
+            val (rustTarget, clangTarget) = triples
+            val flags = listOf(
+                "-C", "linker=${linker.absolutePath}",
+                "-C", "link-arg=--target=${clangTarget}28",
+                "-C", "link-arg=-Wl,-z,max-page-size=16384"
+            )
+            providers.exec {
+                workingDir(rustTypingProject.asFile)
+                commandLine(cargo, "+${rustToolchain.get()}", "build", "--locked", "--release", "--target", rustTarget)
+                environment("CARGO_TARGET_DIR", cargoTarget.absolutePath)
+                environment("CARGO_ENCODED_RUSTFLAGS", flags.joinToString("\u001f"))
+            }.result.get().assertNormalExitValue()
+            val built = cargoTarget.resolve("$rustTarget/release/libmonolog_typing.so")
+            built.copyTo(output.resolve("$abi/libmonolog_typing.so"), overwrite = true)
+        }
+    }
+}
+
+if (rustTypingEnabled.get()) {
+    tasks.matching { it.name.startsWith("merge") && it.name.endsWith("JniLibFolders") }
+        .configureEach { dependsOn(buildRustTyping) }
+}
+
+val ggufOutput = layout.buildDirectory.dir("generated/monologGguf/jniLibs")
+if (llamaSource != null) {
+    require(llamaSource.resolve("include/llama.h").isFile) { "Set monologLlamaSource to the pinned llama.cpp checkout." }
+    val buildGguf = tasks.register("buildGgufRuntime") {
+        val bridge = layout.projectDirectory.dir("src/main/gguf")
+        inputs.dir(bridge)
+        inputs.files(llamaSource.resolve("include/llama.h"), llamaSource.resolve("CMakeLists.txt"),
+            llamaSource.resolve("src"), llamaSource.resolve("ggml"))
+        inputs.property("abi", rustTypingAbi.orElse("64-bit"))
+        inputs.property("ndk", rustTypingNdk)
+        outputs.dir(ggufOutput)
+        doLast {
+            val sdk = androidSdkDir.get().asFile
+            val windows = System.getProperty("os.name").startsWith("Windows", ignoreCase = true)
+            val suffix = if (windows) ".exe" else ""
+            val cmakeBin = sdk.resolve("cmake/3.22.1/bin")
+            val cmake = cmakeBin.resolve("cmake$suffix")
+            val ninja = cmakeBin.resolve("ninja$suffix")
+            val ndk = sdk.resolve("ndk/${rustTypingNdk.get()}")
+            check(cmake.isFile && ninja.isFile) { "Install Android SDK CMake 3.22.1 for the GGUF runtime." }
+            val abis = rustTypingAbi.orNull?.let { listOf(it) } ?: listOf("arm64-v8a", "x86_64")
+            for (abi in abis.filter { it == "arm64-v8a" || it == "x86_64" }) {
+                val build = layout.buildDirectory.dir("intermediates/monologGguf/$abi").get().asFile
+                providers.exec {
+                    commandLine(cmake.absolutePath, "-S", bridge.asFile.absolutePath, "-B", build.absolutePath,
+                        "-G", "Ninja", "-DCMAKE_MAKE_PROGRAM=${ninja.absolutePath}",
+                        "-DCMAKE_TOOLCHAIN_FILE=${ndk.resolve("build/cmake/android.toolchain.cmake").absolutePath}",
+                        "-DANDROID_ABI=$abi", "-DANDROID_PLATFORM=android-28", "-DANDROID_STL=c++_static",
+                        "-DCMAKE_BUILD_TYPE=Release", "-DMONOLOG_LLAMA_SOURCE=${llamaSource.absolutePath}")
+                }.result.get().assertNormalExitValue()
+                providers.exec {
+                    commandLine(cmake.absolutePath, "--build", build.absolutePath, "--target", "monolog_gguf",
+                        "--parallel", "4")
+                }.result.get().assertNormalExitValue()
+                build.resolve("libmonolog_gguf.so").copyTo(
+                    ggufOutput.get().asFile.resolve("$abi/libmonolog_gguf.so"), overwrite = true)
+            }
+        }
+    }
+    tasks.matching { it.name.startsWith("merge") && it.name.endsWith("JniLibFolders") }
+        .configureEach { dependsOn(buildGguf) }
+}
+
 val monologTestingKeystore = providers.gradleProperty("monologTestingKeystore")
     .map { rootProject.file(it) }.orNull
 
 android {
+    ndkVersion = rustTypingNdk.get()
+    if (rustTypingEnabled.get()) sourceSets.getByName("main").jniLibs.srcDir(rustTypingOutput)
+    if (llamaSource != null) sourceSets.getByName("main").jniLibs.srcDir(ggufOutput)
+    if (whisperSource != null) {
+        require(whisperSource.resolve("include/whisper.h").isFile) { "Set monologWhisperSource to the whisper.cpp checkout." }
+        externalNativeBuild.cmake {
+            path = file("src/main/cpp/CMakeLists.txt")
+            version = "3.22.1"
+        }
+    }
     namespace = "com.notokens.monolog"
     compileSdk = 35
 
@@ -22,6 +136,11 @@ android {
         targetSdk = 35
         versionCode = 2
         versionName = "0.1.0-prototype.2"
+        buildConfigField("boolean", "MONOLOG_HAS_WHISPER", (whisperSource != null).toString())
+        buildConfigField("boolean", "MONOLOG_HAS_GGUF", (llamaSource != null).toString())
+        if (whisperSource != null) {
+            externalNativeBuild.cmake.arguments += "-DMONOLOG_WHISPER_SOURCE=$whisperSource"
+        }
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
         val webEndpoint = providers.gradleProperty("monologWebEndpoint").orElse("").get()
@@ -103,7 +222,7 @@ monologTestingKeystore?.let { keystore ->
 
 dependencies {
     implementation("com.google.mediapipe:tasks-text:1.2.3")
-    implementation("com.microsoft.onnxruntime:onnxruntime-android:1.20.0")
+    implementation("com.microsoft.onnxruntime:onnxruntime-android:1.24.3")
     implementation("androidx.credentials:credentials:1.5.0")
     implementation("androidx.credentials:credentials-play-services-auth:1.5.0")
     implementation("com.google.android.libraries.identity.googleid:googleid:1.1.1")

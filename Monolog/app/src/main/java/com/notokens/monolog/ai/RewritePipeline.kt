@@ -11,6 +11,16 @@ internal data class AiPreview(
 )
 
 internal object RewritePipeline {
+    suspend fun smartTone(context: Context, draft: String, style: RewriteStyle): AiPreview? {
+        if (ModelStore.get(context).state.value !is ModelState.Ready) return null
+        val prompt = AiText.rewritePrompt(draft, style) + "\nKeep the draft's original language or mix of languages."
+        val reply = gemma(context, prompt, AiText.rewriteTokenLimit(draft)) ?: return null
+        val checked = AiText.checkedRewrite(draft, reply) ?: return null
+        if (checked.trim() == draft.trim()) return null
+        val text = if (draft.endsWith(' ') && !checked.endsWith(' ')) "$checked " else checked
+        return edit(text, generated = true, detail = if (style == RewriteStyle.PROFESSIONAL) "Professional tone" else "Casual tone")
+    }
+
     suspend fun rewrite(context: Context, draft: String, style: RewriteStyle, language: KeyboardLanguage): AiPreview {
         if (style == RewriteStyle.POLISH && language.id != "en") return edit(AiText.polishSeparators(draft))
         if (language.id == "en") return rewriteEnglish(context, draft, style)
@@ -24,7 +34,7 @@ internal object RewritePipeline {
 
     private suspend fun rewriteEnglish(context: Context, draft: String, style: RewriteStyle): AiPreview {
         if (AiText.isBareFragment(draft)) return edit(AiText.simpleRewrite(draft))
-        if (CloudAi.enabled(context)) {
+        if (CloudAi.enabled(context) && ModelStore.get(context).active.value?.isGguf != true) {
             return withAiFallback(online = {
                 val result = CloudAi.answer(context, AiText.rewritePrompt(draft, style))
                 AiText.checkedRewrite(draft, result)?.let { edit(it) }
@@ -35,7 +45,8 @@ internal object RewritePipeline {
     }
 
     private suspend fun rewriteEnglishOffline(context: Context, draft: String, style: RewriteStyle): AiPreview {
-        val nano = NanoAi.rewrite(context, draft, style)
+        val nano = if (ModelStore.get(context).active.value?.isGguf == true) null
+            else NanoAi.rewrite(context, draft, style)
         if (nano != null) return AiText.checkedRewrite(draft, nano)?.let { edit(it, generated = true) }
             ?: lightEdit(draft, "The rewrite didn’t preserve the draft.")
         val result = LocalAi.request(context, AiText.rewritePrompt(draft, style), AiText.rewriteTokenLimit(draft))
@@ -43,7 +54,7 @@ internal object RewritePipeline {
             return AiText.checkedRewrite(draft, result.text)?.let { edit(it, generated = true) }
                 ?: lightEdit(draft, "The rewrite didn’t preserve the draft.")
         }
-        return lightEdit(draft, gemmaMessage(result))
+        return lightEdit(draft, modelMessage(result))
     }
 
     private fun lightEdit(draft: String, reason: String): AiPreview {
@@ -58,11 +69,12 @@ internal object RewritePipeline {
         AiText.deviceAnswer(question)?.let { return AiPreview(it, insertable = true) }
         if (evidence.isBlank() && AiText.needsWeb(question)) return AiPreview("Use Search web for current information.")
         val instruction = AiText.answerPrompt(question, evidence)
-        val nano = NanoAi.answer(context, instruction)
+        val nano = if (ModelStore.get(context).active.value?.isGguf == true) null
+            else NanoAi.answer(context, instruction)
         if (nano != null) return verifiedAnswer(question, nano, evidence)
         return when (val result = LocalAi.request(context, instruction, 160)) {
             is GemmaResult.Answer -> verifiedAnswer(question, result.text, evidence)
-            else -> AiPreview(gemmaMessage(result))
+            else -> AiPreview(modelMessage(result))
         }
     }
 
@@ -70,10 +82,10 @@ internal object RewritePipeline {
         AiText.checkedAnswer(question, text, evidence)?.let { edit(it, generated = true) }
             ?: AiPreview(AiText.UNKNOWN_ANSWER, detail = "Turn Web on for a sourced answer.")
 
-    private fun gemmaMessage(result: GemmaResult): String = when (result) {
-        GemmaResult.Missing -> "Download Gemma in Monolog Settings → On-device AI."
-        GemmaResult.TimedOut -> "Gemma took too long. Try again."
-        GemmaResult.Empty -> "Gemma returned an empty response. Try again."
+    private fun modelMessage(result: GemmaResult): String = when (result) {
+        GemmaResult.Missing -> "Download a text model in Monolog Settings → On-device AI."
+        GemmaResult.TimedOut -> "The offline text model took too long. Try again."
+        GemmaResult.Empty -> "The offline text model returned an empty response. Try again."
         is GemmaResult.Failed -> "${result.status()}. Check Settings → On-device AI."
         is GemmaResult.Answer -> error("Expected a model failure")
     }

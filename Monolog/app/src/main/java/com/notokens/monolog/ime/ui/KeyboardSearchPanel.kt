@@ -1,6 +1,13 @@
 package com.notokens.monolog.ime.ui
 
 import androidx.compose.foundation.background
+import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.setValue
+import androidx.compose.ui.draw.drawWithContent
+import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.text.TextLayoutResult
+import kotlinx.coroutines.delay
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -55,6 +62,16 @@ internal fun KeyboardSearchPanel(
     val repository = remember(context) { MonologData.repository(context) }
     val notes by repository.notes.collectAsState(initial = emptyList())
     val matches = remember(notes, query.text) { notes.matchingJournalEntries(query.text, limit = 3) }
+    var layout by remember { mutableStateOf<TextLayoutResult?>(null) }
+    var caretOn by remember { mutableStateOf(true) }
+    LaunchedEffect(query.text, query.selection) {
+        caretOn = true
+        while (true) {
+            delay(510)
+            caretOn = !caretOn
+        }
+    }
+    val caretColor = MaterialTheme.colorScheme.primary
     Column(
         Modifier.fillMaxWidth().padding(horizontal = 8.dp, vertical = 4.dp)
             .background(MaterialTheme.colorScheme.surface, RoundedCornerShape(26.dp))
@@ -77,7 +94,17 @@ internal fun KeyboardSearchPanel(
                 onValueChange = onQueryChange,
                 readOnly = true,
                 singleLine = true,
-                modifier = Modifier.weight(1f).semantics { contentDescription = "Search query" },
+                modifier = Modifier.weight(1f).semantics { contentDescription = "Search query" }
+                    .drawWithContent {
+                        drawContent()
+                        val textLayout = layout
+                        if (caretOn && query.selection.collapsed && textLayout != null) {
+                            val offset = query.selection.end.coerceIn(0, textLayout.layoutInput.text.length)
+                            val rect = textLayout.getCursorRect(offset)
+                            drawLine(caretColor, Offset(rect.left, rect.top), Offset(rect.left, rect.bottom), 1.5.dp.toPx())
+                        }
+                    },
+                onTextLayout = { layout = it },
                 textStyle = MaterialTheme.typography.bodyLarge.copy(color = PaperKeyText),
                 decorationBox = { inner ->
                     Box {

@@ -4,7 +4,6 @@ import android.view.HapticFeedbackConstants
 import android.view.View
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
-import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Spacer
@@ -25,6 +24,8 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.input.pointer.PointerId
+import androidx.compose.ui.input.pointer.PointerEventPass
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.platform.LocalView
 import androidx.compose.ui.semantics.contentDescription
@@ -44,6 +45,7 @@ import com.notokens.monolog.ui.theme.PaperPillBackground
 import com.notokens.monolog.ui.theme.PaperPillBorder
 import com.notokens.monolog.ui.Glyph
 import com.notokens.monolog.ui.MonologIcon
+import kotlinx.coroutines.Job
 import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
@@ -70,6 +72,7 @@ fun KeyButton(
     onLongClick: (() -> Unit)? = null,
     repeatOnHold: Boolean = glyph == Glyph.BACKSPACE,
     glow: Boolean = false,
+    tracing: Boolean = false,
     onClick: () -> Unit,
     content: (@Composable () -> Unit)? = null
 ) {
@@ -114,6 +117,7 @@ fun KeyButton(
             .clip(RoundedCornerShape(if (isPill) 24.dp else 8.dp))
             .then(pillModifier)
             .background(finalBg)
+            .aiKeyTracing(tracing)
             .semantics {
                 val description = label ?: glyph?.name?.lowercase()
                 if (description != null) contentDescription = description
@@ -121,35 +125,58 @@ fun KeyButton(
                 if (onLongClick != null) semanticsLongClick(longClickLabel) { onLongClick(); true }
             }
             .pointerInput(onLongClick != null, repeatOnHold) {
-                detectTapGestures(
-                    onPress = {
-                        isPressed = true
-                        try {
-                            coroutineScope {
-                                val repeat = if (repeatOnHold) launch {
-                                    triggerHapticFeedback(view)
-                                    tap()
-                                    delay(350)
-                                    while (true) {
-                                        tap()
-                                        delay(55)
+                coroutineScope {
+                    class Press(var action: Job? = null, var handled: Boolean = false)
+                    val presses = mutableMapOf<PointerId, Press>()
+                    try {
+                        awaitPointerEventScope {
+                            val tolerance = viewConfiguration.touchSlop
+                            while (true) {
+                                val event = awaitPointerEvent(PointerEventPass.Main)
+                                for (change in event.changes) {
+                                    val active = presses[change.id]
+                                    val outside = change.position.x !in -tolerance..(size.width + tolerance) ||
+                                        change.position.y !in -tolerance..(size.height + tolerance)
+                                    if (active != null && (!change.pressed || change.isConsumed || outside)) {
+                                        presses.remove(change.id)
+                                        active.action?.cancel()
+                                        if (!change.pressed && !change.isConsumed && !outside && !active.handled) {
+                                            change.consume()
+                                            triggerHapticFeedback(view)
+                                            tap()
+                                        }
+                                    } else if (active == null && change.pressed && !change.previousPressed && !change.isConsumed) {
+                                        change.consume()
+                                        val press = Press(handled = repeatOnHold)
+                                        presses[change.id] = press
+                                        if (repeatOnHold) {
+                                            triggerHapticFeedback(view)
+                                            tap()
+                                            press.action = launch {
+                                                delay(350)
+                                                while (true) {
+                                                    tap()
+                                                    delay(55)
+                                                }
+                                            }
+                                        } else if (hold != null) {
+                                            press.action = launch {
+                                                delay(viewConfiguration.longPressTimeoutMillis)
+                                                press.handled = true
+                                                triggerHapticFeedback(view, isLong = true)
+                                                hold?.invoke()
+                                            }
+                                        }
                                     }
-                                } else null
-                                try { tryAwaitRelease() } finally { repeat?.cancel() }
+                                }
+                                isPressed = presses.isNotEmpty()
                             }
-                        } finally { isPressed = false }
-                    },
-                    onLongPress = if (onLongClick != null && !repeatOnHold) {{
-                        triggerHapticFeedback(view, isLong = true)
-                        hold?.invoke()
-                    }} else null,
-                    onTap = {
-                        if (!repeatOnHold) {
-                            triggerHapticFeedback(view)
-                            tap()
                         }
+                    } finally {
+                        presses.values.forEach { it.action?.cancel() }
+                        isPressed = false
                     }
-                )
+                }
             },
         contentAlignment = Alignment.Center
     ) {

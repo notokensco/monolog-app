@@ -41,6 +41,7 @@ internal fun FirstRunSetup(settings: SettingsStore, onRequestMic: () -> Unit,
     val lifecycle = LocalLifecycleOwner.current
     val memory = remember { MemoryPreferences(context) }
     var page by rememberSaveable { mutableIntStateOf(0) }
+    var offlineReady by remember { mutableStateOf(false) }
     var rememberMoments by remember { mutableStateOf(memory.enabled) }
     var enabled by remember { mutableStateOf(checkImeEnabled(context)) }
     var selected by remember { mutableStateOf(checkImeSelected(context)) }
@@ -73,13 +74,12 @@ internal fun FirstRunSetup(settings: SettingsStore, onRequestMic: () -> Unit,
         Row(verticalAlignment = Alignment.CenterVertically) {
             MonologLogo(Modifier.size(44.dp))
             Text("Monolog", Modifier.weight(1f), style = MaterialTheme.typography.titleLarge, color = PaperKeyText)
-            TextButton(onClick = { finish(onFinish) }) { Text("Set up later") }
         }
-        LinearProgressIndicator(progress = { (page + 1) / 4f }, modifier = Modifier.fillMaxWidth())
+        LinearProgressIndicator(progress = { (page + 1) / 5f }, modifier = Modifier.fillMaxWidth())
         Column(Modifier.weight(1f).verticalScroll(rememberScrollState()),
             verticalArrangement = Arrangement.spacedBy(16.dp)) {
             Text(listOf("A little space for your day", "Make Monolog your keyboard",
-                "Capture what matters", "Your memories, your choice")[page],
+                "Capture what matters", "Download offline models", "Your memories, your choice")[page],
                 color = PaperKeyText, style = MaterialTheme.typography.headlineMedium)
             when (page) {
                 0 -> {
@@ -122,7 +122,8 @@ internal fun FirstRunSetup(settings: SettingsStore, onRequestMic: () -> Unit,
                         requestNotifications.launch(Manifest.permission.POST_NOTIFICATIONS)
                     }
                 }
-                3 -> {
+                3 -> OnboardingModels { offlineReady = it }
+                4 -> {
                     Text("You can start as a guest. Google sign-in and encrypted Drive backup are optional.",
                         color = PaperKeyText)
                     SettingsCard("Keep a recovery copy") {
@@ -141,8 +142,9 @@ internal fun FirstRunSetup(settings: SettingsStore, onRequestMic: () -> Unit,
         }
         Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(12.dp)) {
             if (page > 0) OutlinedButton({ page-- }) { Text("Back") }
-            Button(onClick = { if (page < 3) page++ else finish(onFinish) }, modifier = Modifier.weight(1f)) {
-                Text(if (page == 3) "Start using Monolog" else "Continue")
+            Button(onClick = { if (page < 4) page++ else finish(onFinish) },
+                enabled = page != 3 || offlineReady, modifier = Modifier.weight(1f)) {
+                Text(if (page == 4) "Start using Monolog" else "Continue")
             }
         }
     }

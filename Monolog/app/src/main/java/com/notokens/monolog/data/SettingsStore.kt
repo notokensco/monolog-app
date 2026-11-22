@@ -7,6 +7,7 @@ import androidx.datastore.preferences.core.longPreferencesKey
 import androidx.datastore.preferences.core.edit
 import androidx.datastore.preferences.core.emptyPreferences
 import androidx.datastore.preferences.core.stringPreferencesKey
+import androidx.datastore.preferences.core.stringSetPreferencesKey
 import androidx.datastore.preferences.preferencesDataStore
 import java.io.IOException
 import kotlinx.coroutines.ExperimentalCoroutinesApi
@@ -62,6 +63,50 @@ class SettingsStore(private val context: Context) {
     private val reduceTransparencyKey = booleanPreferencesKey("reduce_transparency")
     private val quickShortcutOrderKey = stringPreferencesKey("quick_shortcut_order")
     private val preferences = context.monologSettings.data
+    private val smartToneKey = booleanPreferencesKey("smart_tone")
+    private val clipboardKey = booleanPreferencesKey("keyboard_clipboard")
+    private val hiddenDashboardKey = stringSetPreferencesKey("hidden_dashboard_tiles")
+    val keyboardClipboard = preferences.map { it[clipboardKey] ?: false }.distinctUntilChanged()
+    val hiddenDashboardTiles = preferences.map { it[hiddenDashboardKey].orEmpty() }.distinctUntilChanged()
+    val keyboardIncognitoUntil = preferences.map { it[incognitoUntilKey] ?: 0L }.distinctUntilChanged()
+
+    suspend fun setKeyboardClipboard(enabled: Boolean) {
+        context.monologSettings.edit { it[clipboardKey] = enabled }
+    }
+
+    suspend fun setDashboardTileVisible(id: String, visible: Boolean) {
+        context.monologSettings.edit {
+            val hidden = it[hiddenDashboardKey].orEmpty()
+            it[hiddenDashboardKey] = if (visible) hidden - id else hidden + id
+        }
+    }
+
+    private val personalWordsKey = stringSetPreferencesKey("personal_dictionary")
+    val smartTone = preferences.map { it[smartToneKey] ?: false }.distinctUntilChanged()
+    val personalWords = preferences.map { it[personalWordsKey].orEmpty() }.distinctUntilChanged()
+
+    suspend fun setSmartTone(value: Boolean) {
+        context.monologSettings.edit { it[smartToneKey] = value }
+    }
+
+    suspend fun addPersonalWord(input: String): Boolean {
+        val word = input.trim()
+        if (word.length !in 2..24 || !Regex("""[\p{L}\p{M}]+(?:['’-][\p{L}\p{M}]+)*""").matches(word)) return false
+        var accepted = false
+        context.monologSettings.edit {
+            val words = it[personalWordsKey].orEmpty()
+            val existing = words.firstOrNull { item -> item.equals(word, ignoreCase = true) }
+            if (existing != null || words.size < 500) {
+                it[personalWordsKey] = (words - setOfNotNull(existing)) + word
+                accepted = true
+            }
+        }
+        return accepted
+    }
+
+    suspend fun removePersonalWord(word: String) {
+        context.monologSettings.edit { it[personalWordsKey] = it[personalWordsKey].orEmpty() - word }
+    }
 
     @OptIn(ExperimentalCoroutinesApi::class)
     val incognito: Flow<Boolean> = preferences.map {

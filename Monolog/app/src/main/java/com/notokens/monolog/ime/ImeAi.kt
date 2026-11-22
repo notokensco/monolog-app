@@ -39,13 +39,15 @@ internal class ImeAi(
     private val canUse: () -> Boolean,
     private val proactiveAllowed: () -> Boolean = { true },
     private val automaticNetworkAllowed: () -> Boolean = { true },
+    private val activePackage: () -> String = { "" },
     private val onTextApplied: (String?, String) -> Unit = { _, _ -> }
 ) {
     private data class Draft(val text: String, val selected: Boolean, val afterCursor: Int = 0)
     var hasDraft by mutableStateOf(false)
         private set
-    var suggestions by mutableStateOf(emptyList<WordSuggestion>())
-        private set
+    private var wordSuggestions by mutableStateOf(emptyList<WordSuggestion>())
+    private var swipeAlternatives by mutableStateOf(emptyList<WordSuggestion>())
+    val suggestions get() = swipeAlternatives.ifEmpty { wordSuggestions }
     var shortcutSuggestion by mutableStateOf<ShortcutSuggestion?>(null)
         private set
     private var suggestionJob: Job? = null
@@ -95,7 +97,8 @@ internal class ImeAi(
         expectedCursor = null
         suggestionJob?.cancel()
         hasDraft = false
-        suggestions = emptyList()
+        wordSuggestions = emptyList()
+        swipeAlternatives = emptyList()
         shortcutSuggestion = null
         lookup?.cancel()
         toolbar = null
@@ -127,7 +130,8 @@ internal class ImeAi(
         if (value.isNotBlank()) hasDraft = true
         toolbar = null
         toolbarDraft = null
-        suggestions = emptyList()
+        wordSuggestions = emptyList()
+        swipeAlternatives = emptyList()
         shortcutSuggestion = null
         refreshDraft(typing = true)
     }
@@ -145,10 +149,15 @@ internal class ImeAi(
             shortcutSuggestion = ShortcutSuggestions.detect(selected.ifBlank { before })
             if (typing && selected.isEmpty()) suggest(before.substringAfterLast('\n'), replaceTypedDraft = true)
             val language = settings.keyboardLanguage.first()
-            suggestions = if (selected.isEmpty() && (language == "en" || language == "hi-Latn")) {
-                dictionary.suggest(before, hinglish = language == "hi-Latn")
+            wordSuggestions = if (selected.isEmpty()) {
+                dictionary.suggest(before, language)
             } else emptyList()
         }
+    }
+
+    fun offerSwipeAlternatives(typed: String, alternatives: List<String>) {
+        if (!canUse() || alternatives.isEmpty()) return
+        swipeAlternatives = alternatives.map { WordSuggestion(typed, "$it ") }
     }
 
     fun applyWord(suggestion: WordSuggestion) {
@@ -190,9 +199,35 @@ internal class ImeAi(
         val forecast = AiText.weatherLookup(text)
         val question = AiText.proactiveQuestion(text)
         if (forecast == null && question == null) {
-            if (replaceTypedDraft) AiText.inlinePolish(text)?.let {
-                toolbar = AiPreview(it, insertable = true)
-                toolbarDraft = Draft(text, false)
+            if (replaceTypedDraft) {
+                AiText.inlinePolish(text)?.let {
+                    toolbar = AiPreview(it, insertable = true)
+                    toolbarDraft = Draft(text, false)
+                }
+                val packageName = activePackage()
+                val style = com.notokens.monolog.ai.SmartTones.style(packageName)
+                if (style != null && text.length in 20..400 && text.count(Char::isWhitespace) >= 3 &&
+                    automaticNetworkAllowed() && !AiText.isBareFragment(text)) {
+                    lookup = scope.launch {
+                        delay(1_100)
+                        if (!settings.smartTone.first() || settings.incognito.first() || !canUse() ||
+                            activePackage() != packageName || busy || rewriteOpen || askOpen) return@launch
+                        val target = Draft(text, false)
+                        val editor = connection() ?: return@launch
+                        if (!matches(editor, target)) return@launch
+                        try {
+                            val result = RewritePipeline.smartTone(context, text, style) ?: return@launch
+                            if (!canUse() || settings.incognito.first() || connection() !== editor ||
+                                activePackage() != packageName || !matches(editor, target)) return@launch
+                            toolbar = result
+                            toolbarDraft = target
+                        } catch (cancelled: CancellationException) {
+                            throw cancelled
+                        } catch (_: Exception) {
+                            // Retain the ordinary keyboard suggestions when the local model is unavailable.
+                        }
+                    }
+                }
             }
             return
         }

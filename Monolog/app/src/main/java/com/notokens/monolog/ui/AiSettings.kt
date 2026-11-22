@@ -84,6 +84,10 @@ internal fun AiSettings() {
     }
     LaunchedEffect(Unit) { refreshNano() }
 
+    if (remember { com.notokens.monolog.ime.vox.OfflineWhisper.available }) {
+        OfflineVoxSettings()
+    }
+
     SettingsCard("Gemini Nano") {
         Text("Used automatically when available. Android manages its model downloads.",
             color = PaperKeySubText, style = MaterialTheme.typography.bodySmall)
@@ -122,24 +126,9 @@ internal fun AiSettings() {
         if (statusMessage.isNotBlank()) Text(statusMessage, color = PaperKeySubText)
     }
 
-    SettingsCard(ModelStore.DISPLAY_NAME) {
-        Text("Offline model for devices without Nano. Download: ${ModelStore.DOWNLOAD_SIZE}.",
-            color = PaperKeySubText, style = MaterialTheme.typography.bodySmall)
-        if (lowRam) Text("This device may run the model slowly.", color = PaperKeySubText)
-        if (!supportsLocal) Text("Gemma needs a supported 64-bit device.", color = PaperKeySubText)
-        when (val current = state) {
-            ModelState.Missing -> Button(store::download, enabled = supportsLocal) { Text("Download Gemma") }
-            ModelState.Ready -> Text("Downloaded · Ready for offline use", color = PaperKeyText)
-            is ModelState.Downloading -> {
-                Text("Downloading ${current.percent}%", color = PaperKeySubText)
-                LinearProgressIndicator(progress = { current.percent / 100f }, modifier = Modifier.fillMaxWidth())
-            }
-            is ModelState.Failed -> {
-                Text(current.message, color = MaterialTheme.colorScheme.error)
-                TextButton(store::download, enabled = supportsLocal) { Text("Retry download") }
-            }
-        }
-        TextButton({ uriHandler.openUri("https://gemma.ai/resources/terms/") }) { Text("Gemma Terms of Use") }
+    if (supportsLocal) {
+        TextModelPicker(store)
+        if (lowRam) Text("Larger text models may run slowly on this device.", color = PaperKeySubText)
     }
 
     if (BuildConfig.DEBUG || state is ModelState.Ready) {
@@ -158,16 +147,16 @@ internal fun AiSettings() {
                 scope.launch {
                     try {
                         val elapsed = LocalAi.benchmark(context)
-                        testMessage = elapsed?.let { "Gemma sample answer took $it ms." } ?: "The speed check timed out."
+                        testMessage = elapsed?.let { "The sample answer took $it ms." } ?: "The speed check timed out."
                     } catch (error: CancellationException) {
                         throw error
                     } catch (_: Exception) {
-                        testMessage = "Gemma could not run on this device."
+                        testMessage = "The offline text model could not run on this device."
                     } finally {
                         testing = false
                     }
                 }
-            }) { Text("Run Gemma speed check") }
+            }) { Text("Run text model speed check") }
             gemmaStatus?.let { Text(it, color = PaperKeySubText, style = MaterialTheme.typography.bodySmall) }
             if (testing) Text("Running check…", color = PaperKeySubText)
             if (testMessage.isNotBlank()) Text(testMessage, color = PaperKeySubText)
@@ -270,4 +259,44 @@ internal fun LanguageSettings(settings: SettingsStore) {
     }
     Text("Translation packs run on this device.", color = PaperKeySubText, style = MaterialTheme.typography.bodySmall)
     if (message.isNotEmpty()) Text(message)
+}
+
+@Composable
+internal fun OfflineVoxSettings(onReady: (Boolean) -> Unit = {}) {
+    val context = LocalContext.current.applicationContext
+    val scope = rememberCoroutineScope()
+    val whisper = com.notokens.monolog.ime.vox.OfflineWhisper
+    var ready by remember { mutableStateOf(whisper.ready(context)) }
+    var working by remember { mutableStateOf(false) }
+    var progress by remember { mutableStateOf(0) }
+    var message by remember { mutableStateOf<String?>(null) }
+    LaunchedEffect(ready) { onReady(ready) }
+    SettingsCard("Offline Vox") {
+        Text(
+            if (ready) "Whisper Small is ready. Stop dictation or a voice note to transcribe it on this device."
+            else "Download Whisper Small (190 MB) for offline dictation and voice notes.",
+            color = PaperKeySubText
+        )
+        TextButton(enabled = !working, onClick = {
+            working = true
+            progress = 0
+            message = null
+            scope.launch {
+                try {
+                    if (ready) whisper.remove(context) else whisper.download(context) { progress = it }
+                    ready = whisper.ready(context)
+                } catch (cancelled: CancellationException) {
+                    throw cancelled
+                } catch (_: Exception) {
+                    message = if (ready) "Could not remove the model." else "Could not download and verify the model."
+                } finally {
+                    working = false
+                }
+            }
+        }) { Text(if (working) "Working…" else if (ready) "Remove model" else "Download model") }
+        if (working && !ready) {
+            LinearProgressIndicator(progress = { progress / 100f }, modifier = Modifier.fillMaxWidth())
+        }
+        message?.let { Text(it, color = MaterialTheme.colorScheme.error) }
+    }
 }

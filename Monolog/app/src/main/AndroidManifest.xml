@@ -85,6 +85,11 @@
             android:name=".memory.BriefSummarizerService"
             android:exported="false"
             android:process=":journal_brief" />
+
+        <service
+            android:name=".ime.vox.WhisperTranscriptionService"
+            android:exported="false"
+            android:process=":vox_transcription" />
         <receiver android:name=".reminders.ReminderReceiver" android:exported="false" />
         <receiver android:name=".reminders.ReminderRescheduleReceiver" android:exported="true">
             <intent-filter>
