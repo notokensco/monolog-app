@@ -211,7 +211,6 @@ fun CompanionApp(
                     composable("onboarding") {
                         FirstRunSetup(settings, onRequestMicPermission,
                             onFinish = { finishSetup("today") },
-                            onAccount = { finishSetup(SettingsPage.ACCOUNT.route) },
                             onModels = { finishSetup(SettingsPage.MODELS.route) },
                             onMemory = { finishSetup(SettingsPage.MEMORY.route) })
                     }
@@ -254,6 +253,7 @@ fun CompanionApp(
                                     }
                                 })
                         }) {
+                            JournalMemoryPrompt()
                             answer?.let { reply ->
                                 Column(Modifier.fillMaxWidth().glassSurface(24).padding(16.dp),
                                     verticalArrangement = Arrangement.spacedBy(6.dp)) {
@@ -331,6 +331,7 @@ fun CompanionApp(
                             JournalAskBar(query, { query = it }, "Ask about your days\u2026", searchField,
                                 answering, { nav.navigate("note/new") }, { askRequest++ })
                         }) {
+                            item(key = "journal-memory-opt-in") { JournalMemoryPrompt() }
                             item(contentType = "memory") {
                                 MemoryJournal(
                                     onOpenNote = { nav.navigate("note/$it") },
@@ -634,6 +635,9 @@ fun CompanionApp(
                                     SettingsLink(SettingsPage.CAPTURE) { nav.navigate(it.route) }
                                     SettingsLink(SettingsPage.PRIVACY) { nav.navigate(it.route) }
                                 }
+                                SettingsCard("Monolog") {
+                                    SettingsLink(SettingsPage.ABOUT) { nav.navigate(it.route) }
+                                }
                             }
                         }
                     }
@@ -643,6 +647,7 @@ fun CompanionApp(
                         Screen(page.title, onBack = navigateBack) {
                             Column(verticalArrangement = Arrangement.spacedBy(14.dp)) {
                                 when (page) {
+                                    SettingsPage.ABOUT -> AboutSettings()
                                     SettingsPage.ACCOUNT -> AccountBackupSettings()
                                     SettingsPage.MEMORY -> MemorySettings()
                                     SettingsPage.APPEARANCE -> {
@@ -723,6 +728,8 @@ fun CompanionApp(
                                         val autocorrect by settings.autocorrect.collectAsState(initial = true)
                                         val swipeTyping by settings.swipeTyping.collectAsState(initial = true)
                                         val longPressCharacters by settings.longPressCharacters.collectAsState(initial = true)
+                                        val vibrationHaptics by settings.vibrationHaptics.collectAsState(initial = true)
+                                        val keyLongPressMs by settings.keyLongPressMs.collectAsState(initial = 350)
                                         SettingsCard("Typing") {
                                             Row(verticalAlignment = Alignment.CenterVertically) {
                                                 Column(Modifier.weight(1f)) {
@@ -748,6 +755,24 @@ fun CompanionApp(
                                                 }
                                                 Switch(checked = longPressCharacters, onCheckedChange = { scope.launch { settings.setLongPressCharacters(it) } },
                                                     modifier = Modifier.semantics { contentDescription = "Long-press numbers and symbols" })
+                                            }
+                                            if (longPressCharacters) {
+                                                Text("Key hold delay · $keyLongPressMs ms", color = muted)
+                                                Slider(
+                                                    value = keyLongPressMs.toFloat(),
+                                                    onValueChange = { value -> scope.launch { settings.setKeyLongPressMs(value.toInt()) } },
+                                                    valueRange = 150f..800f,
+                                                    steps = 12,
+                                                    modifier = Modifier.semantics { contentDescription = "Key hold delay" }
+                                                )
+                                            }
+                                            Row(verticalAlignment = Alignment.CenterVertically) {
+                                                Column(Modifier.weight(1f)) {
+                                                    Text("Vibration haptics", color = ink)
+                                                    Text("Vibrate on keypress and long-press gestures.", color = muted, style = MaterialTheme.typography.bodySmall)
+                                                }
+                                                Switch(checked = vibrationHaptics, onCheckedChange = { scope.launch { settings.setVibrationHaptics(it) } },
+                                                    modifier = Modifier.semantics { contentDescription = "Vibration haptics" })
                                             }
                                         }
                                         KeyboardBehaviorSettings(settings)
@@ -863,7 +888,8 @@ private enum class SettingsPage(val id: String, val title: String, val summary: 
     LANGUAGES("languages", "Languages & packs", "Layouts and offline translation", Glyph.GLOBE),
     MODELS("models", "On-device AI", "Offline text model downloads", Glyph.BOLT),
     CAPTURE("capture", "Quick Capture", "Screenshot border color", Glyph.CAPTURE),
-    PRIVACY("privacy", "Privacy & data", "Incognito, Web suggestions, and storage", Glyph.SHIELD);
+    PRIVACY("privacy", "Privacy & data", "Incognito, Web suggestions, and storage", Glyph.SHIELD),
+    ABOUT("about", "About Monolog", "NoTokens, policy, terms, and acknowledgments", Glyph.INFO);
 
     val route get() = "settings/$id"
 }

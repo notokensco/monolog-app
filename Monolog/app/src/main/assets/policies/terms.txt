@@ -1,0 +1,26 @@
+Monolog Terms of Use
+Last updated 23 November 2026
+
+These terms cover Monolog, the Android app and official website provided by NoTokens. Questions about these terms can be sent to monolog@notokens.co.
+
+Using Monolog
+
+Use Monolog lawfully and capture, record or share content only when you have the necessary rights and permissions. You retain your rights in your content. When you ask Monolog to process, share or back up that content, you authorize use of the content to carry out that request. See the Monolog Privacy Policy for how personal information is handled.
+
+Ownership and third-party materials
+
+NoTokens retains its rights in the Monolog brand, original application code, design and authored content. Third-party software, data, fonts and models remain subject to their own terms. These terms leave intact the rights and obligations of the applicable third-party licenses. Notices are available in Settings → About Monolog.
+
+Model terms and AI results
+
+If you download or use a feature powered by a Gemma model, you agree to follow the use restrictions in Section 3.2 of the Gemma Terms of Use, including the Gemma Prohibited Use Policy. You must not use those models for purposes prohibited by those terms or by applicable law. Copies of the model terms and notices are available in the app.
+
+AI answers, transcriptions, rewrites and summaries can contain errors. Check information before sending it or relying on it. Optional functions that depend on external services can change with the availability of those services.
+
+Subscriptions and billing
+
+Subscriptions are planned. For a subscription purchased through Google Play, the purchase screen will show the included features, price, billing period, renewal and any trial terms. Google Play processes payments. An auto-renewing subscription renews according to the terms shown at purchase until canceled. You can manage or cancel it in Google Play under Payments & subscriptions. Refunds follow Google Play's applicable refund policy and your statutory rights.
+
+Support and consumer rights
+
+For help with Monolog, contact monolog@notokens.co. These terms preserve any rights you have under applicable consumer law.

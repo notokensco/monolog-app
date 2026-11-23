@@ -1,0 +1,24 @@
+Third-party acknowledgments
+
+The following software, content, or services support features in Monolog. Their inclusion does not imply endorsement by the copyright holders.
+
+AndroidX and Jetpack components, Material Components, Kotlin and Kotlin coroutines. Apache License 2.0. https://developer.android.com/jetpack/androidx · https://kotlinlang.org/
+LiteRT-LM, MediaPipe Tasks, OkHttp and Okio. Apache License 2.0. https://github.com/google-ai-edge/LiteRT-LM · https://github.com/google-ai-edge/mediapipe · https://square.github.io/okhttp/ · https://square.github.io/okio/
+CommonMark Java. BSD 2-Clause License. https://github.com/commonmark/commonmark-java
+ONNX Runtime. MIT License. https://onnxruntime.ai/
+llama.cpp. MIT License. https://github.com/ggml-org/llama.cpp
+Moonshine Voice and its English Small Streaming model. MIT License. See the separate native dependency notices and source links for the included libraries. https://github.com/moonshine-ai/moonshine
+Udgam Labs Shruti and upstream Cactus Whistle. Apache License 2.0. https://huggingface.co/udgamlabs/Shruti-ONNX
+Qwen3 and Qwen3.5 models by Qwen, using Q4_K_M quantizations distributed by Unsloth. Apache License 2.0. https://huggingface.co/unsloth/Qwen3-0.6B-GGUF · https://huggingface.co/unsloth/Qwen3.5-0.8B-GGUF
+Multilingual MiniLM by Sentence Transformers, using the Xenova quantized ONNX export and tokenizer. Apache License 2.0. https://huggingface.co/sentence-transformers/paraphrase-multilingual-MiniLM-L12-v2 · https://huggingface.co/Xenova/paraphrase-multilingual-MiniLM-L12-v2
+Google's Gemma 3 writing model and Gemma-based MediaPipe Text Summarizer. Gemma Terms of Use. https://ai.google.dev/gemma/terms · https://developers.google.com/edge/mediapipe/solutions/text/text_summarizer
+Noto Emoji and Science Gothic fonts. SIL Open Font License 1.1. https://fonts.google.com/noto · https://github.com/googlefonts/science-gothic
+Unicode emoji data. Unicode License. https://www.unicode.org/license.txt
+English dictionary contributors and the SCOWL project. See the bundled English dictionary notice for source and license terms.
+FLORES-200 and Dakshina. CC BY-SA 4.0. See Indic dictionaries and transliteration for dataset creators, sources and modifications.
+
+Google ML Kit and Google account and Drive services are governed by Google's terms. https://developers.google.com/ml-kit/terms · https://policies.google.com/terms
+Weather data by MET Norway. The forecast is rounded and summarized. Creative Commons Attribution 4.0. https://www.met.no/en · https://creativecommons.org/licenses/by/4.0/
+Wikipedia search excerpts, where used, are attributed to the linked articles under CC BY-SA. https://en.wikipedia.org/wiki/Wikipedia:Copyrights
+
+NoTokens owns the Monolog brand, original product design, application code, and authored content. This ownership is separate from the terms that apply to third-party components.

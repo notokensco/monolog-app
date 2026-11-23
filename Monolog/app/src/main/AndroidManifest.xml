@@ -27,6 +27,11 @@
         android:usesCleartextTraffic="false"
         android:theme="@style/Theme.Monolog">
         <meta-data android:name="firebase_data_collection_default_enabled" android:value="false" />
+        <!-- Both vision and summary SDKs send diagnostics through this transport backend. -->
+        <service android:name="com.google.android.datatransport.runtime.backends.TransportBackendDiscovery">
+            <meta-data android:name="backend:com.google.android.datatransport.cct.CctBackendFactory"
+                tools:node="remove" />
+        </service>
         <provider
             android:name="com.google.mlkit.common.internal.MlKitInitProvider"
             android:authorities="${applicationId}.mlkitinitprovider"

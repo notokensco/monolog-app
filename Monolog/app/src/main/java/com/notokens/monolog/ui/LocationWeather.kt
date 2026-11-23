@@ -9,6 +9,7 @@ import android.location.Location
 import android.location.LocationManager
 import android.os.CancellationSignal
 import android.os.SystemClock
+import android.util.LruCache
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.animation.core.animateFloatAsState
@@ -35,6 +36,9 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalUriHandler
 import androidx.compose.ui.unit.dp
 import androidx.core.content.ContextCompat
+import androidx.lifecycle.Lifecycle
+import androidx.lifecycle.compose.LocalLifecycleOwner
+import androidx.lifecycle.repeatOnLifecycle
 import com.notokens.monolog.data.SettingsStore
 import com.notokens.monolog.ui.theme.PaperKeySubText
 import java.net.URL
@@ -61,62 +65,85 @@ import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
 import kotlinx.coroutines.withTimeoutOrNull
 import kotlinx.coroutines.flow.first
+import org.json.JSONArray
 import org.json.JSONObject
 
 private object LocalForecast {
     data class Forecast(val temperature: Int, val sky: WeatherSky, val place: String,
         val forecastTime: Instant, val updatedAt: Long)
-    private var cached: Forecast? = null
+    private data class CachedForecast(val forecast: Forecast, val response: WeatherResponse)
+    private data class WeatherResponse(val series: JSONArray,
+        val expiresAt: Long, val lastModified: String?)
+    private val cache = LruCache<String, CachedForecast>(8)
+    private var latest: Forecast? = null
     private val mutex = Mutex()
 
     suspend fun fetch(context: Context, force: Boolean): Forecast? = mutex.withLock {
-        val saved = cached
-        if (!force && saved != null && SystemClock.elapsedRealtime() - saved.updatedAt < 30 * 60_000) return@withLock saved
+        val recent = latest
+        if (!force && recent != null && SystemClock.elapsedRealtime() - recent.updatedAt < 30 * 60_000) return@withLock recent
         val location = location(context) ?: return@withLock null
         val lat = "%.2f".format(Locale.US, location.latitude)
         val lon = "%.2f".format(Locale.US, location.longitude)
+        val point = "$lat,$lon"
+        val saved = cache.get(point)
         coroutineScope {
-            val place = async {
+            val place = if (saved == null) async {
                 withTimeoutOrNull(2500) { placeName(context, lat.toDouble(), lon.toDouble()) }
                     ?: "$lat°, $lon°"
-            }
-            val conditions = withContext(Dispatchers.IO) { conditions(lat, lon) }
-            if (conditions == null) {
-                place.cancel()
+            } else null
+            val cachedResponse = saved?.response
+            val response = if (cachedResponse != null && SystemClock.elapsedRealtime() < cachedResponse.expiresAt) {
+                cachedResponse
+            } else withContext(Dispatchers.IO) { fetchForecast(lat, lon, cachedResponse) }
+            if (response == null) {
+                place?.cancel()
                 return@coroutineScope null
             }
-            val (temperature, sky, time) = conditions
-            Forecast(temperature, sky, place.await(), time, SystemClock.elapsedRealtime()).also { cached = it }
+            val forecast = currentForecast(response.series, saved?.forecast?.place ?: checkNotNull(place).await())
+                ?: return@coroutineScope null
+            cache.put(point, CachedForecast(forecast, response))
+            latest = forecast
+            forecast
         }
     }
 
-    private fun conditions(lat: String, lon: String): Triple<Int, WeatherSky, Instant>? {
+    private fun fetchForecast(lat: String, lon: String, saved: WeatherResponse?): WeatherResponse? {
         return try {
             val connection = URL("https://api.met.no/weatherapi/locationforecast/2.0/compact?lat=$lat&lon=$lon")
                 .openConnection() as HttpsURLConnection
             try {
                 connection.connectTimeout = 7000
                 connection.readTimeout = 8000
-                connection.setRequestProperty("User-Agent", "Monolog Android (https://github.com/notokensco/monolog-app)")
-                check(connection.responseCode == 200)
+                connection.setRequestProperty("User-Agent", "Monolog Android monolog@notokens.co")
+                saved?.lastModified?.let { connection.setRequestProperty("If-Modified-Since", it) }
+                val status = connection.responseCode
+                val expiresIn = (connection.expiration - System.currentTimeMillis()).coerceAtLeast(30 * 60_000L)
+                val expiry = SystemClock.elapsedRealtime() + expiresIn
+                val lastModified = connection.getHeaderField("Last-Modified")
+                if (status == 304 && saved != null) {
+                    return saved.copy(expiresAt = expiry, lastModified = lastModified ?: saved.lastModified)
+                }
+                check(status == 200)
                 val root = connection.inputStream.bufferedReader().use { JSONObject(it.readText()) }
-                val series = root.getJSONObject("properties").getJSONArray("timeseries")
-                val now = Instant.now().epochSecond
-                val nearest = (0 until series.length()).asSequence().map { series.getJSONObject(it) }
-                    .map { Instant.parse(it.getString("time")) to it }
-                    .minByOrNull { (time, _) -> abs(time.epochSecond - now) } ?: return null
-                val (time, row) = nearest
-                if (abs(time.epochSecond - now) > 3 * 3600) return null
-                val data = row.getJSONObject("data")
-                val temperature = data.getJSONObject("instant").getJSONObject("details")
-                    .getDouble("air_temperature").roundToInt()
-                val symbol = listOf("next_1_hours", "next_6_hours", "next_12_hours").firstNotNullOfOrNull { key ->
-                    data.optJSONObject(key)?.optJSONObject("summary")?.optString("symbol_code")?.takeIf(String::isNotBlank)
-                }.orEmpty()
-                Triple(temperature, WeatherSky.fromSymbol(symbol), time)
+                WeatherResponse(root.getJSONObject("properties").getJSONArray("timeseries"), expiry, lastModified)
             } finally { connection.disconnect() }
         } catch (_: Exception) { null }
     }
+
+    private fun currentForecast(series: JSONArray, place: String): Forecast? = runCatching {
+        val now = Instant.now().epochSecond
+        val (time, row) = (0 until series.length()).asSequence().map { series.getJSONObject(it) }
+            .map { Instant.parse(it.getString("time")) to it }
+            .minByOrNull { (time, _) -> abs(time.epochSecond - now) } ?: return null
+        if (abs(time.epochSecond - now) > 3 * 3600) return null
+        val data = row.getJSONObject("data")
+        val temperature = data.getJSONObject("instant").getJSONObject("details")
+            .getDouble("air_temperature").roundToInt()
+        val symbol = listOf("next_1_hours", "next_6_hours", "next_12_hours").firstNotNullOfOrNull { key ->
+            data.optJSONObject(key)?.optJSONObject("summary")?.optString("symbol_code")?.takeIf(String::isNotBlank)
+        }.orEmpty()
+        Forecast(temperature, WeatherSky.fromSymbol(symbol), place, time, SystemClock.elapsedRealtime())
+    }.getOrNull()
 
     private suspend fun placeName(context: Context, latitude: Double, longitude: Double): String? =
         suspendCancellableCoroutine { request ->
@@ -185,6 +212,7 @@ internal fun WeatherChip() {
     val enabled by settings.locationWeather.collectAsState(false)
     val private by settings.incognito.collectAsState(false)
     val scope = rememberCoroutineScope()
+    val lifecycle = LocalLifecycleOwner.current.lifecycle
     val browser = LocalUriHandler.current
     var result by remember { mutableStateOf<LocalForecast.Forecast?>(null) }
     var loading by remember { mutableStateOf(false) }
@@ -202,11 +230,13 @@ internal fun WeatherChip() {
         if (permissions.values.any { it }) scope.launch { settings.setLocationWeather(true); refresh(true) }
         else failed = true
     }
-    LaunchedEffect(enabled, private) {
+    LaunchedEffect(enabled, private, lifecycle) {
         if (enabled && !private) {
-            while (true) {
-                refresh(false)
-                delay(30 * 60_000L)
+            lifecycle.repeatOnLifecycle(Lifecycle.State.STARTED) {
+                while (true) {
+                    refresh(false)
+                    delay(30 * 60_000L)
+                }
             }
         } else result = null
     }
@@ -239,6 +269,10 @@ internal fun WeatherChip() {
                     DropdownMenuItem(text = { Text("Weather data by MET Norway") }, onClick = {
                         showAttribution = false
                         browser.openUri("https://www.met.no/en")
+                    })
+                    DropdownMenuItem(text = { Text("CC BY 4.0 · Forecast rounded and summarized") }, onClick = {
+                        showAttribution = false
+                        browser.openUri("https://creativecommons.org/licenses/by/4.0/")
                     })
                 }
             }

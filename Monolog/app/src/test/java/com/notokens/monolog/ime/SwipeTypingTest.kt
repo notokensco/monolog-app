@@ -2,6 +2,7 @@ package com.notokens.monolog.ime
 
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNull
+import org.junit.Assert.assertTrue
 import org.junit.Test
 
 class SwipeTypingTest {
@@ -36,6 +37,16 @@ class SwipeTypingTest {
         assertNull(QwertyLayout.letterAt(SwipePoint(.5f, 3f)))
         assertNull(QwertyLayout.letterAt(SwipePoint(9.5f, 3f)))
         assertEquals('z', QwertyLayout.letterAt(QwertyLayout.center('z')))
+    }
+
+    @Test
+    fun directShortSwipesKeepCommonWordsAndDeliberateTurnsStillCount() {
+        assertTrue("is" in TypingVocabulary.english)
+        val decoder = SwipeDecoder(listOf("is", "ids", "ifs", "its"), TypingVocabulary.english)
+        val direct = listOf(QwertyLayout.center('i'), SwipePoint(5.4f, 1.17f),
+            SwipePoint(3.3f, 1.56f), QwertyLayout.center('s'))
+        assertEquals("is", decoder.decode(direct))
+        assertEquals("its", decoder.decode(trace("its")))
     }
 
     @Test

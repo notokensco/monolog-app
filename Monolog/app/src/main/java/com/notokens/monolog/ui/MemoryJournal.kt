@@ -30,6 +30,19 @@ import androidx.compose.ui.platform.LocalSoftwareKeyboardController
 import androidx.compose.ui.platform.LocalFocusManager
 
 @Composable
+internal fun JournalMemoryPrompt() {
+    val context = LocalContext.current
+    val preferences = remember(context) { MemoryPreferences(context) }
+    val enabled by preferences.enabledChanges.collectAsState(initial = preferences.enabled)
+    if (enabled) return
+    SettingsCard("Turn on Journal memory") {
+        Text("Save meaningful moments from what you type, including unsent drafts. Passwords, protected fields and incognito typing are excluded.",
+            color = PaperKeySubText, style = MaterialTheme.typography.bodySmall)
+        Button(onClick = { preferences.enabled = true }) { Text("Turn on Journal memory") }
+    }
+}
+
+@Composable
 internal fun MemorySettings() {
     val context = LocalContext.current
     val preferences = remember { MemoryPreferences(context) }
@@ -149,7 +162,6 @@ internal fun MemoryJournal(
     val summarizer = remember { BriefModelStore.get(context) }
     val modelState by summarizer.state.collectAsState()
     val modelReady = modelState is com.notokens.monolog.ai.ModelState.Ready
-    val uriHandler = androidx.compose.ui.platform.LocalUriHandler.current
     var refreshRecap by remember { mutableIntStateOf(0) }
     var lastRefresh by remember { mutableIntStateOf(0) }
     var buildingRecap by remember { mutableStateOf(false) }
@@ -225,8 +237,7 @@ internal fun MemoryJournal(
                         if (state is com.notokens.monolog.ai.ModelState.Failed) {
                             Text(state.message, color = PaperKeySubText, style = MaterialTheme.typography.labelSmall)
                         }
-                        TextButton(summarizer::download) { Text("Download LiteRT summarizer (118 MB)") }
-                        TextButton({ uriHandler.openUri("https://ai.google.dev/gemma/terms") }) { Text("Model terms") }
+                        GemmaDownloadButton("Download AI summarizer (118 MB)", download = summarizer::download)
                     }
                 }
             }

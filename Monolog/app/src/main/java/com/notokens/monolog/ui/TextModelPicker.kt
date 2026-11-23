@@ -3,6 +3,7 @@ package com.notokens.monolog.ui
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
@@ -10,6 +11,9 @@ import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.saveable.rememberSaveable
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalUriHandler
@@ -60,8 +64,11 @@ internal fun TextModelPicker(store: ModelStore) {
                         color = PaperKeySubText, style = MaterialTheme.typography.bodySmall)
                 }
                 if (model != active && supported) {
-                    TextButton(onClick = { store.download(model) }, enabled = target == null) {
-                        Text(if (model == target) "Downloading…" else "Download")
+                    val label = if (model == target) "Downloading…" else "Download"
+                    if (model == TextModel.GEMMA) {
+                        GemmaDownloadButton(label, enabled = target == null) { store.download(model) }
+                    } else {
+                        TextButton(onClick = { store.download(model) }, enabled = target == null) { Text(label) }
                     }
                 }
                 TextButton({ browser.openUri(model.licenseUrl) }) { Text("Terms") }
@@ -72,5 +79,34 @@ internal fun TextModelPicker(store: ModelStore) {
             LinearProgressIndicator(progress = { current.percent / 100f }, modifier = Modifier.fillMaxWidth())
         }
         error?.let { Text(it, color = MaterialTheme.colorScheme.error) }
+    }
+}
+
+@Composable
+internal fun GemmaDownloadButton(label: String, enabled: Boolean = true, download: () -> Unit) {
+    val browser = LocalUriHandler.current
+    var showTerms by rememberSaveable { mutableStateOf(false) }
+    TextButton(onClick = { showTerms = true }, enabled = enabled) { Text(label) }
+    if (showTerms) {
+        AlertDialog(
+            onDismissRequest = { showTerms = false },
+            title = { Text("Gemma model terms") },
+            text = {
+                Column {
+                    Text("By continuing, you agree to the Gemma Terms of Use, including the use restrictions in Section 3.2 and the Gemma Prohibited Use Policy.")
+                    TextButton({ browser.openUri("https://gemma.ai/resources/terms/") }) { Text("Read terms") }
+                    TextButton({ browser.openUri("https://gemma.ai/resources/prohibited-use/") }) {
+                        Text("Read prohibited use policy")
+                    }
+                }
+            },
+            confirmButton = {
+                TextButton({
+                    showTerms = false
+                    download()
+                }) { Text("Agree and download") }
+            },
+            dismissButton = { TextButton({ showTerms = false }) { Text("Cancel") } }
+        )
     }
 }

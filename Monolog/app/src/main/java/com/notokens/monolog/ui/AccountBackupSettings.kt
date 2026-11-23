@@ -55,7 +55,7 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.tasks.await
 
 @Composable
-internal fun AccountBackupSettings() {
+internal fun AccountBackupSettings(onboarding: Boolean = false) {
     val context = LocalContext.current
     val store = remember { BackupAccountStore.get(context) }
     val account by store.state.collectAsState()
@@ -204,6 +204,7 @@ internal fun AccountBackupSettings() {
             Text("Drive connected", color = PaperKeyText)
             Text(if (account.lastBackup == 0L) "No successful backup yet" else "Last backup · ${formatTime(account.lastBackup)}",
                 color = PaperKeySubText, style = MaterialTheme.typography.bodySmall)
+            if (onboarding) return@SettingsCard
             Button(enabled = !busy && (account.journal || account.context), onClick = {
                 run { prepareBackup() }
             }) { Text("Back up now") }

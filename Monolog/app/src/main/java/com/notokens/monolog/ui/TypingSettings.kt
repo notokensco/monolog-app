@@ -37,11 +37,15 @@ internal fun KeyboardBehaviorSettings(settings: SettingsStore) {
     val popups by settings.keyPopups.collectAsState(false)
     val popupMs by settings.keyPopupMs.collectAsState(70)
     val height by settings.keyHeightPercent.collectAsState(100)
+    val vibrationHaptics by settings.vibrationHaptics.collectAsState(true)
+    val keyHoldMs by settings.keyLongPressMs.collectAsState(350)
     val savedTriggers by settings.sensitiveWords.collectAsState("")
     var triggers by remember(savedTriggers) { mutableStateOf(savedTriggers) }
     var previewHeight by remember(height) { mutableIntStateOf(height) }
     var previewDelay by remember(popupMs) { mutableIntStateOf(popupMs) }
+    var previewKeyHoldMs by remember(keyHoldMs) { mutableIntStateOf(keyHoldMs) }
     SettingsCard("Keyboard layout") {
+        KeyboardSwitch("Vibration haptics", vibrationHaptics) { scope.launch { settings.setVibrationHaptics(it) } }
         KeyboardSwitch("Android spell checker", spellCheck) { scope.launch { settings.setSystemSpellChecker(it) } }
         if (spellCheck) Text("Offers extra corrections from the spell checker selected in Android settings. Private fields stay local to Monolog.",
             color = PaperKeySubText, style = MaterialTheme.typography.bodySmall)
@@ -60,6 +64,10 @@ internal fun KeyboardBehaviorSettings(settings: SettingsStore) {
         Slider(previewHeight.toFloat(), { previewHeight = it.roundToInt() },
             onValueChangeFinished = { scope.launch { settings.setKeyHeightPercent(previewHeight) } },
             valueRange = 75f..125f, steps = 9)
+        Text("Key hold delay · $previewKeyHoldMs ms")
+        Slider(previewKeyHoldMs.toFloat(), { previewKeyHoldMs = it.roundToInt() },
+            onValueChangeFinished = { scope.launch { settings.setKeyLongPressMs(previewKeyHoldMs) } },
+            valueRange = 150f..800f, steps = 12)
     }
     SettingsCard("Sensitive drafts") {
         Text("Matching drafts stay out of saved memory. Separate your own trigger words or phrases with commas.",

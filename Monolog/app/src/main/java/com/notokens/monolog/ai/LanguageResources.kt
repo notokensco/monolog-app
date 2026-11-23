@@ -28,11 +28,12 @@ internal data class KeyboardLanguage(
     val speechTag: String,
     val script: IntRange? = null,
     val letterRows: List<String>? = null,
-    val alternateLetters: Map<Char, String> = emptyMap()
+    val alternateLetters: Map<Char, String> = emptyMap(),
+    val transliterationTarget: String? = null
 ) {
-    val supportsLatinSwipe get() = id == "en" || id == "hi-Latn" || letterRows != null
+    val supportsLatinSwipe get() = id == "en" || id == "hi-Latn" || letterRows != null || transliterationTarget != null
     val translationCode: String?
-        get() = if (id == "en" || id == "hi-Latn") null else TranslateLanguage.fromLanguageTag(id)
+        get() = if (id == "en" || id == "hi-Latn") null else TranslateLanguage.fromLanguageTag(transliterationTarget ?: id)
 
     fun nativeKeys(): List<String> = script?.mapNotNull { point ->
         val category = Character.getType(point)
@@ -41,21 +42,32 @@ internal data class KeyboardLanguage(
     }.orEmpty()
 
     companion object {
-        val all = listOf(
+        private val nativeAndLatin = listOf(
             KeyboardLanguage("en", "English (India)", "en-IN"),
-            KeyboardLanguage("hi", "Hindi · हिन्दी", "hi-IN", 0x0901..0x094d),
+            KeyboardLanguage("hi", "Hindi · हिन्दी", "hi-IN", 0x0900..0x097f),
             KeyboardLanguage("hi-Latn", "Hinglish · Romanized Hindi", "hi-IN"),
             KeyboardLanguage("bn", "Bengali · বাংলা", "bn-IN", 0x0981..0x09cd),
             KeyboardLanguage("as", "Assamese · অসমীয়া", "as-IN", 0x0981..0x09f1),
             KeyboardLanguage("gu", "Gujarati · ગુજરાતી", "gu-IN", 0x0a81..0x0acd),
             KeyboardLanguage("kn", "Kannada · ಕನ್ನಡ", "kn-IN", 0x0c81..0x0ccd),
             KeyboardLanguage("ml", "Malayalam · മലയാളം", "ml-IN", 0x0d02..0x0d4d),
-            KeyboardLanguage("mr", "Marathi · मराठी", "mr-IN", 0x0901..0x094d),
+            KeyboardLanguage("mr", "Marathi · मराठी", "mr-IN", 0x0900..0x097f),
             KeyboardLanguage("or", "Odia · ଓଡ଼ିଆ", "or-IN", 0x0b01..0x0b4d),
             KeyboardLanguage("pa", "Punjabi · ਪੰਜਾਬੀ", "pa-IN", 0x0a01..0x0a4d),
             KeyboardLanguage("ta", "Tamil · தமிழ்", "ta-IN", 0x0b82..0x0bcd),
             KeyboardLanguage("te", "Telugu · తెలుగు", "te-IN", 0x0c01..0x0c4d),
             KeyboardLanguage("ur", "Urdu · اردو", "ur-IN", 0x0621..0x06d3),
+            KeyboardLanguage("brx", "Bodo · बर’", "brx-IN", 0x0900..0x097f),
+            KeyboardLanguage("doi", "Dogri · डोगरी", "doi-IN", 0x0900..0x097f),
+            KeyboardLanguage("ks", "Kashmiri · کٲشُر", "ks-IN", 0x0621..0x06d3),
+            KeyboardLanguage("kok", "Konkani · कोंकणी", "kok-IN", 0x0900..0x097f),
+            KeyboardLanguage("mai", "Maithili · मैथिली", "mai-IN", 0x0900..0x097f),
+            KeyboardLanguage("mni", "Manipuri · ꯃꯤꯇꯩ ꯂꯣꯟ", "mni-IN", 0xabc0..0xabef),
+            KeyboardLanguage("mni-Beng", "Manipuri · মৈতৈ লোন্", "mni-IN", 0x0981..0x09f1),
+            KeyboardLanguage("ne", "Nepali · नेपाली", "ne-IN", 0x0900..0x097f),
+            KeyboardLanguage("sa", "Sanskrit · संस्कृतम्", "sa-IN", 0x0900..0x097f),
+            KeyboardLanguage("sat", "Santali · ᱥᱟᱱᱛᱟᱲᱤ", "sat-IN", 0x1c5a..0x1c7f),
+            KeyboardLanguage("sd", "Sindhi · سنڌي", "sd-IN", 0x0621..0x06d3),
             KeyboardLanguage("de", "German · Deutsch", "de-DE",
                 letterRows = listOf("qwertzuiop", "asdfghjkl", "yxcvbnm"),
                 alternateLetters = mapOf('a' to "ä", 'o' to "ö", 'u' to "ü", 's' to "ß")),
@@ -66,6 +78,12 @@ internal data class KeyboardLanguage(
                 letterRows = listOf("azertyuiop", "qsdfghjklm", "wxcvbn'"),
                 alternateLetters = mapOf('a' to "àâæ", 'e' to "éèêë", 'i' to "îï", 'o' to "ôœ", 'u' to "ùûü", 'c' to "ç", 'y' to "ÿ"))
         )
+
+        val all = nativeAndLatin + nativeAndLatin.filter { it.script != null }.map { native ->
+            val phoneticId = if (native.id == "hi") "hi-phonetic" else native.id + "-phonetic"
+            KeyboardLanguage(phoneticId, native.label.substringBefore(" · ") + " · type in Latin",
+                native.speechTag, transliterationTarget = native.id)
+        }
 
         fun of(id: String): KeyboardLanguage = all.find { it.id == id } ?: all.first()
     }

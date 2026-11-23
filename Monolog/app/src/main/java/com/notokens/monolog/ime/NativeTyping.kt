@@ -41,20 +41,49 @@ internal object NativeTyping {
         } catch (_: java.io.IOException) {
             return null
         }
+        val everydayEnglish = if (lexicon == Lexicon.ENGLISH || lexicon == Lexicon.HINGLISH) {
+            readCommonWords(context, "typing/indic/flores-en.tsv", 380)
+        } else ""
+        val commonHinglish = if (lexicon == Lexicon.HINGLISH) {
+            readRomanizedHindi(context)
+        } else ""
         val preferred = when (lexicon) {
             Lexicon.ENGLISH -> TypingVocabulary.english.joinToString(" ")
-            Lexicon.HINGLISH -> TypingVocabulary.hinglish.joinToString(" ")
+            Lexicon.HINGLISH -> TypingVocabulary.hinglish.joinToString(" ") + " " + commonHinglish
             else -> ""
         }
         val secondary = when (lexicon) {
-            Lexicon.ENGLISH -> TypingVocabulary.hinglish.joinToString(" ")
-            Lexicon.HINGLISH -> TypingVocabulary.english.joinToString(" ")
+            Lexicon.ENGLISH -> TypingVocabulary.hinglish.joinToString(" ") + " " + everydayEnglish
+            Lexicon.HINGLISH -> TypingVocabulary.english.joinToString(" ") + " " + everydayEnglish
             else -> ""
         }
         if (!installLexicon(lexicon.ordinal, corpus, preferred, secondary)) return null
         loaded += lexicon
         return lexicon
     }
+
+    private fun readCommonWords(context: Context, path: String, limit: Int): String =
+        runCatching {
+            context.assets.open(path).bufferedReader().useLines { rows ->
+                rows.filterNot { it.startsWith('#') }.mapNotNull { row ->
+                    val columns = row.split('\t')
+                    columns.firstOrNull()?.takeIf { columns.size == 2 && it.length in 2..24 &&
+                        it.all { char -> char in 'a'..'z' || char == '\'' } }
+                }.take(limit).joinToString(" ")
+            }
+        }.getOrDefault("")
+
+    private fun readRomanizedHindi(context: Context): String = runCatching {
+        val frequency = context.assets.open("typing/indic/flores-hi.tsv").bufferedReader().useLines { rows ->
+            rows.map { it.split('\t') }.filter { it.size == 2 }.associate { it[0] to (it[1].toIntOrNull() ?: 0) }
+        }
+        context.assets.open("typing/indic/dakshina-hi.tsv").bufferedReader().useLines { rows ->
+            rows.map { it.split('\t') }.filter { it.size == 3 && it[0].length in 2..24 }
+                .sortedWith(compareByDescending<List<String>> { frequency[it[1]] ?: 0 }
+                    .thenByDescending { it[2].toIntOrNull() ?: 0 })
+                .map { it[0] }.distinct().take(260).joinToString(" ")
+        }
+    }.getOrDefault("")
 
     fun suggestions(context: Context, language: String, prefix: String, before: String, next: List<String>): Candidates? {
         val lexicon = ready(context, language) ?: return null

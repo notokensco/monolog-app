@@ -61,7 +61,13 @@ import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 
-internal data class KeyAppearance(val borders: Boolean = false, val popups: Boolean = false, val popupMs: Int = 70)
+internal data class KeyAppearance(
+    val borders: Boolean = false,
+    val popups: Boolean = false,
+    val popupMs: Int = 70,
+    val vibration: Boolean = true,
+    val longPressMs: Int = 350
+)
 class CursorDrag(val start: () -> Unit, val move: (Int) -> Unit, val end: () -> Unit)
 
 internal data class CursorKeys(
@@ -72,8 +78,10 @@ internal data class CursorKeys(
 internal val LocalCursorKeys = staticCompositionLocalOf { CursorKeys() }
 internal val LocalPreviewOnly = staticCompositionLocalOf { false }
 internal val LocalKeyAppearance = staticCompositionLocalOf { KeyAppearance() }
+internal val LocalVibrationHaptics = staticCompositionLocalOf { true }
 
-internal fun triggerHapticFeedback(view: View, isLong: Boolean = false) {
+internal fun triggerHapticFeedback(view: View, isLong: Boolean = false, enabled: Boolean = true) {
+    if (!enabled) return
     view.performHapticFeedback(if (isLong) HapticFeedbackConstants.LONG_PRESS else HapticFeedbackConstants.KEYBOARD_TAP)
 }
 
@@ -201,7 +209,7 @@ fun KeyButton(
                                         val press = Press(legend?.let { KeyPreview.Preview(it, bounds) }, handled = repeatOnHold)
                                         press.preview?.let { controller?.down(press, it, popupDelay) }
                                         presses[change.id] = press
-                                        triggerHapticFeedback(view)
+                                        triggerHapticFeedback(view, enabled = appearance.vibration)
                                         if (repeatOnHold) {
                                             tap()
                                             press.action = launch {
@@ -213,10 +221,10 @@ fun KeyButton(
                                             }
                                         } else if (hold != null || currentDrag != null) {
                                             press.action = launch {
-                                                delay(viewConfiguration.longPressTimeoutMillis)
+                                                delay(appearance.longPressMs.toLong())
                                                 press.handled = true
                                                 controller?.up(press, null)
-                                                triggerHapticFeedback(view, isLong = true)
+                                                triggerHapticFeedback(view, isLong = true, enabled = appearance.vibration)
                                                 press.drag = currentDrag
                                                 if (press.drag != null) press.drag?.start?.invoke()
                                                 else hold?.invoke()

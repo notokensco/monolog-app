@@ -160,6 +160,7 @@ internal fun EmojiShortcutStrip(recent: List<Emoji>, matches: List<Emoji>? = nul
 internal fun EmojiPicker(height: Dp, recent: List<Emoji>, onPick: (Emoji) -> Unit) {
     val context = LocalContext.current
     val view = LocalView.current
+    val vibration = LocalVibrationHaptics.current
     val catalog by produceState(EmojiCatalog.cached) {
         value = withContext(Dispatchers.IO) { EmojiCatalog.read(context.assets) }
     }
@@ -206,7 +207,7 @@ internal fun EmojiPicker(height: Dp, recent: List<Emoji>, onPick: (Emoji) -> Uni
                                     onLongClickLabel = "Choose skin tone",
                                     onLongClick = if (hasTones) ({ toneFor = emoji }) else null
                                 ) {
-                                    triggerHapticFeedback(view)
+                                    triggerHapticFeedback(view, enabled = vibration)
                                     onPick(emoji)
                                     toneFor = null
                                 },

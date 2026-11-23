@@ -80,20 +80,35 @@ internal class SwipeDecoder(words: List<String>, private val commonWords: Set<St
         val samples = trace.samples()
         val startingKeys = near(points.first())
         val endingKeys = near(points.last())
+        val start = points.first()
+        val end = points.last()
+        val chord = sqrt(start.distanceSquared(end))
+        val directness = if (chord < .55f) 0f else {
+            val detour = samples.maxOf {
+                abs((end.x - start.x) * (it.y - start.y) - (end.y - start.y) * (it.x - start.x)) / chord
+            }
+            (1f - detour / .50f).coerceIn(0f, 1f)
+        }
         var bestWord: String? = null
         var bestCost = 1.05f
         for ((first, startCost) in startingKeys) {
             for ((last, endCost) in endingKeys) {
-                for (word in candidates[first to last].orEmpty()) {
-                    val template = SwipePath(word.mapNotNull { it.takeIf { it != '\'' }?.let(QwertyLayout::center) })
+                val words = candidates[first to last].orEmpty()
+                val extraKeyCost = if (startCost + endCost <= .8f && directness > 0f &&
+                    words.any { word -> word.count { it != '\'' } == 2 }) .16f * directness else 0f
+                for (word in words) {
+                    val keys = word.mapNotNull { it.takeIf { it != '\'' }?.let(QwertyLayout::center) }
+                    val template = SwipePath(keys)
                     if (template.length < .55f) continue
                     val lengthCost = abs(template.length - trace.length) / (template.length + trace.length)
                     if (lengthCost > .45f) continue
                     val shape = template.samples()
                     var distance = 0f
                     for (i in samples.indices) distance += samples[i].distanceSquared(shape[i])
+                    val extraVisits = keys.zipWithNext().count { (a, b) -> a != b }.minus(1).coerceAtLeast(0)
                     val cost = distance / samples.size + .55f * (startCost + endCost) +
-                        lengthCost * .45f + word.length * .006f - if (word in commonWords) .14f else 0f
+                        lengthCost * .45f + extraKeyCost * extraVisits +
+                        word.length * .006f - if (word in commonWords) .14f else 0f
                     if (cost < bestCost) {
                         bestCost = cost
                         bestWord = word

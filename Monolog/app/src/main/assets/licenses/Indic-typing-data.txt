@@ -1,0 +1,18 @@
+Monolog typing data acknowledgments
+
+FLORES-200 was created by the Meta AI No Language Left Behind project and its translation contributors. Monolog extracts and normalizes single words, counts occurrences and word pairs, drops infrequent entries, and distributes compact derived lists. Source: https://github.com/facebookresearch/flores
+Public distribution: https://dl.fbaipublicfiles.com/nllb/flores200_dataset.tar.gz
+
+The Dakshina Dataset v1.0 was created by Brian Roark, Lawrence Wolf-Sonkin, Christo Kirov, Sabrina J. Mielke, Cibu Johny, Işın Demirşahin and Keith Hall. Monolog normalizes and selects attested Roman-to-native spelling pairs and retains their vote counts in compact tables. Source: https://github.com/google-research-datasets/dakshina
+Paper: https://aclanthology.org/2020.lrec-1.294/
+
+The modified FLORES and Dakshina tables in typing/indic are distributed under Creative Commons Attribution-ShareAlike 4.0 International. https://creativecommons.org/licenses/by-sa/4.0/
+The corresponding license text is included as CC-BY-SA-4.0.txt.
+
+Where available, the keyboard can use the open vocabulary of an installed Shruti speech pack as a supplemental source. See the separate Shruti acknowledgment and Apache 2.0 license in this app.
+
+The authored Meitei Mayek and Ol Chiki fallback spellings refer to the Unicode character charts. The fallback only ranks suggested dictionary forms.
+https://www.unicode.org/charts/PDF/UABC0.pdf
+https://www.unicode.org/charts/PDF/U1C50.pdf
+
+Monolog's proprietary application does not include Gboard or SwiftKey keyboard binaries or dictionary files.

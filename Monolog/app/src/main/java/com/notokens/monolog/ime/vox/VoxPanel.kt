@@ -113,6 +113,7 @@ fun VoxPanel(
     val preparing = voxState.status == VoxStatus.PREPARING
     var languagesOpen by remember { mutableStateOf(false) }
     val view = LocalView.current
+    val vibration = com.notokens.monolog.ime.ui.LocalVibrationHaptics.current
 
     Column(
         modifier = modifier
@@ -239,7 +240,7 @@ fun VoxPanel(
                         Modifier.clip(RoundedCornerShape(13.dp))
                             .background(MaterialTheme.colorScheme.primaryContainer)
                             .clickable(onClickLabel = "Change speech language") {
-                                triggerHapticFeedback(view)
+                                triggerHapticFeedback(view, enabled = vibration)
                                 languagesOpen = true
                             }.padding(horizontal = 9.dp, vertical = 5.dp)
                     ) {
@@ -269,7 +270,7 @@ fun VoxPanel(
                     .clip(CircleShape)
                     .background(if (isListening) PaperPillBackground else PaperAccentBlue)
                     .clickable(enabled = !preparing && voxState.status != VoxStatus.PROCESSING) {
-                        triggerHapticFeedback(view)
+                        triggerHapticFeedback(view, enabled = vibration)
                         if (isListening) onPauseListening() else onStartListening()
                     }
                     .semantics { contentDescription = if (isListening) "Pause listening" else "Start listening" },
@@ -286,7 +287,7 @@ fun VoxPanel(
                 verticalAlignment = Alignment.CenterVertically) {
                 Text(if (smartFilter) "Smart Filter on" else "Smart Filter off",
                     modifier = Modifier.weight(1f, fill = false).clip(RoundedCornerShape(10.dp)).clickable {
-                        triggerHapticFeedback(view)
+                        triggerHapticFeedback(view, enabled = vibration)
                         onToggleSmartFilter()
                     }.padding(vertical = 10.dp, horizontal = 3.dp),
                     fontSize = 11.sp, color = PaperAccentBlue)

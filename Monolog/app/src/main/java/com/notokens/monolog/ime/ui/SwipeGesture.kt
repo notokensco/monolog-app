@@ -26,6 +26,7 @@ import com.notokens.monolog.ime.SwipePoint
 internal fun swipeTypingModifier(
     enabled: Boolean,
     rows: List<String> = QwertyLayout.rows,
+    longPressTimeoutMs: Long = LocalKeyAppearance.current.longPressMs.toLong(),
     onSwipe: (List<SwipePoint>) -> Unit
 ): Modifier {
     if (!enabled) return Modifier
@@ -87,8 +88,7 @@ internal fun swipeTypingModifier(
                         if (change.isConsumed) break
                         if (!swiping && event.changes.any { it.id != down.id && (it.pressed || it.previousPressed) }) break
                         if (!swiping) {
-                            if (change.uptimeMillis - down.uptimeMillis >=
-                                viewConfiguration.longPressTimeoutMillis) break
+                            if (change.uptimeMillis - down.uptimeMillis >= longPressTimeoutMs) break
                             // A quick tap can land near a key edge and lift over the next key.
                             // Require a move sample before taking ownership from the letter key.
                             val point = if (change.pressed) change.position else change.historical.lastOrNull()?.position

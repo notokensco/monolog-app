@@ -34,7 +34,9 @@ internal class MemoryRepository(private val context: Context,
     private val db: MonologDatabase = MonologDatabase.get(context)) {
     suspend fun draft(text: String, app: String, at: Long = System.currentTimeMillis()): String? =
         withContext(Dispatchers.IO) {
-            if (!MemoryPreferences(context).enabled || com.notokens.monolog.data.SettingsStore(context).incognito.first()) return@withContext null
+            val preferences = MemoryPreferences(context)
+            val settings = com.notokens.monolog.data.SettingsStore(context)
+            if (!preferences.enabled || settings.incognito.first()) return@withContext null
             val evidence = MeaningfulMoment.evaluate(text, app) ?: return@withContext null
             val facts = if (ModelStore.get(context).state.value is ModelState.Ready) {
                 val result = kotlinx.coroutines.withTimeoutOrNull(7_000) {
@@ -46,7 +48,7 @@ internal class MemoryRepository(private val context: Context,
                     it.isNotBlank() && !it.contains('\n') && com.notokens.monolog.ai.DraftFacts.read(evidence.summary).preserves(it)
                 }
             } else null
-            if (com.notokens.monolog.data.SettingsStore(context).incognito.first()) return@withContext null
+            if (!preferences.enabled || settings.incognito.first()) return@withContext null
             save(evidence.copy(summary = facts ?: evidence.summary), "Drafted", at,
                 draftIdentity = MeaningfulMoment.normalized(text).take(800))
         }

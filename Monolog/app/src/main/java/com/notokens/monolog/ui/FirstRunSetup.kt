@@ -36,7 +36,7 @@ import kotlinx.coroutines.launch
 
 @Composable
 internal fun FirstRunSetup(settings: SettingsStore, onRequestMic: () -> Unit,
-    onFinish: () -> Unit, onAccount: () -> Unit, onModels: () -> Unit, onMemory: () -> Unit) {
+    onFinish: () -> Unit, onModels: () -> Unit, onMemory: () -> Unit) {
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
     val lifecycle = LocalLifecycleOwner.current
@@ -81,13 +81,13 @@ internal fun FirstRunSetup(settings: SettingsStore, onRequestMic: () -> Unit,
         Column(Modifier.weight(1f).verticalScroll(rememberScrollState()),
             verticalArrangement = Arrangement.spacedBy(16.dp)) {
             Text(listOf("A little space for your day", "Make Monolog your keyboard",
-                "Capture what matters", "Download offline models", "Your memories, your choice")[page],
+                "Capture what matters", "Download offline models", "Set up backup")[page],
                 color = PaperKeyText, style = MaterialTheme.typography.headlineMedium)
             when (page) {
                 0 -> {
                     Text("Write, save a moment, and find it again in your private journal.", color = PaperKeySubText)
                     SettingsCard("Journal memory") {
-                        Text("Memory is on by default. Monolog keeps compact, meaningful moments from text it helps you type, plus the notes and screenshots you save.",
+                        Text("Turn this on to save meaningful moments from text you type. You can save notes and screenshots with this setting off.",
                             color = PaperKeyText)
                         Text("Typed moments are labeled Drafted. Passwords, protected fields, and incognito typing are excluded. You can edit, pin, or delete a moment.",
                             color = PaperKeySubText, style = MaterialTheme.typography.bodySmall)
@@ -126,13 +126,7 @@ internal fun FirstRunSetup(settings: SettingsStore, onRequestMic: () -> Unit,
                 }
                 3 -> setupState.SaveableStateProvider("offline-packs") { OnboardingModels { offlineReady = it } }
                 4 -> {
-                    Text("You can start as a guest. Google sign-in and encrypted Drive backup are optional.",
-                        color = PaperKeyText)
-                    SettingsCard("Keep a recovery copy") {
-                        Text("Connect Drive from Account & backup. Connect the same Google account on another phone to restore.",
-                            color = PaperKeySubText)
-                        OutlinedButton({ finish(onAccount) }) { Text("Set up Google Drive backup") }
-                    }
+                    AccountBackupSettings(onboarding = true)
                     SettingsCard("Offline intelligence") {
                         Text("Manage text model downloads in Settings. Semantic search is optional and can be added from Journal memory.",
                             color = PaperKeySubText)

@@ -76,6 +76,19 @@ internal object RegionalVox {
     fun ready(context: Context, mode: VoxLanguage = VoxLanguage.HINDI) =
         assets(context, mode.pack).all { File(folder(context, mode.pack), it.name).length() == it.bytes }
 
+    /** The open speech pack exposes subword pieces, which can supplement typed-prefix coverage. */
+    fun typingVocabulary(context: Context, code: String): List<String> {
+        val mode = VoxLanguage.entries.firstOrNull { it.code == code } ?: return emptyList()
+        if (!ready(context, mode)) return emptyList()
+        val meta = File(folder(context, mode.pack), "shruti.json")
+        return runCatching {
+            val tokens = JSONObject(meta.readText()).getJSONArray("vocab")
+            (0 until tokens.length()).mapNotNull { index ->
+                tokens.optString(index).takeIf { it.startsWith('\u2581') }?.drop(1)
+            }
+        }.getOrDefault(emptyList())
+    }
+
     fun anyReady(context: Context) = VoxLanguage.downloadChoices.any { ready(context, it) }
 
     private fun recognizer(context: Context, mode: VoxLanguage): RegionalRecognizer {

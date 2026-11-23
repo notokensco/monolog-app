@@ -148,6 +148,9 @@ internal fun LanguageSettings(settings: SettingsStore) {
 
     OutlinedTextField(filter, { filter = it }, modifier = Modifier.fillMaxWidth(),
         label = { Text("Find a language") }, singleLine = true)
+    Text("Choose a native-script layout or a “type in Latin” layout to transliterate. " +
+        "For example, Hindi phonetic typing turns aap into आप. Hinglish keeps the Roman spelling.",
+        color = PaperKeySubText, style = MaterialTheme.typography.bodySmall)
     val languages = KeyboardLanguage.all.filter { it.label.contains(filter.trim(), true) }
     if (languages.isEmpty()) Text("No matching languages", color = PaperKeySubText)
     for (language in languages) {
@@ -159,7 +162,8 @@ internal fun LanguageSettings(settings: SettingsStore) {
                 val detail = when {
                     language.id == "en" -> "Built-in layout and rewrite"
                     language.id == "hi-Latn" -> "Roman keyboard and simple local polish"
-                    code in installed -> "Native script and offline translation"
+                    language.transliterationTarget != null -> "Transliteration and candidate suggestions"
+                    code in installed -> "Offline keyboard and translation"
                     code != null -> "Native script · optional translation"
                     else -> "Native-script keyboard"
                 }
@@ -169,7 +173,7 @@ internal fun LanguageSettings(settings: SettingsStore) {
                 Text("Active", color = MaterialTheme.colorScheme.primary, style = MaterialTheme.typography.labelMedium)
             } else TextButton({ scope.launch { settings.setKeyboardLanguage(language.id) } }) { Text("Use") }
         }
-        if (code != null) TextButton(enabled = pending == null, onClick = {
+        if (code != null && language.transliterationTarget == null) TextButton(enabled = pending == null, onClick = {
             pending = language.id
             message = ""
             scope.launch {

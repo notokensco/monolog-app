@@ -3,6 +3,7 @@ package com.notokens.monolog.ime
 internal object TypingVocabulary {
     // Higher priority for everyday chat vocabulary when multiple swipe shapes match.
     val english = words("""
+        am are as at be by do go he if in is it its no of oh ok on or so to up us was we were
         the and you that have for with this from they will would there their what about which when
         make like time just know take into your good some could them then look only come think also
         back after want because these give work first well way even new can need how see let use

@@ -102,7 +102,7 @@ private enum class DashboardTile(val label: String, val glyph: Glyph, val extra:
     TONE("Smart Toning", Glyph.BOLT), HIDE("Hide keyboard", Glyph.DOWN),
     BORDERS("Key borders", Glyph.LAYERS, true), POPUPS("Key popups", Glyph.EXPAND, true),
     FILTER("Smart Filter", Glyph.REWRITE, true), DEFAULT_VOX("Default Vox", Glyph.MIC, true),
-    LONG_PRESS("Long-press keys", Glyph.DOT, true), HAPTICS("Shortcut haptics", Glyph.BELL, true),
+    LONG_PRESS("Long-press keys", Glyph.DOT, true), HAPTICS("Vibration haptics", Glyph.BELL, true),
     TALLER("Taller keyboard", Glyph.PLUS, true), SHORTER("Shorter keyboard", Glyph.DOWN, true)
 }
 
@@ -130,7 +130,7 @@ internal fun KeyboardDashboard(
     val smartFilter by settings.smartVoxFilter.collectAsState(true)
     val defaultVox by settings.defaultVox.collectAsState(false)
     val longPress by settings.longPressCharacters.collectAsState(true)
-    val haptics by settings.shortcutHaptics.collectAsState(true)
+    val vibrationHaptics by settings.vibrationHaptics.collectAsState(true)
     val height by settings.keyHeightPercent.collectAsState(100)
     val tiles = DashboardTile.entries.filter { tile ->
         if (tile.extra) tile.name in extras else tile.name !in hidden
@@ -278,7 +278,7 @@ internal fun KeyboardDashboard(
                                 DashboardTile.FILTER -> smartFilter
                                 DashboardTile.DEFAULT_VOX -> defaultVox
                                 DashboardTile.LONG_PRESS -> longPress
-                                DashboardTile.HAPTICS -> haptics
+                                DashboardTile.HAPTICS -> vibrationHaptics
                                 else -> false
                             }
                             val enabled = editing || !privateMode || tile in setOf(
@@ -330,7 +330,7 @@ internal fun KeyboardDashboard(
                                                 DashboardTile.FILTER -> scope.launch { settings.setSmartVoxFilter(!smartFilter) }
                                                 DashboardTile.DEFAULT_VOX -> scope.launch { settings.setDefaultVox(!defaultVox) }
                                                 DashboardTile.LONG_PRESS -> scope.launch { settings.setLongPressCharacters(!longPress) }
-                                                DashboardTile.HAPTICS -> scope.launch { settings.setShortcutHaptics(!haptics) }
+                                                DashboardTile.HAPTICS -> scope.launch { settings.setVibrationHaptics(!vibrationHaptics) }
                                                 DashboardTile.TALLER -> scope.launch { settings.setKeyHeightPercent(height + 5) }
                                                 DashboardTile.SHORTER -> scope.launch { settings.setKeyHeightPercent(height - 5) }
                                             }

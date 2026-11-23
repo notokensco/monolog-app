@@ -48,8 +48,12 @@ class SettingsStore(private val context: Context) {
     val longPressCharacters = context.monologSettings.data.map { it[longPressCharactersKey] ?: true }.distinctUntilChanged()
     suspend fun setSwipeTyping(value: Boolean) { context.monologSettings.edit { it[swipeTypingKey] = value } }
     suspend fun setLongPressCharacters(value: Boolean) { context.monologSettings.edit { it[longPressCharactersKey] = value } }
+    private val keyLongPressMsKey = intPreferencesKey("key_long_press_ms")
+    val keyLongPressMs: Flow<Int> = context.monologSettings.data.map { (it[keyLongPressMsKey] ?: 350).coerceIn(150, 1000) }.distinctUntilChanged()
+    suspend fun setKeyLongPressMs(value: Int) { context.monologSettings.edit { it[keyLongPressMsKey] = value.coerceIn(150, 1000) } }
     private val shortcutHoldKey = intPreferencesKey("shortcut_hold_ms")
     private val shortcutHapticsKey = booleanPreferencesKey("shortcut_haptics")
+    private val vibrationHapticsKey = booleanPreferencesKey("vibration_haptics")
     private val captureBorderColorKey = stringPreferencesKey("capture_border_color")
     private val tapOpensShortcutsKey = booleanPreferencesKey("tap_opens_shortcuts")
     val tapOpensShortcuts = context.monologSettings.data.map { it[tapOpensShortcutsKey] ?: false }.distinctUntilChanged()
@@ -59,9 +63,11 @@ class SettingsStore(private val context: Context) {
 
     val shortcutHoldMs: Flow<Int> = context.monologSettings.data.map { (it[shortcutHoldKey] ?: 500).coerceIn(250, 1500) }.distinctUntilChanged()
     val shortcutHaptics: Flow<Boolean> = context.monologSettings.data.map { it[shortcutHapticsKey] ?: true }.distinctUntilChanged()
+    val vibrationHaptics: Flow<Boolean> = context.monologSettings.data.map { it[vibrationHapticsKey] ?: true }.distinctUntilChanged()
     val captureBorderColor: Flow<String> = context.monologSettings.data.map { it[captureBorderColorKey] ?: "#FFB800" }.distinctUntilChanged()
     suspend fun setShortcutHoldMs(value: Int) { context.monologSettings.edit { it[shortcutHoldKey] = value.coerceIn(250, 1500) } }
     suspend fun setShortcutHaptics(value: Boolean) { context.monologSettings.edit { it[shortcutHapticsKey] = value } }
+    suspend fun setVibrationHaptics(value: Boolean) { context.monologSettings.edit { it[vibrationHapticsKey] = value } }
     suspend fun setCaptureBorderColor(value: String) { context.monologSettings.edit { it[captureBorderColorKey] = value } }
 
     private val incognitoKey = booleanPreferencesKey("incognito")

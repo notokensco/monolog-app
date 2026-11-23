@@ -136,14 +136,14 @@ android {
     if (rustTypingEnabled.get()) sourceSets.getByName("main").jniLibs.srcDir(rustTypingOutput)
     if (llamaSource != null) sourceSets.getByName("main").jniLibs.srcDir(ggufOutput)
     namespace = "com.notokens.monolog"
-    compileSdk = 35
+    compileSdk = 36
 
     defaultConfig {
         applicationId = "com.notokens.monolog"
         minSdk = 35
-        targetSdk = 35
-        versionCode = 6
-        versionName = "0.1.0-alpha.2"
+        targetSdk = 36
+        versionCode = 7
+        versionName = "0.1.0-alpha.3"
         buildConfigField("boolean", "MONOLOG_HAS_GGUF", (llamaSource != null).toString())
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
         val webEndpoint = providers.gradleProperty("monologWebEndpoint").orElse("").get()
@@ -166,11 +166,21 @@ android {
         }
     }
 
+    val releaseSigning = providers.environmentVariable("MONOLOG_UPLOAD_KEYSTORE").orNull?.let { path ->
+        signingConfigs.create("monologUpload") {
+            storeFile = rootProject.file(path)
+            storePassword = providers.environmentVariable("MONOLOG_UPLOAD_STORE_PASSWORD").get()
+            keyAlias = providers.environmentVariable("MONOLOG_UPLOAD_KEY_ALIAS").get()
+            keyPassword = providers.environmentVariable("MONOLOG_UPLOAD_KEY_PASSWORD").get()
+        }
+    }
+
     buildTypes {
         debug {
             if (testingSigning != null) signingConfig = testingSigning
         }
         release {
+            if (releaseSigning != null) signingConfig = releaseSigning
             isMinifyEnabled = true
             isShrinkResources = true
             proguardFiles(

@@ -150,6 +150,8 @@ internal fun MonologKeyboardView(
     val keyBorders by settings.keyBorders.collectAsState(initial = false)
     val keyPopups by settings.keyPopups.collectAsState(initial = false)
     val keyPopupMs by settings.keyPopupMs.collectAsState(initial = 70)
+    val vibrationHaptics by settings.vibrationHaptics.collectAsState(initial = true)
+    val keyLongPressMs by settings.keyLongPressMs.collectAsState(initial = 350)
     val maxRowHeight = ((configuration.screenHeightDp.dp - 170.dp) / 4).coerceAtLeast(32.dp)
     val rowHeight = ((if (isLandscape) 38.dp else 54.dp) * (heightPercent / 100f))
         .coerceIn(30.dp, maxRowHeight)
@@ -188,7 +190,8 @@ internal fun MonologKeyboardView(
 
     KeyPreviewHost(keyPopups && !dashboardOpen && !isVoxOpen) {
     androidx.compose.runtime.CompositionLocalProvider(
-        LocalKeyAppearance provides KeyAppearance(keyBorders, keyPopups, keyPopupMs),
+        LocalKeyAppearance provides KeyAppearance(keyBorders, keyPopups, keyPopupMs, vibrationHaptics, keyLongPressMs),
+        LocalVibrationHaptics provides vibrationHaptics,
         LocalCursorKeys provides CursorKeys(cursorDrag.takeIf { cursorOnSpace }, cursorActive, cursorCharacter)
     ) {
     Column(modifier.fillMaxWidth().monologBackdrop(keyboard = true).navigationBarsPadding()
@@ -443,7 +446,7 @@ private fun LettersLayout(
     } else {
         val rows = language.letterRows ?: QwertyLayout.rows
         val homeInset = (QwertyLayout.width - rows[1].length) / 2f
-        Column(Modifier.fillMaxWidth().then(swipeTypingModifier(swipeEnabled, rows, onSwipe))) {
+        Column(Modifier.fillMaxWidth().then(swipeTypingModifier(swipeEnabled, rows, onSwipe = onSwipe))) {
             Row(Modifier.fillMaxWidth().height(rowHeight)) {
                 rows[0].forEachIndexed { index, letter ->
                     LetterKey(Modifier.weight(1f), letter, isUpper, longPressCharacters,

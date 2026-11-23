@@ -315,6 +315,7 @@ pub(crate) fn swipe(
     let next: Vec<_> = context.split_whitespace().take(3).collect();
     let first = observed[0];
     let last = observed[SAMPLE_COUNT - 1];
+    let directness = direct_stroke_weight(&observed, first, last);
     let weight = crate::phrases::ranker(mode, before);
     let mut best = Best::default();
     for (from, center) in centers.iter().enumerate() {
@@ -327,7 +328,18 @@ pub(crate) fn swipe(
             if end_error > 2.0 {
                 continue;
             }
-            for id in &dict.endpoints[from * KEYS + to] {
+            let candidates = &dict.endpoints[from * KEYS + to];
+            let extra_key_cost = if directness > 0.0
+                && start_error + end_error <= 0.8
+                && candidates
+                    .iter()
+                    .any(|id| key_indices(&dict.words[*id].text).count() == 2)
+            {
+                0.16 * directness
+            } else {
+                0.0
+            };
+            for id in candidates {
                 let word = &dict.words[*id];
                 let mut keys = [Point::default(); MAX_WORD_LENGTH];
                 let mut count = 0;
@@ -357,6 +369,11 @@ pub(crate) fn swipe(
                     })
                     .sum::<f32>()
                     / SAMPLE_COUNT as f32;
+                let extra_visits = keys[..count]
+                    .windows(2)
+                    .filter(|pair| pair[0].squared_distance(pair[1]) > 0.0)
+                    .count()
+                    .saturating_sub(1);
                 let score = shape_error
                     + 0.12 * keys[..count].iter().map(|key| {
                         observed.iter().map(|point| key.squared_distance(*point))
@@ -364,6 +381,7 @@ pub(crate) fn swipe(
                     }).sum::<f32>() / count as f32
                     + 0.48 * (start_error + end_error)
                     + 0.40 * length_error
+                    + extra_key_cost * extra_visits as f32
                     + 0.005 * count as f32
                     - (word.weight + context_weight(&word.text, &next).max(weight(&word.text)))
                         .min(0.34);
@@ -374,4 +392,19 @@ pub(crate) fn swipe(
         }
     }
     Some(best.items().join("\n"))
+}
+
+// A straight swipe often passes incidental keys. Give an available two-key word
+// more weight while the trace stays near its chord. Turns restore ordinary scoring.
+fn direct_stroke_weight(points: &[Point], start: Point, end: Point) -> f32 {
+    let Point(dx, dy) = Point(end.0 - start.0, end.1 - start.1);
+    let chord = start.squared_distance(end).sqrt();
+    if chord < 0.55 {
+        return 0.0;
+    }
+    let detour = points
+        .iter()
+        .map(|point| (dx * (point.1 - start.1) - dy * (point.0 - start.0)).abs() / chord)
+        .fold(0.0_f32, f32::max);
+    (1.0 - detour / 0.50).clamp(0.0, 1.0)
 }

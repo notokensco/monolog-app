@@ -284,4 +284,32 @@ mod tests {
             Some("\ncar\ncat")
         );
     }
+
+    #[test]
+    fn direct_two_letter_sweeps_do_not_pick_up_intermediate_keys() {
+        let mut centers = [Point(1000.0, 1000.0); 27];
+        for (row, keys) in ["qwertyuiop", "asdfghjkl"].iter().enumerate() {
+            for (column, key) in keys.bytes().enumerate() {
+                centers[(key - b'a') as usize] =
+                    Point(column as f32 + 0.5 + row as f32 * 0.5, (row as f32 + 0.5) * 1.25);
+            }
+        }
+        let key = |letter: u8| centers[(letter - b'a') as usize];
+        assert!(lexicon::install(
+            0,
+            include_str!("../../assets/english-4.0.0.dic"),
+            "is it its in at",
+            ""
+        ));
+        let direct = [key(b'i'), Point(5.4, 1.17), Point(3.3, 1.56), key(b's')];
+        let result = lexicon::swipe(0, &direct, &centers, "", "this ").unwrap();
+        assert_eq!(result.lines().next(), Some("is"));
+        assert!(result.lines().count() > 1);
+        let noisy = [Point(7.35, 0.78), Point(4.6, 1.15), Point(2.16, 1.79)];
+        let result = lexicon::swipe(0, &noisy, &centers, "", "").unwrap();
+        assert_eq!(result.lines().next(), Some("is"));
+        let deliberate = [key(b'i'), key(b't'), key(b's')];
+        let result = lexicon::swipe(0, &deliberate, &centers, "", "").unwrap();
+        assert_eq!(result.lines().next(), Some("its"));
+    }
 }

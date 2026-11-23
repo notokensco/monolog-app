@@ -10,6 +10,11 @@ internal data class WordSuggestion(val typed: String, val replacement: String)
 
 internal class EnglishSuggestions(private val context: Context) {
     private val token = Regex("""[\p{L}\p{M}]+(?:'[\p{L}\p{M}]+)?\z""")
+    private val indic = IndicTyping(context)
+    fun warm(language: KeyboardLanguage) { indic.warm(language) }
+    fun automaticTransliteration(before: String, language: KeyboardLanguage): WordSuggestion? =
+        indic.exact(before, language)
+
     private val wordLists by lazy {
         val suggestions = mutableSetOf<String>()
         val swipeWords = mutableSetOf<String>()
@@ -26,6 +31,8 @@ internal class EnglishSuggestions(private val context: Context) {
                 }
             }
         }
+        suggestions.addAll(TypingVocabulary.english)
+        swipeWords.addAll(TypingVocabulary.english)
         (suggestions.sorted() to SwipeDecoder(swipeWords.toList(), TypingVocabulary.english))
     }
     private val dictionary: List<String> get() = wordLists.first
@@ -66,6 +73,7 @@ internal class EnglishSuggestions(private val context: Context) {
     }
 
     fun swipe(language: KeyboardLanguage, points: List<SwipePoint>, before: String): List<String> {
+        if (language.transliterationTarget != null) return indic.swipe(points, language, before)
         val hinglish = language.id == "hi-Latn"
         NativeTyping.swipe(context, language, points, before, continuations(before, hinglish))?.let { return it }
         return when (language.id) {
@@ -79,6 +87,16 @@ internal class EnglishSuggestions(private val context: Context) {
         val hinglish = language == "hi-Latn"
         val legacy = language == "en" || hinglish
         preparedCorrection = null
+        val layout = KeyboardLanguage.of(language)
+        if (layout.transliterationTarget != null || layout.script != null) {
+            val regional = indic.suggest(beforeCursor, layout)
+            if (!personalized || beforeCursor.lastOrNull()?.isWhitespace() == true) return@withContext regional
+            val typed = token.find(beforeCursor)?.value ?: return@withContext regional
+            val personal = personalWords.values.asSequence()
+                .filter { it != typed && it.startsWith(typed, ignoreCase = true) }.take(3)
+                .map { WordSuggestion(typed, "$it ") }
+            return@withContext (personal + regional.asSequence()).distinctBy { it.replacement }.take(3).toList()
+        }
         if (beforeCursor.endsWith(' ')) {
             return@withContext (if (legacy) continuations(beforeCursor, hinglish) else emptyList()).map { WordSuggestion("", "$it ") }
         }

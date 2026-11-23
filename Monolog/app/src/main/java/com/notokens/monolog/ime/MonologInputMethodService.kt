@@ -200,7 +200,10 @@ class MonologInputMethodService : LifecycleInputMethodService() {
         settingsScope.launch {
             settingsStore.keyboardLanguage.collect {
                 language = KeyboardLanguage.of(it)
-                settingsScope.launch(Dispatchers.Default) { NativeTyping.warm(applicationContext, it) }
+                settingsScope.launch(Dispatchers.Default) {
+                    NativeTyping.warm(applicationContext, it)
+                    dictionary.warm(KeyboardLanguage.of(it))
+                }
             }
         }
         settingsScope.launch { settingsStore.phoneActions.collect { phoneActionsEnabled = it; ai.onPhoneActionsChanged() } }
@@ -1115,13 +1118,16 @@ class MonologInputMethodService : LifecycleInputMethodService() {
             ?.let { it.startOffset + it.selectionEnd }
 
     private fun commitAutoCorrection(delimiter: String): Boolean {
-        if (!autocorrectEnabled || !aiAllowed() || editorContext.isIncognito || editorContext.isUri || language.id != "en" ||
+        val phonetic = language.transliterationTarget != null
+        val correctionEnabled = autocorrectEnabled && !editorContext.isIncognito && language.id == "en"
+        if (!(phonetic || correctionEnabled) || !aiAllowed() || editorContext.isUri ||
             delimiter.length != 1 || delimiter[0] !in " .,!?;:" ||
             editorContext.inputType and (android.text.InputType.TYPE_TEXT_FLAG_NO_SUGGESTIONS or
                 android.text.InputType.TYPE_TEXT_FLAG_AUTO_COMPLETE) != 0) return false
         val ic = currentInputConnection ?: return false
         val before = ic.getTextBeforeCursor(128, 0)?.toString() ?: return false
-        val correction = dictionary.automaticCorrection(before) ?: return false
+        val correction = (if (phonetic) dictionary.automaticTransliteration(before, language)
+            else dictionary.automaticCorrection(before)) ?: return false
         if (correction.typed == correction.replacement) return false
         if (!ic.getSelectedText(0).isNullOrEmpty()) return false
         if (ic.getTextAfterCursor(1, 0)?.firstOrNull()?.let { it.isLetterOrDigit() || it == '_' } == true) return false

@@ -26,13 +26,13 @@ class CaptureSetupActivity : ComponentActivity() {
                     onDismissRequest = ::finish,
                     title = { Text("Enable quick screenshots") },
                     text = {
-                        Text("Enable the Android accessibility shortcut for Monolog Quick Capture. Tap it once to capture the screen or twice for shortcuts beside the Android button. You can also tap M while the keyboard is open.")
+                        Text(disclosure)
                     },
                     confirmButton = {
                         TextButton(onClick = {
-                            openAccessibilitySettings(this@CaptureSetupActivity)
+                            launchSystemAccessibility(this@CaptureSetupActivity)
                             finish()
-                        }) { Text("Open Accessibility settings") }
+                        }) { Text("Continue to Accessibility settings") }
                     },
                     dismissButton = { TextButton(onClick = ::finish) { Text("Cancel") } }
                 )
@@ -41,8 +41,19 @@ class CaptureSetupActivity : ComponentActivity() {
     }
 
     companion object {
-        fun openAccessibilitySettings(context: Context) {
+        private const val disclosure =
+            "Monolog uses Android Accessibility to take a screenshot when you activate Quick Capture " +
+                "and to locate the Android shortcut button so actions can appear beside it. " +
+                "Screenshots are processed on your device and kept in your journal only when you save them. " +
+                "If you enable Drive backup separately, saved captures can be included in the encrypted backup. " +
+                "You can leave Quick Capture off and still use Monolog."
+
+        private fun launchSystemAccessibility(context: Context) {
             context.startActivity(Intent(Settings.ACTION_ACCESSIBILITY_SETTINGS).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK))
+        }
+
+        fun openAccessibilitySettings(context: Context) {
+            open(context)
         }
 
         fun open(context: Context) {

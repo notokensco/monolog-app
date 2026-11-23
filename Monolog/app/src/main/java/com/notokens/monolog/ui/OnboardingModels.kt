@@ -3,7 +3,6 @@ package com.notokens.monolog.ui
 import android.os.Process
 import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.Text
-import androidx.compose.material3.TextButton
 import androidx.compose.runtime.*
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.foundation.layout.Row
@@ -84,10 +83,10 @@ private fun OnboardingModel(title: String, state: ModelState, download: () -> Un
     SettingsCard(title) {
         when (state) {
             ModelState.Ready -> Text("Ready")
-            ModelState.Missing -> TextButton(download) { Text("Download") }
+            ModelState.Missing -> GemmaDownloadButton("Download", download = download)
             is ModelState.Failed -> {
                 Text(state.message, color = PaperKeySubText)
-                TextButton(download) { Text("Retry download") }
+                GemmaDownloadButton("Retry download", download = download)
             }
             is ModelState.Downloading -> {
                 Text("Downloading ${state.percent}%", color = PaperKeySubText)

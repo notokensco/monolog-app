@@ -76,6 +76,7 @@ internal fun ContextKey(
     val tapOpensShortcuts by settings.tapOpensShortcuts.collectAsState(false)
     val holdMs by settings.shortcutHoldMs.collectAsState(initial = 500)
     val haptics by settings.shortcutHaptics.collectAsState(initial = true)
+    val vibrationHaptics by settings.vibrationHaptics.collectAsState(initial = true)
     val defaultConfiguration = LocalViewConfiguration.current
     val configuration = remember(defaultConfiguration, holdMs) {
         object : ViewConfiguration by defaultConfiguration {
@@ -93,11 +94,11 @@ internal fun ContextKey(
                     onClickLabel = if (tapOpensShortcuts) "Open quick shortcuts" else "Capture context",
                     onLongClickLabel = if (tapOpensShortcuts) "Capture context" else "Open quick shortcuts",
                     onLongClick = {
-                        if (haptics) triggerHapticFeedback(view, isLong = true)
+                        if (haptics && vibrationHaptics) triggerHapticFeedback(view, isLong = true)
                         if (tapOpensShortcuts) onClick() else onLongClick()
                     },
                     onClick = {
-                        if (haptics) triggerHapticFeedback(view)
+                        if (haptics && vibrationHaptics) triggerHapticFeedback(view)
                         if (tapOpensShortcuts) onLongClick() else onClick()
                     }
                 )
