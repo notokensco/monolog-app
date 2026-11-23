@@ -66,7 +66,7 @@ internal class MemorySearch(private val context: Context,
         val generated = LocalAi.request(context, AiText.answerPrompt(query, evidence), 120)
         val answer = (generated as? GemmaResult.Answer)?.text?.let { AiText.checkedAnswer(query, it, evidence) }
         val fallback = when (generated) {
-            GemmaResult.Missing -> "Download Gemma in Settings → On-device AI to ask your journal. Matching entries are shown below."
+            GemmaResult.Missing -> "Download a text model in Settings → On-device AI to ask your journal. Matching entries are shown below."
             GemmaResult.TimedOut -> "The on-device model took too long. Matching entries are shown below."
             else -> "These recorded moments match your question. I couldn't form a supported answer from them."
         }

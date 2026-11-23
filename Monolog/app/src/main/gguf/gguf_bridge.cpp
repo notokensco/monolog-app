@@ -4,6 +4,7 @@
 #include <algorithm>
 #include <chrono>
 #include <memory>
+#include <mutex>
 #include <string>
 #include <thread>
 #include <vector>
@@ -12,9 +13,45 @@ namespace {
 using Clock = std::chrono::steady_clock;
 constexpr int context_length = 1024;
 
+std::mutex model_mutex;
+std::unique_ptr<llama_model, decltype(&llama_model_free)> cached_model(nullptr, llama_model_free);
+std::string cached_path;
+
+llama_model* load_model(JNIEnv* env, jstring path) {
+    const char* fs_path = env->GetStringUTFChars(path, nullptr);
+    if (fs_path == nullptr) return nullptr;
+    std::string model_path(fs_path);
+    env->ReleaseStringUTFChars(path, fs_path);
+    if (cached_model && cached_path == model_path) return cached_model.get();
+
+    cached_model.reset();
+    cached_path.clear();
+    static const bool initialized = [] { llama_backend_init(); return true; }();
+    (void) initialized;
+    auto params = llama_model_default_params();
+    params.n_gpu_layers = 0;
+    params.use_mmap = true;
+    cached_model.reset(llama_model_load_from_file(model_path.c_str(), params));
+    if (cached_model) cached_path = std::move(model_path);
+    return cached_model.get();
+}
+
 bool expired(void* deadline) {
     return Clock::now() >= *static_cast<Clock::time_point*>(deadline);
 }
+}
+
+extern "C" JNIEXPORT jboolean JNICALL
+Java_com_notokens_monolog_ai_GgufRuntime_prepare(JNIEnv* env, jobject, jstring path) {
+    std::lock_guard lock(model_mutex);
+    return load_model(env, path) != nullptr ? JNI_TRUE : JNI_FALSE;
+}
+
+extern "C" JNIEXPORT void JNICALL
+Java_com_notokens_monolog_ai_GgufRuntime_unload(JNIEnv*, jobject) {
+    std::lock_guard lock(model_mutex);
+    cached_model.reset();
+    cached_path.clear();
 }
 
 extern "C" JNIEXPORT jbyteArray JNICALL
@@ -26,19 +63,10 @@ Java_com_notokens_monolog_ai_GgufRuntime_generate(
     env->GetByteArrayRegion(prompt, 0, size, input.data());
     if (env->ExceptionCheck()) return nullptr;
 
-    const char* fs_path = env->GetStringUTFChars(path, nullptr);
-    if (fs_path == nullptr) return nullptr;
-    std::string model_path(fs_path);
-    env->ReleaseStringUTFChars(path, fs_path);
-    static const bool initialized = [] { llama_backend_init(); return true; }();
-    (void) initialized;
-    auto model_params = llama_model_default_params();
-    model_params.n_gpu_layers = 0;
-    model_params.use_mmap = true;
-    std::unique_ptr<llama_model, decltype(&llama_model_free)> model(
-        llama_model_load_from_file(model_path.c_str(), model_params), llama_model_free);
-    if (!model) return nullptr;
-    const auto* vocabulary = llama_model_get_vocab(model.get());
+    std::lock_guard lock(model_mutex);
+    auto* model = load_model(env, path);
+    if (model == nullptr) return nullptr;
+    const auto* vocabulary = llama_model_get_vocab(model);
 
     std::vector<llama_token> tokens(context_length);
     const int token_count = llama_tokenize(vocabulary, reinterpret_cast<const char*>(input.data()), size,
@@ -53,7 +81,7 @@ Java_com_notokens_monolog_ai_GgufRuntime_generate(
     config.abort_callback = expired;
     config.abort_callback_data = &deadline;
     std::unique_ptr<llama_context, decltype(&llama_free)> session(
-        llama_init_from_model(model.get(), config), llama_free);
+        llama_init_from_model(model, config), llama_free);
     std::unique_ptr<llama_sampler, decltype(&llama_sampler_free)> sampler(
         llama_sampler_init_greedy(), llama_sampler_free);
     if (!session || !sampler || llama_decode(session.get(), llama_batch_get_one(tokens.data(), token_count)) != 0) {

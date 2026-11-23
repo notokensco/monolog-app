@@ -36,11 +36,6 @@ enum class VoiceInputEngine(val id: String, val label: String) {
 }
 
 class SettingsStore(private val context: Context) {
-    private val floatingContextKey = booleanPreferencesKey("floating_context_dock")
-    val floatingContextDock = context.monologSettings.data.map { it[floatingContextKey] ?: false }.distinctUntilChanged()
-    suspend fun setFloatingContextDock(enabled: Boolean) {
-        context.monologSettings.edit { it[floatingContextKey] = enabled }
-    }
     private val autocorrectKey = booleanPreferencesKey("autocorrect")
     private val systemSpellCheckerKey = booleanPreferencesKey("system_spell_checker")
     val systemSpellChecker = context.monologSettings.data.map { it[systemSpellCheckerKey] ?: false }.distinctUntilChanged()
@@ -93,6 +88,24 @@ class SettingsStore(private val context: Context) {
     suspend fun setPhoneActions(value: Boolean) { context.monologSettings.edit { it[phoneActionsKey] = value } }
     private val defaultVoxKey = booleanPreferencesKey("keyboard_default_vox")
     private val smartFilterKey = booleanPreferencesKey("vox_smart_filter")
+    private val recentEmojiKey = stringPreferencesKey("keyboard_recent_emoji")
+    val recentEmoji = preferences.map { it[recentEmojiKey].orEmpty() }.distinctUntilChanged()
+    suspend fun rememberEmoji(text: String, label: String) {
+        context.monologSettings.edit { prefs ->
+            val previous = prefs[recentEmojiKey].orEmpty().lineSequence().filter(String::isNotBlank)
+            prefs[recentEmojiKey] = (sequenceOf("$text\t$label") + previous.filter { it.substringBefore('\t') != text })
+                .take(36).joinToString("\n")
+        }
+    }
+
+    private val cursorOnSpaceKey = booleanPreferencesKey("keyboard_cursor_on_space")
+    val cursorOnSpace = preferences.map { it[cursorOnSpaceKey] ?: false }.distinctUntilChanged()
+    suspend fun setCursorOnSpace(value: Boolean) { context.monologSettings.edit { it[cursorOnSpaceKey] = value } }
+
+    private val voxLanguageKey = stringPreferencesKey("vox_regional_language")
+    val voxLanguage = preferences.map { it[voxLanguageKey] }.distinctUntilChanged()
+    suspend fun setVoxLanguage(code: String) { context.monologSettings.edit { it[voxLanguageKey] = code } }
+
     private val keyBordersKey = booleanPreferencesKey("keyboard_key_borders")
     private val keyPopupsKey = booleanPreferencesKey("keyboard_key_popups")
     private val keyPopupMsKey = intPreferencesKey("keyboard_key_popup_ms")

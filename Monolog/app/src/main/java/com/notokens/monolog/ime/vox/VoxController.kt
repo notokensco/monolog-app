@@ -50,10 +50,11 @@ internal class VoxController(
     private var stableTranscript = ""
     var smartFilter = true
 
+    private var regionalMode = VoxLanguage.ENGLISH
     private var languageTag = "en-IN"
     private var languageLabel = "English"
 
-    fun startListening(languageTag: String, languageLabel: String) {
+    fun startListening(languageTag: String, languageLabel: String, mode: VoxLanguage? = null) {
         if (ContextCompat.checkSelfPermission(context, Manifest.permission.RECORD_AUDIO) != PackageManager.PERMISSION_GRANTED) {
             update(state.copy(status = VoxStatus.PERMISSION_REQUIRED, errorMessage = "Microphone permission required."))
             return
@@ -64,20 +65,17 @@ internal class VoxController(
         isListening = true
 
         val session = generation
-        update(state.copy(status = VoxStatus.PROCESSING, errorMessage = null))
+        update(state.copy(status = VoxStatus.PREPARING, errorMessage = null))
         scope.launch {
             val selected = settings.voiceInputEngine.first()
             pauseMs = settings.voxPause.first()
             if (recordingNote) smartFilter = settings.smartVoxFilter.first()
             if (session != generation || !isListening) return@launch
-            activeEngine = when {
-                selected == VoiceInputEngine.REGIONAL && !RegionalVox.supports(languageTag) ->
-                    if (recordingNote) VoiceInputEngine.MOONSHINE else VoiceInputEngine.NATIVE
-                recordingNote && selected == VoiceInputEngine.NATIVE ->
-                    if (RegionalVox.supports(languageTag) && RegionalVox.ready(context)) VoiceInputEngine.REGIONAL
-                    else VoiceInputEngine.MOONSHINE
-                else -> selected
-            }
+            regionalMode = mode ?: VoxLanguage.resolve(settings.voxLanguage.first(), languageTag)
+            if (session != generation || !isListening) return@launch
+            activeEngine = if (recordingNote && selected == VoiceInputEngine.NATIVE) {
+                if (RegionalVox.ready(context, regionalMode)) VoiceInputEngine.REGIONAL else VoiceInputEngine.MOONSHINE
+            } else selected
             startEngine()
         }
     }
@@ -253,7 +251,7 @@ internal class VoxController(
         val locale = languageTag
         val chunks = Channel<ByteArray>(Channel.UNLIMITED)
         update(state.copy(
-            status = VoxStatus.PROCESSING, language = languageLabel,
+            status = VoxStatus.PREPARING, language = languageLabel,
             engineLabel = "VOX AI",
             errorMessage = null, partialTranscript = "", rmsLevel = 0f
         ))
@@ -263,8 +261,7 @@ internal class VoxController(
             var failure = false
             try {
                 withContext(Dispatchers.Default) {
-                    val engine = OfflineMoonshine.open(context)
-                    try {
+                    OfflineMoonshine.use(context) { engine ->
                         // The recorder caps this queue at one 30-second PCM clip.
                         val lines = linkedMapOf<Long, String>()
                         engine.addListener { event ->
@@ -275,7 +272,9 @@ internal class VoxController(
                             }
                             if (line != null) {
                                 lines[line.id] = line.text.orEmpty().trim()
-                                val caption = lines.values.filter(String::isNotEmpty).joinToString(" ")
+                                val rawCaption = lines.values.joinToString(" ")
+                                val caption = if (smartFilter) PronunciationAlternatives.cleanFillerPhonemes(rawCaption)
+                                else rawCaption.trim()
                                 if (caption != latestCaption) {
                                     latestCaption = caption
                                     main.post {
@@ -286,25 +285,28 @@ internal class VoxController(
                                 }
                             }
                         }
-                        engine.start()
-                        withContext(Dispatchers.Main.immediate) {
-                            if (session == generation && isListening) {
-                                recorder = VoiceRecorder(scope).also { audio ->
-                                    recordStream(session, audio, chunks)
+                        val stream = engine.createStream()
+                        try {
+                            engine.startStream(stream)
+                            withContext(Dispatchers.Main.immediate) {
+                                if (session == generation && isListening) {
+                                    recorder = VoiceRecorder(scope).also { audio ->
+                                        recordStream(session, audio, chunks)
+                                    }
+                                    update(state.copy(status = VoxStatus.LISTENING))
+                                } else {
+                                    chunks.close()
                                 }
-                                update(state.copy(status = VoxStatus.LISTENING))
-                            } else {
-                                chunks.close()
                             }
+                            val audioGain = MoonshineAudioGain()
+                            for (pcm in chunks) {
+                                engine.addAudioToStream(stream, audioGain.apply(NativeTyping.voiceSamples(pcm)), VoiceRecorder.RATE)
+                            }
+                            engine.stopStream(stream)
+                            result = PronunciationAlternatives.cleanFinal(lines.values.joinToString(" "), locale, smartFilter)
+                        } finally {
+                            engine.freeStream(stream)
                         }
-                        val audioGain = MoonshineAudioGain()
-                        for (pcm in chunks) {
-                            engine.addAudio(audioGain.apply(NativeTyping.voiceSamples(pcm)), VoiceRecorder.RATE)
-                        }
-                        engine.stop()
-                        result = PronunciationAlternatives.cleanFinal(lines.values.joinToString(" "), locale, smartFilter)
-                    } finally {
-                        engine.close()
                     }
                 }
             } catch (cancelled: CancellationException) {
@@ -355,26 +357,26 @@ internal class VoxController(
     }
 
     private fun startRegionalCapture() {
-        if (!RegionalVox.ready(context)) {
+        val mode = regionalMode
+        if (!RegionalVox.ready(context, mode)) {
             if (recordingNote) startAudioOnlyNote("Download VOX AI India to transcribe this language.")
             else {
                 isListening = false
-                update(state.copy(status = VoxStatus.UNAVAILABLE, errorMessage = "Download VOX AI India in On-device AI settings."))
+                update(state.copy(status = VoxStatus.UNAVAILABLE, errorMessage = "Download ${mode.title} for VOX AI India in On-device AI settings."))
             }
             return
         }
         val session = generation
-        val tag = languageTag
-        val english = tag.startsWith("en", ignoreCase = true)
+        val tag = if (mode == VoxLanguage.ENGLISH) "en-IN" else mode.code
         val chunks = Channel<ByteArray>(Channel.UNLIMITED)
-        update(state.copy(status = VoxStatus.PROCESSING, engineLabel = "VOX AI India",
-            language = languageLabel, partialTranscript = "", rmsLevel = 0f, errorMessage = null))
+        update(state.copy(status = VoxStatus.PREPARING, engineLabel = "VOX AI India",
+            language = mode.title, partialTranscript = "", rmsLevel = 0f, errorMessage = null))
         offlineJob = scope.launch {
             var transcript = ""
             var failed = false
             try {
                 withContext(Dispatchers.Default) {
-                    RegionalVox.open(context).use { recognizer ->
+                    RegionalVox.use(context, mode) { recognizer ->
                         withContext(Dispatchers.Main.immediate) {
                             if (session == generation && isListening) {
                                 recorder = VoiceRecorder(scope).also { recordStream(session, it, chunks) }
@@ -385,12 +387,12 @@ internal class VoxController(
                         val pause = SpeechPause(pauseMs)
                         val previous = ByteArrayOutputStream()
                         var voiced = false
-                        var nextPreview = 40_000
+                        var nextPreview = 28_800
                         val settled = mutableListOf<String>()
 
                         suspend fun decode(): String {
                             val samples = NativeTyping.voiceSamples(phrase.toByteArray())
-                            return PronunciationAlternatives.cleanFinal(recognizer.decode(samples, english), tag, smartFilter)
+                            return PronunciationAlternatives.cleanFinal(recognizer.decode(samples, mode), tag, smartFilter)
                         }
 
                         fun show(caption: String) {
@@ -417,13 +419,13 @@ internal class VoxController(
                                 if (phrase.size() >= 12_800) decode().takeIf(String::isNotBlank)?.let(settled::add)
                                 phrase.reset()
                                 previous.reset()
-                                nextPreview = 40_000
+                                nextPreview = 28_800
                                 voiced = false
                                 show(settled.joinToString(" "))
                             } else if (phrase.size() >= nextPreview && speaking) {
                                 val preview = decode()
                                 show((settled + preview).filter(String::isNotBlank).joinToString(" "))
-                                nextPreview = phrase.size() + 56_000
+                                nextPreview = phrase.size() + 38_400
                             }
                         }
                         if (voiced && phrase.size() >= 12_800) decode().takeIf(String::isNotBlank)?.let(settled::add)
@@ -486,6 +488,11 @@ internal class VoxController(
         }
     }
 
+    suspend fun finishCurrentPhrase() {
+        pauseOrStopListening()
+        offlineJob?.join()
+    }
+
     fun pauseOrStopListening() {
         isListening = false
         when (activeEngine) {
@@ -528,7 +535,8 @@ internal class VoxController(
     private fun microphoneLevel(bytes: ByteArray, count: Int): Float =
         (NativeTyping.voiceRms(bytes, count) * 12f).coerceIn(0f, 1f)
 
-    fun cleanTranscript(text: String): String = PronunciationAlternatives.cleanFinal(text, languageTag, smartFilter)
+    fun cleanTranscript(text: String): String =
+        PronunciationAlternatives.cleanFinal(text, if (activeEngine == VoiceInputEngine.REGIONAL) regionalMode.code else languageTag, smartFilter)
 
     fun clearTranscript() {
         stableTranscript = ""

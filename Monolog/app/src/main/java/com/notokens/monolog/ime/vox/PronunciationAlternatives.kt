@@ -17,13 +17,15 @@ internal object PronunciationAlternatives {
         languageTag.substringBefore('-').lowercase(Locale.ROOT) in setOf("en", "hi")
 
     private val fillerPhonemes = Regex(
-        """(?<![\p{L}\p{N}-])(?:u+m+|u+h+|u+h+m*|a+h+|a{2,}|e+r+|e+r+m+|h+m+|o{2,}m+s?|o+h+)(?![\p{L}\p{N}-])(?:[ \t]*(?:,…|…|\.{3,}|,))?""",
+        """(?<![\p{L}\p{M}\p{N}-])(?:u+m+s?|u+h+(?:m+s?|s)?|a+h+s?|a{3,}|e+r+m*s?|h+m+s?|m{2,}|h{2,}|o{2,}m+s?|o+h+|अ+ह*|उ+ह+|आ{2,}|अम+|उम+|हं+|हम्म+)(?![\p{L}\p{M}\p{N}-])(?:[ \t]*(?:,…|…|\.{3,}|,))?""",
         RegexOption.IGNORE_CASE
     )
+    private val disfluencyLabel = Regex("""[\[(<]\s*(?:uh|um|hmm|filler|hesitation|pause|silence)\s*[\])>]""",
+        RegexOption.IGNORE_CASE)
 
     fun cleanFillerPhonemes(text: String): String {
         if (text.isBlank()) return ""
-        return fillerPhonemes.replace(text, " ")
+        return fillerPhonemes.replace(disfluencyLabel.replace(text, " "), " ")
             .replace(Regex("""[ \t]{2,}"""), " ")
             .replace(Regex("""\s+([,.!?;:])"""), "$1")
             .trim()
@@ -33,7 +35,7 @@ internal object PronunciationAlternatives {
 
     fun cleanFinal(text: String, languageTag: String, smartFilter: Boolean = true): String {
         var result = text.trim().replace(Regex("""[ \t\u00A0]+"""), " ")
-        if (smartFilter) result = cleanFillerPhonemes(pauseMarkers.replace(result, " "))
+        if (smartFilter) result = cleanFillerPhonemes(result)
         if (!supports(languageTag)) return result
         if (result.none(Char::isLetterOrDigit)) return ""
         for (term in vocabulary.drop(1)) result = term.soundAlikes.replace(result, term.word)
@@ -46,8 +48,6 @@ internal object PronunciationAlternatives {
             if (explicitAlias || phoneticMatch) match.groupValues[1] + monolog.word else match.value
         }
     }
-
-    private val pauseMarkers = Regex("""\[(?:pause|silence)\]|\((?:pause|silence)\)""", RegexOption.IGNORE_CASE)
 
     private val monologInContext = Regex(
         """\b((?:open|launch|in|the)\s+(?:the\s+)?)([a-z-]+(?:\s+[a-z-]+){0,2}?)(?=\s+(?:app|keyboard)\b)""",

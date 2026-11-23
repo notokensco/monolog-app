@@ -70,9 +70,6 @@ internal fun AiSettings() {
     val supportsLocal = remember { Build.SUPPORTED_64_BIT_ABIS.any { it == "arm64-v8a" || it == "x86_64" } }
     val lowRam = remember { context.getSystemService(ActivityManager::class.java)?.isLowRamDevice == true }
 
-    if (remember { OfflineMoonshine.available }) OfflineVoxSettings()
-    RegionalVoiceSettings()
-
     if (supportsLocal) {
         TextModelPicker(store)
         if (lowRam) Text("Larger text models may run slowly on this device.", color = PaperKeySubText)
@@ -219,8 +216,8 @@ internal fun OfflineVoxSettings(onReady: (Boolean) -> Unit = {}) {
 
     LaunchedEffect(Unit) { refresh() }
 
-    SettingsCard("Offline voice model") {
-        Text("VOX AI", color = PaperKeyText, style = MaterialTheme.typography.titleSmall)
+    SettingsCard("VOX AI") {
+        Text("Recommended for English outside India", color = PaperKeyText, style = MaterialTheme.typography.titleSmall)
         Text(
             if (!installed) "English · Live captions for keyboard and notes"
             else if (engine == VoiceInputEngine.MOONSHINE) "Installed · Active in Vox"

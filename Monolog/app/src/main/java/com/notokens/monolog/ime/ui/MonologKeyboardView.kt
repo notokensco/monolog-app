@@ -3,11 +3,6 @@ package com.notokens.monolog.ime.ui
 import kotlinx.coroutines.launch
 
 import android.content.res.Configuration
-import androidx.compose.animation.AnimatedContent
-import androidx.compose.animation.fadeIn
-import androidx.compose.animation.fadeOut
-import androidx.compose.animation.togetherWith
-import androidx.compose.animation.core.tween
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.ui.platform.LocalContext
 import com.notokens.monolog.data.SettingsStore
@@ -81,6 +76,12 @@ internal fun MonologKeyboardView(
     editorActive: Boolean,
     keyboardState: KeyboardState,
     voxState: VoxState,
+    voxLanguage: com.notokens.monolog.ime.vox.VoxLanguage,
+    voxLanguages: List<com.notokens.monolog.ime.vox.VoxLanguage>,
+    onVoxLanguage: (com.notokens.monolog.ime.vox.VoxLanguage) -> Unit,
+    cursorDrag: CursorDrag,
+    cursorActive: Boolean,
+    cursorCharacter: String?,
     isShortcutsOpen: Boolean,
     isVoxOpen: Boolean,
     shortcutDraft: ShortcutDraft,
@@ -98,6 +99,7 @@ internal fun MonologKeyboardView(
     swipeAllowed: Boolean,
     language: KeyboardLanguage,
     onOpenSettings: () -> Unit,
+    onOpenVoiceSettings: () -> Unit,
     onEnterVox: () -> Unit,
     onExitVox: () -> Unit,
     onStartListening: () -> Unit,
@@ -105,6 +107,7 @@ internal fun MonologKeyboardView(
     onClearTranscript: () -> Unit,
     onRequestPermission: () -> Unit,
     onCharTyped: (String) -> Unit,
+    onEmojiSuggestion: (String, String) -> Boolean,
     onPasteImage: (ClipboardImage) -> Boolean,
     onLetterTyped: (String) -> Unit,
     onSwipe: (List<SwipePoint>) -> Unit,
@@ -123,7 +126,6 @@ internal fun MonologKeyboardView(
 ) {
     val configuration = LocalConfiguration.current
     val isLandscape = configuration.orientation == Configuration.ORIENTATION_LANDSCAPE
-    val recentEmoji = remember { mutableStateListOf<Emoji>() }
     var numberPadOpen by remember(layoutSession, keyboardState.layer) { mutableStateOf(false) }
     val showSymbolTools = keyboardState.layer == KeyboardLayer.SYMBOLS ||
         keyboardState.layer == KeyboardLayer.MORE_SYMBOLS
@@ -132,8 +134,16 @@ internal fun MonologKeyboardView(
     val isAiActive = searchQuery != null
     val context = LocalContext.current
     val settings = remember(context) { SettingsStore(context.applicationContext) }
+    val savedEmoji by settings.recentEmoji.collectAsState("")
+    val recentEmoji = remember(savedEmoji) {
+        savedEmoji.lineSequence().mapNotNull { row ->
+            val fields = row.split('\t', limit = 2)
+            if (fields.size == 2) Emoji(fields[0], fields[1]) else null
+        }.toList()
+    }
     val swapVoxAndAi by settings.swapVoxAndAi.collectAsState(initial = false)
     val heightPercent by settings.keyHeightPercent.collectAsState(initial = 100)
+    val cursorOnSpace by settings.cursorOnSpace.collectAsState(false)
     val keyBorders by settings.keyBorders.collectAsState(initial = false)
     val keyPopups by settings.keyPopups.collectAsState(initial = false)
     val keyPopupMs by settings.keyPopupMs.collectAsState(initial = 70)
@@ -152,13 +162,19 @@ internal fun MonologKeyboardView(
     val customTriggers by settings.sensitiveWords.collectAsState("")
     val copiedActions = com.notokens.monolog.ime.rememberClipboardActions(
         phoneActions && editorActive && !privateMode && ai.journalAllowed, customTriggers)
+    val input = ai.toolbarInput
+    val hasInput = ai.hasDraft || input.isNotBlank()
+    val nameMatches by androidx.compose.runtime.produceState<Pair<String, EmojiMatches?>?>(null, input, editorContext.isRestrictedField) {
+        value = if (input.lastOrNull()?.isLetter() != true || editorContext.isRestrictedField) null else {
+            input to kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.Default) {
+                matchEmojiName(context.assets, input)
+            }
+        }
+    }
+    val emojiMatches = nameMatches?.takeIf { it.first == input }?.second
     fun pickEmoji(emoji: Emoji) {
         onCharTyped(emoji.text)
-        if (!privateMode) {
-            recentEmoji.remove(emoji)
-            recentEmoji.add(0, emoji)
-            if (recentEmoji.size > 36) recentEmoji.removeAt(recentEmoji.lastIndex)
-        }
+        if (!privateMode) keyboardScope.launch { settings.rememberEmoji(emoji.text, emoji.label) }
     }
     var dashboardOpen by remember(layoutSession) { mutableStateOf(false) }
     LaunchedEffect(isShortcutsOpen, isVoxOpen, isAiActive) {
@@ -168,13 +184,19 @@ internal fun MonologKeyboardView(
         .coerceAtLeast(100.dp)
 
     KeyPreviewHost(keyPopups && !dashboardOpen && !isVoxOpen) {
-    androidx.compose.runtime.CompositionLocalProvider(LocalKeyAppearance provides KeyAppearance(keyBorders, keyPopups, keyPopupMs)) {
+    androidx.compose.runtime.CompositionLocalProvider(
+        LocalKeyAppearance provides KeyAppearance(keyBorders, keyPopups, keyPopupMs),
+        LocalCursorKeys provides CursorKeys(cursorDrag.takeIf { cursorOnSpace }, cursorActive, cursorCharacter)
+    ) {
     Column(modifier.fillMaxWidth().monologBackdrop(keyboard = true).navigationBarsPadding()
         .onSizeChanged { keyboardHeightPx = it.height }) {
         // If Vox mode is open, render the full Vox Panel
         if (isVoxOpen) {
             VoxPanel(
                 voxState = voxState,
+                language = voxLanguage,
+                languages = voxLanguages,
+                onLanguage = onVoxLanguage,
                 onStartListening = onStartListening,
                 onPauseListening = onPauseListening,
                 onClearTranscript = onClearTranscript,
@@ -186,7 +208,7 @@ internal fun MonologKeyboardView(
                 onContextHold = onToggleShortcuts,
                 onCancel = onExitVox,
                 onRequestPermission = onRequestPermission,
-                onOpenModels = onOpenSettings
+                onOpenModels = onOpenVoiceSettings
             )
             if (aiAllowed) ai.toolbar?.let { AiResultCard(it, ai::apply) }
         } else {
@@ -216,8 +238,25 @@ internal fun MonologKeyboardView(
                     isContextActive = !editorContext.isIncognito && (isShortcutsOpen || ScreenCaptureService.isReady),
                     suggestions = {
                         if (!dashboardOpen && !isShortcutsOpen && searchQuery == null) {
-                            if (showSymbolTools) EmojiShortcutStrip(recentEmoji, ::pickEmoji)
-                            else if (aiAllowed) KeyboardSuggestionStrip(ai, language, onSuggestedShortcut, copiedActions)
+                            val localActions = ai.inlineActions.ifEmpty { if (!hasInput) copiedActions else emptyList() }
+                            val match = emojiMatches
+                            when {
+                                aiAllowed && (ai.inlineBusy || ai.toolbar != null || ai.rewriteOpen) ->
+                                    KeyboardSuggestionStrip(ai, language, onSuggestedShortcut, copiedActions)
+                                localActions.isNotEmpty() -> Row(Modifier.fillMaxWidth(),
+                                    horizontalArrangement = androidx.compose.foundation.layout.Arrangement.Center) {
+                                    DeviceActionButtons(localActions)
+                                }
+                                match != null -> EmojiShortcutStrip(recentEmoji, match.entries) { emoji ->
+                                    if (onEmojiSuggestion(match.typed, emoji.text) && !privateMode) {
+                                        keyboardScope.launch { settings.rememberEmoji(emoji.text, emoji.label) }
+                                    }
+                                }
+                                showSymbolTools && !hasInput && !editorContext.isRestrictedField ->
+                                    EmojiShortcutStrip(recentEmoji, onPick = ::pickEmoji)
+                                aiAllowed -> KeyboardSuggestionStrip(ai, language, onSuggestedShortcut,
+                                    copiedActions.takeUnless { hasInput }.orEmpty())
+                            }
                         }
                     }
                 )
@@ -255,13 +294,8 @@ internal fun MonologKeyboardView(
                 }
             }
 
-            AnimatedContent(
-                dashboardOpen,
-                modifier = Modifier.fillMaxWidth().height(bodyHeight),
-                transitionSpec = { fadeIn(tween(100)) togetherWith fadeOut(tween(100)) },
-                label = "Keyboard dashboard"
-            ) { shown ->
-                if (shown) KeyboardDashboard(
+            Box(Modifier.fillMaxWidth().height(bodyHeight)) {
+                if (dashboardOpen) KeyboardDashboard(
                     settings = settings,
                     privateMode = privateMode,
                     clips = clips,
@@ -679,6 +713,13 @@ private fun BottomRow(
     val settings = remember(context) { com.notokens.monolog.data.SettingsStore(context.applicationContext) }
     val languageId by settings.keyboardLanguage.collectAsState(initial = "en")
     val language = KeyboardLanguage.of(languageId)
+    val cursorDrag = LocalCursorKeys.current.drag
+    val smartHold = onHoldSpace.takeUnless { editorContext.isRestrictedField || editorContext.isNumber }
+    val smartLabel = when {
+        spacebarVox -> "Open Vox"
+        isAiActive -> "Close Monolog AI"
+        else -> "Open Monolog AI search"
+    }
     Row(modifier = Modifier.fillMaxWidth().height(rowHeight + 4.dp)) {
         KeyButton(Modifier.weight(1.4f), text = modeLabel, fontSize = 16.sp, onClick = onModeClick)
         KeyButton(
@@ -716,12 +757,9 @@ private fun BottomRow(
             glow = false,
             tracing = isAiActive,
             label = if (isAiActive) "Space, Monolog AI active" else "Space",
-            longClickLabel = when {
-                spacebarVox -> "Open Vox"
-                isAiActive -> "Close Monolog AI"
-                else -> "Open Monolog AI search"
-            },
-            onLongClick = onHoldSpace.takeUnless { editorContext.isRestrictedField || editorContext.isNumber },
+            longClickLabel = if (cursorDrag != null) "Hold and drag to move the cursor" else smartLabel,
+            onLongClick = smartHold.takeIf { cursorDrag == null },
+            cursorDrag = cursorDrag,
             onClick = onSpace
         ) {
             Row(
@@ -731,7 +769,7 @@ private fun BottomRow(
                 androidx.compose.material3.Text(if (isAiActive) "AI Ask" else language.label.substringBefore('·').trim(),
                     color = if (isAiActive) androidx.compose.material3.MaterialTheme.colorScheme.primary else PaperKeyText,
                     fontSize = 15.sp, maxLines = 1, overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis)
-                if (!editorContext.isIncognito) MonologIcon(if (spacebarVox) Glyph.MIC else Glyph.BOLT, Modifier.size(17.dp))
+                if (!editorContext.isIncognito && cursorDrag == null) MonologIcon(if (spacebarVox) Glyph.MIC else Glyph.BOLT, Modifier.size(17.dp))
             }
         }
         KeyButton(
@@ -762,6 +800,8 @@ private fun BottomRow(
                 KeyboardAction.GO, KeyboardAction.SEND, KeyboardAction.NEXT -> Glyph.ARROW
                 else -> Glyph.ENTER
             },
+            longClickLabel = smartLabel.takeIf { cursorDrag != null },
+            onLongClick = smartHold.takeIf { cursorDrag != null },
             onClick = onAction
         )
     }

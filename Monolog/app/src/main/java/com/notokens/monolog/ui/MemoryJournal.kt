@@ -59,7 +59,7 @@ internal fun MemorySettings() {
     )
     SettingsCard("Offline semantic search") {
         Text(status, color = PaperKeyText)
-        Text("Multilingual MiniLM · 384-dimensional quantized vectors. The encoder and tokenizer download is approximately 135 MB. Keyword search is available immediately.",
+        Text("Multilingual MiniLM · 384-dimensional quantized vectors. The optional 135 MB download helps find related wording. Keyword search already covers titles, notes, and saved image tags.",
             color = PaperKeySubText, style = MaterialTheme.typography.bodySmall)
         Button(encoder::download, enabled = !encoder.ready()) { Text("Download offline search") }
     }
@@ -69,7 +69,8 @@ internal fun MemorySettings() {
 internal fun MemoryJournal(
     onOpenNote: (Long) -> Unit, onOpenReminder: (Long) -> Unit, onNewNote: () -> Unit,
     visibleNotes: List<com.notokens.monolog.data.Note>, photos: Map<Long, List<com.notokens.monolog.data.NotePhotoRef>>,
-    initiallySearching: Boolean = false, searchRequest: Int = 0
+    query: String, onClearQuery: () -> Unit, onFocusSearch: () -> Unit,
+    askRequest: Int, onAnswering: (Boolean) -> Unit
 ) {
     val context = LocalContext.current
     val db = remember { MonologDatabase.get(context) }
@@ -85,10 +86,8 @@ internal fun MemoryJournal(
     var date by rememberSaveable { mutableStateOf(LocalDate.now().toString()) }
     var period by rememberSaveable { mutableStateOf("Day") }
     var showDay by rememberSaveable { mutableStateOf(false) }
-    var showSearch by rememberSaveable { mutableStateOf(initiallySearching) }
-    LaunchedEffect(searchRequest) { if (searchRequest > 0) showSearch = true }
+    val showSearch = query.isNotBlank()
     val month = remember(date) { java.time.YearMonth.from(LocalDate.parse(date)) }
-    var query by rememberSaveable { mutableStateOf("") }
     var matches by remember { mutableStateOf<List<MemoryMatch>?>(null) }
     var brief by remember { mutableStateOf<DayBrief?>(null) }
     var answer by remember { mutableStateOf<JournalAnswer?>(null) }
@@ -98,6 +97,7 @@ internal fun MemoryJournal(
     val selected = runCatching { LocalDate.parse(date) }.getOrNull()
     val year = selected?.year ?: LocalDate.now().year
     var answerJob by remember { mutableStateOf<kotlinx.coroutines.Job?>(null) }
+    var handledAsk by remember { mutableIntStateOf(askRequest) }
     DisposableEffect(Unit) { onDispose { answerJob?.cancel() } }
     fun askJournal() {
         if (query.isBlank() || busy) return
@@ -108,6 +108,7 @@ internal fun MemoryJournal(
         answerJob?.cancel()
         answerJob = scope.launch {
             busy = true
+            onAnswering(true)
             error = ""
             try {
                 val result = search.ask(asked, askedYear)
@@ -117,7 +118,13 @@ internal fun MemoryJournal(
                 }
             } catch (cancelled: CancellationException) { throw cancelled }
             catch (_: Exception) { error = "Couldn't answer on this device. Matching journal entries are shown below." }
-            finally { busy = false }
+            finally { busy = false; onAnswering(false) }
+        }
+    }
+    LaunchedEffect(askRequest) {
+        if (askRequest != handledAsk) {
+            handledAsk = askRequest
+            askJournal()
         }
     }
     fun includesDay(day: LocalDate): Boolean = when (period) {
@@ -169,6 +176,7 @@ internal fun MemoryJournal(
         }
     }
     LaunchedEffect(query, year, records.map { it.id to it.revision }) {
+        answerJob?.cancel()
         answer = null
     }
     LaunchedEffect(query, year, semanticReady, records.map { Triple(it.id, it.revision, it.vectorRevision) }) {
@@ -183,10 +191,10 @@ internal fun MemoryJournal(
                 onMonth = { date = it.atDay(1).toString() },
                 onDay = { date = it.toString(); period = "Day"; showDay = true },
                 onNote = onOpenNote,
-                onSearch = { showSearch = true })
+                onSearch = onFocusSearch)
         }
         if (showDay || showSearch) {
-        TextButton({ showDay = false; showSearch = false; query = ""; answerJob?.cancel() }) {
+        TextButton({ showDay = false; onClearQuery(); answerJob?.cancel() }) {
             Text("Back to timeline")
         }
         if (showDay) {
@@ -224,26 +232,6 @@ internal fun MemoryJournal(
             }
 
         }
-        }
-        TextField(query, {
-            answerJob?.cancel()
-            query = it.take(300)
-            answer = null
-        },
-            placeholder = { Text("Search notes & memories") },
-            leadingIcon = { MonologIcon(Glyph.SEARCH) }, modifier = Modifier.fillMaxWidth().glassSurface(28),
-            colors = TextFieldDefaults.colors(focusedContainerColor = Color.Transparent,
-                unfocusedContainerColor = Color.Transparent, focusedIndicatorColor = Color.Transparent,
-                unfocusedIndicatorColor = Color.Transparent),
-            singleLine = true, keyboardOptions = KeyboardOptions(imeAction = ImeAction.Search),
-            keyboardActions = KeyboardActions(onSearch = { askJournal() }))
-        Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-            Button(onClick = { askJournal() }, enabled = query.isNotBlank() && !busy) {
-                MonologIcon(Glyph.BOLT, Modifier.size(16.dp), MaterialTheme.colorScheme.onPrimary)
-                Spacer(Modifier.width(6.dp))
-                if (busy) ProcessingDots() else Text("Ask journal")
-            }
-            if (!semanticReady) TextButton(encoder::download) { Text("Enable semantic search") }
         }
         Text(if (semanticReady) "On-device search · $year · answers use your matching entries"
             else "Keyword search · $year · $encoderStatus", color = PaperKeySubText,

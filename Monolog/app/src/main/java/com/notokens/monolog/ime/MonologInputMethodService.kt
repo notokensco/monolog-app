@@ -1,11 +1,13 @@
 package com.notokens.monolog.ime
 
+import android.app.ActivityManager
 import android.content.Intent
 import android.icu.text.BreakIterator
 import android.view.KeyEvent
 import android.view.Display
 import android.view.View
 import android.view.inputmethod.EditorInfo
+import android.view.inputmethod.InputConnection
 import android.widget.Toast
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
@@ -20,9 +22,17 @@ import androidx.core.view.WindowCompat
 import com.notokens.monolog.MainActivity
 import com.notokens.monolog.ai.KeyboardLanguage
 import com.notokens.monolog.ai.LocalAi
+import com.notokens.monolog.ai.ModelStore
+import com.notokens.monolog.ai.ModelState
 import com.notokens.monolog.capture.CaptureSetupActivity
 import com.notokens.monolog.capture.ScreenCaptureService
 import com.notokens.monolog.data.SettingsStore
+import com.notokens.monolog.data.VoiceInputEngine
+import com.notokens.monolog.ime.ui.CursorDrag
+import com.notokens.monolog.ime.vox.OfflineMoonshine
+import com.notokens.monolog.ime.vox.RegionalVox
+import com.notokens.monolog.ime.vox.VoxLanguage
+import com.notokens.monolog.ime.vox.VoxStatus
 import com.notokens.monolog.data.Appearance
 import com.notokens.monolog.data.ThemeMode
 import com.notokens.monolog.ime.ui.MonologKeyboardView
@@ -41,6 +51,12 @@ import kotlinx.coroutines.cancel
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.collect
 import kotlinx.coroutines.flow.first
+import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.combine
+import kotlinx.coroutines.flow.collectLatest
+import kotlinx.coroutines.flow.distinctUntilChanged
+import kotlinx.coroutines.flow.map
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 
@@ -86,10 +102,29 @@ class MonologInputMethodService : LifecycleInputMethodService() {
     private var swipeJob: Job? = null
     private val afterGlide = ArrayDeque<() -> Unit>()
     private var selectionVersion = 0L
+    private var lastKeyEdit = 0L
+    private var regionalLanguage by mutableStateOf<String?>(null)
+    private var voiceEngine by mutableStateOf(VoiceInputEngine.NATIVE)
+    private var voxLanguages by mutableStateOf(emptyList<VoxLanguage>())
+    private var voxLanguageChange: Job? = null
+    private val keyboardModelsVisible = MutableStateFlow(false)
+
+    private data class CursorDragSession(val connection: InputConnection, val text: CharSequence,
+        val start: Int, val breaks: BreakIterator, var position: Int)
+    private var cursorSession: CursorDragSession? = null
+    private var cursorDragging by mutableStateOf(false)
+    private var cursorCharacter by mutableStateOf<String?>(null)
+    private val cursorDrag = CursorDrag(::startCursorDrag, ::moveCursor, ::stopCursorDrag)
+    private fun voxLanguage() = VoxLanguage.resolve(regionalLanguage, language.speechTag)
     private var lastShiftTap: Long? = null
     private val memoryRecorder by lazy { com.notokens.monolog.memory.DraftMemoryRecorder(applicationContext, settingsScope) }
     private val ai by lazy {
         ImeAi(this, settingsScope, settingsStore, dictionary, { currentInputConnection }, ::aiAllowed,
+            canShowLocalToolbar = { privacyReady && editorActive && !editorContext.isRestrictedField },
+            typedActionsAllowed = {
+                !editorContext.isIncognito && !suppressDraftMemory &&
+                    editorContext.inputType and android.text.InputType.TYPE_MASK_CLASS != android.text.InputType.TYPE_CLASS_DATETIME
+            },
             proactiveAllowed = { editorContext.packageName != packageName },
             automaticNetworkAllowed = { !editorContext.isUri && !editorContext.isIncognito },
             personalizationAllowed = ::memoryAllowed,
@@ -164,6 +199,7 @@ class MonologInputMethodService : LifecycleInputMethodService() {
             }
         }
         settingsScope.launch { settingsStore.phoneActions.collect { phoneActionsEnabled = it; ai.onPhoneActionsChanged() } }
+        observeModelWarmup()
         settingsScope.launch { settingsStore.defaultVox.collect { defaultVox = it } }
         settingsScope.launch { settingsStore.smartVoxFilter.collect { voxController.smartFilter = it } }
         settingsScope.launch { settingsStore.sensitiveWords.collect(sensitiveDraft::setWords) }
@@ -184,6 +220,72 @@ class MonologInputMethodService : LifecycleInputMethodService() {
         }
         settingsScope.launch {
             settingsStore.webQuestionSuggestions.collect { if (!it) ai.disableWebSuggestions() }
+        }
+    }
+
+    private fun observeModelWarmup() {
+        val installedPack = RegionalVox.installation.map { (it as? RegionalVox.Install.Ready)?.pack }
+            .distinctUntilChanged()
+        settingsScope.launch {
+            combine(settingsStore.voiceInputEngine, settingsStore.voxLanguage, installedPack) { engine, code, _ ->
+                voiceEngine = engine
+                regionalLanguage = code
+                voxLanguages = if (engine == VoiceInputEngine.REGIONAL) {
+                    VoxLanguage.entries.filter { it.pack == "hi" || RegionalVox.ready(applicationContext, it) }
+                } else emptyList()
+            }.collect()
+        }
+        settingsScope.launch {
+            combine(keyboardModelsVisible, settingsStore.voiceInputEngine, settingsStore.voxLanguage,
+                settingsStore.keyboardLanguage, installedPack
+            ) { visible, engine, code, layout, _ ->
+                val mode = VoxLanguage.resolve(code, KeyboardLanguage.of(layout).speechTag)
+                val selected = if (!visible) null
+                else if (engine == VoiceInputEngine.REGIONAL && !RegionalVox.ready(applicationContext, mode)) null
+                else engine
+                selected to mode
+            }.distinctUntilChanged().collectLatest { (engine, mode) ->
+                if (engine != VoiceInputEngine.REGIONAL) RegionalVox.release()
+                if (engine != VoiceInputEngine.MOONSHINE) OfflineMoonshine.release()
+                warmModel {
+                    when (engine) {
+                        VoiceInputEngine.MOONSHINE -> OfflineMoonshine.warm(applicationContext)
+                        VoiceInputEngine.REGIONAL -> RegionalVox.warm(applicationContext, mode)
+                        else -> Unit
+                    }
+                }
+            }
+        }
+        settingsScope.launch {
+            val models = ModelStore.get(applicationContext)
+            combine(keyboardModelsVisible, models.state, models.active) { visible, state, model ->
+                model.takeIf { visible && state is ModelState.Ready }
+            }.distinctUntilChanged().collectLatest { model ->
+                if (model != null) {
+                    delay(550)
+                    while (android.os.SystemClock.uptimeMillis() - lastKeyEdit < 400) delay(160)
+                    if (!canPrewarmTextModel()) return@collectLatest
+                    warmModel { LocalAi.warm(applicationContext, whileVisible = true) }
+                } else LocalAi.release()
+            }
+        }
+    }
+
+    private fun canPrewarmTextModel(): Boolean {
+        val manager = getSystemService(ActivityManager::class.java) ?: return false
+        val memory = ActivityManager.MemoryInfo().also(manager::getMemoryInfo)
+        return !manager.isLowRamDevice && !memory.lowMemory
+    }
+
+    private suspend fun warmModel(block: suspend () -> Unit) {
+        try {
+            block()
+        } catch (error: CancellationException) {
+            throw error
+        } catch (error: Exception) {
+            android.util.Log.w("MonologIme", "Could not prepare the local model", error)
+        } catch (error: LinkageError) {
+            android.util.Log.w("MonologIme", "The local model runtime is unavailable", error)
         }
     }
 
@@ -221,6 +323,12 @@ class MonologInputMethodService : LifecycleInputMethodService() {
                         editorActive = editorActive,
                         keyboardState = keyboardState,
                         voxState = voxState,
+                        voxLanguage = voxLanguage(),
+                        voxLanguages = voxLanguages,
+                        onVoxLanguage = ::changeVoxLanguage,
+                        cursorDrag = cursorDrag,
+                        cursorActive = cursorDragging,
+                        cursorCharacter = cursorCharacter,
                         isShortcutsOpen = isShortcutsOpen,
                         isVoxOpen = isVoxOpen,
                         shortcutDraft = shortcutDraft,
@@ -238,14 +346,16 @@ class MonologInputMethodService : LifecycleInputMethodService() {
                         swipeAllowed = swipeAllowed(),
                         longPressCharacters = longPressCharacters,
                         language = language,
-                        onOpenSettings = ::handleOpenSettings,
+                        onOpenSettings = { handleOpenSettings() },
+                        onOpenVoiceSettings = { handleOpenSettings(MainActivity.ACTION_OPEN_VOICE) },
                         onEnterVox = ::handleEnterVox,
                         onExitVox = ::handleExitVox,
-                        onStartListening = { voxController.startListening(language.speechTag, language.label) },
+                        onStartListening = ::startVoxListening,
                         onPauseListening = { voxController.pauseOrStopListening() },
                         onClearTranscript = { voxController.clearTranscript(); ai.clearDraft() },
                         onRequestPermission = ::handleRequestMicPermission,
                         onCharTyped = ::handleCharTyped,
+                        onEmojiSuggestion = ::replaceWithEmoji,
                         onPasteImage = ::pasteImage,
                         onLetterTyped = ::handleLetterTyped,
                         onSwipe = ::handleSwipe,
@@ -283,6 +393,8 @@ class MonologInputMethodService : LifecycleInputMethodService() {
         memoryRecorder.start(info?.packageName.orEmpty())
         editorContext = resolved.copy(isUserIncognito = userIncognito)
         editorActive = info != null
+        if (isInputViewShown) keyboardModelsVisible.value = editorActive && !resolved.isRestrictedField
+        stopCursorDrag()
         ai.reset(info?.takeIf { it.initialSelStart == it.initialSelEnd }?.initialSelEnd ?: -1)
         verifyEditorPrivacy()
         ai.refreshDraft()
@@ -311,6 +423,7 @@ class MonologInputMethodService : LifecycleInputMethodService() {
 
     override fun onWindowShown() {
         super.onWindowShown()
+        keyboardModelsVisible.value = !editorContext.isRestrictedField
         pendingCaptureDisplay = null
         captureAfterHide?.cancel()
     }
@@ -321,6 +434,7 @@ class MonologInputMethodService : LifecycleInputMethodService() {
         if (memoryAllowed()) memoryRecorder.boundary() else memoryRecorder.clear()
         clearVoxComposition()
         editorActive = false
+        stopCursorDrag()
         swipeJob?.cancel()
         ai.reset()
         super.onFinishInputView(finishingInput)
@@ -334,6 +448,8 @@ class MonologInputMethodService : LifecycleInputMethodService() {
     override fun onWindowHidden() {
         afterGlide.clear()
         super.onWindowHidden()
+        keyboardModelsVisible.value = false
+        stopCursorDrag()
         keyboardSession++
         layoutSession++
         visibleEditor = null
@@ -368,12 +484,20 @@ class MonologInputMethodService : LifecycleInputMethodService() {
         super.onDestroy()
         settingsScope.cancel()
         voxController.cleanup()
+        RegionalVox.release()
+        OfflineMoonshine.release()
         LocalAi.release()
     }
 
     override fun onTrimMemory(level: Int) {
         super.onTrimMemory(level)
-        if (level >= android.content.ComponentCallbacks2.TRIM_MEMORY_RUNNING_LOW) LocalAi.release()
+        if (level >= android.content.ComponentCallbacks2.TRIM_MEMORY_RUNNING_LOW) {
+            LocalAi.release()
+            if (!isVoxOpen) {
+                RegionalVox.release()
+                OfflineMoonshine.release()
+            }
+        }
     }
 
     override fun onUpdateSelection(
@@ -459,9 +583,9 @@ class MonologInputMethodService : LifecycleInputMethodService() {
         ai.refreshDraft()
     }
 
-    private fun handleOpenSettings() {
+    private fun handleOpenSettings(destination: String = MainActivity.ACTION_OPEN_SETTINGS) {
         val intent = Intent(this, MainActivity::class.java).apply {
-            action = MainActivity.ACTION_OPEN_SETTINGS
+            action = destination
             flags = Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TOP or Intent.FLAG_ACTIVITY_SINGLE_TOP
         }
         startActivity(intent)
@@ -475,10 +599,30 @@ class MonologInputMethodService : LifecycleInputMethodService() {
         ai.clearDraft()
         voxController.clearTranscript()
         isVoxOpen = true
-        voxController.startListening(language.speechTag, language.label)
+        startVoxListening()
+    }
+
+    private fun startVoxListening() {
+        voxController.startListening(language.speechTag, language.label, voxLanguage().takeIf {
+            voiceEngine == VoiceInputEngine.REGIONAL
+        })
+    }
+
+    private fun changeVoxLanguage(mode: VoxLanguage) {
+        voxLanguageChange?.cancel()
+        voxLanguageChange = settingsScope.launch {
+            val resume = voxState.status == VoxStatus.LISTENING || voxState.status == VoxStatus.PREPARING
+            if (resume || voxState.status == VoxStatus.PROCESSING) voxController.finishCurrentPhrase()
+            if (!isVoxOpen) return@launch
+            settingsStore.setVoxLanguage(mode.code)
+            regionalLanguage = mode.code
+            if (resume) startVoxListening()
+            else voxState = voxState.copy(status = VoxStatus.PAUSED, errorMessage = null)
+        }
     }
 
     private fun handleExitVox() {
+        voxLanguageChange?.cancel()
         clearVoxComposition()
         voxController.cleanup()
         isVoxOpen = false
@@ -560,6 +704,78 @@ class MonologInputMethodService : LifecycleInputMethodService() {
         } catch (_: Exception) {}
     }
 
+    private fun startCursorDrag() {
+        if (!editorActive) return
+        cursorDragging = true
+        cursorCharacter = null
+        val draft = searchQuery ?: shortcutDraft.activeValue.takeIf { isShortcutsOpen && shortcutDraft.isEditing }
+        if (draft != null) {
+            cursorCharacter = cursorLetter(draft.text, draft.selection.end)
+            return
+        }
+        val connection = currentInputConnection ?: return
+        if (editorContext.isRestrictedField) return
+        val surrounding = connection.getSurroundingText(2048, 2048, 0) ?: return
+        val end = surrounding.selectionEnd
+        if (surrounding.offset < 0 || end !in 0..surrounding.text.length) return
+        val text = surrounding.text.toString()
+        val breaks = BreakIterator.getCharacterInstance().apply { setText(text) }
+        cursorSession = CursorDragSession(connection, text, surrounding.offset, breaks, end)
+        cursorCharacter = cursorLetter(text, end)
+        autocorrectUndo = null
+    }
+
+    private fun moveCursor(steps: Int) {
+        if (!cursorDragging) return
+        val draft = searchQuery ?: shortcutDraft.activeValue.takeIf { isShortcutsOpen && shortcutDraft.isEditing }
+        if (draft != null) {
+            val breaks = BreakIterator.getCharacterInstance().apply { setText(draft.text) }
+            val position = cursorStep(breaks, draft.selection.end, steps)
+            val moved = draft.copy(selection = TextRange(position), composition = null)
+            if (searchQuery != null) searchQuery = moved else shortcutDraft = shortcutDraft.update(moved)
+            cursorCharacter = cursorLetter(draft.text, position)
+            return
+        }
+        val connection = currentInputConnection ?: return
+        val session = cursorSession?.takeIf { it.connection === connection }
+        if (session != null) {
+            val position = cursorStep(session.breaks, session.position, steps)
+            if (position == session.position) return
+            val absolute = position + session.start
+            if (connection.setSelection(absolute, absolute)) {
+                session.position = position
+                cursorCharacter = cursorLetter(session.text, position)
+                return
+            }
+            cursorSession = null
+            cursorCharacter = null
+        }
+        val key = if (steps < 0) KeyEvent.KEYCODE_DPAD_LEFT else KeyEvent.KEYCODE_DPAD_RIGHT
+        repeat(kotlin.math.abs(steps).coerceAtMost(16)) {
+            connection.sendKeyEvent(KeyEvent(KeyEvent.ACTION_DOWN, key))
+            connection.sendKeyEvent(KeyEvent(KeyEvent.ACTION_UP, key))
+        }
+    }
+
+    private fun cursorStep(breaks: BreakIterator, start: Int, steps: Int): Int {
+        var position = start
+        repeat(kotlin.math.abs(steps).coerceAtMost(16)) {
+            val next = if (steps < 0) breaks.preceding(position) else breaks.following(position)
+            if (next == BreakIterator.DONE) return position
+            position = next
+        }
+        return position
+    }
+
+    private fun cursorLetter(text: CharSequence, position: Int): String? =
+        (text.getOrNull(position - 1)?.takeUnless(Char::isWhitespace) ?: text.getOrNull(position))?.toString()
+
+    private fun stopCursorDrag() {
+        cursorDragging = false
+        cursorCharacter = null
+        cursorSession = null
+    }
+
     private fun deferDuringGlide(input: () -> Unit): Boolean {
         if (swipeJob?.isActive != true) return false
         afterGlide.addLast(input)
@@ -637,6 +853,27 @@ class MonologInputMethodService : LifecycleInputMethodService() {
         return inserted
     }
 
+    private fun replaceWithEmoji(typed: String, emoji: String): Boolean {
+        if (deferDuringGlide { replaceWithEmoji(typed, emoji) }) return false
+        if (!editorActive || editorContext.isRestrictedField || searchQuery != null) return false
+        val ic = currentInputConnection ?: return false
+        if (!ic.getSelectedText(0).isNullOrEmpty() || ic.getTextBeforeCursor(typed.length, 0)?.toString() != typed) return false
+        autocorrectUndo = null
+        ic.beginBatchEdit()
+        try {
+            if (!ic.deleteSurroundingText(typed.length, 0)) return false
+            if (!ic.commitText(emoji, 1)) {
+                ic.commitText(typed, 1)
+                return false
+            }
+            memoryRecorder.replace(typed, emoji, memoryAllowed())
+            ai.refreshDraft()
+            return true
+        } finally {
+            ic.endBatchEdit()
+        }
+    }
+
     private fun handleLetterTyped(text: String) {
         if (deferDuringGlide { handleLetterTyped(text) }) return
         val cased = if (keyboardState.shiftState.isUppercase) {
@@ -646,6 +883,7 @@ class MonologInputMethodService : LifecycleInputMethodService() {
     }
 
     private fun handleCharTyped(text: String) {
+        lastKeyEdit = android.os.SystemClock.uptimeMillis()
         if (deferDuringGlide { handleCharTyped(text) }) return
         swipeJob?.cancel()
         lastShiftTap = null
@@ -678,6 +916,7 @@ class MonologInputMethodService : LifecycleInputMethodService() {
     }
 
     private fun handleBackspace() {
+        lastKeyEdit = android.os.SystemClock.uptimeMillis()
         if (deferDuringGlide { handleBackspace() }) return
         swipeJob?.cancel()
         searchQuery?.let { query ->
@@ -697,10 +936,9 @@ class MonologInputMethodService : LifecycleInputMethodService() {
         val ic = currentInputConnection ?: return
         sensitiveDraft.backspace()
         if (undoAutoCorrection()) return
-        ai.closePanel()
-        ai.clearDraft()
+        ai.backspaceStarted()
         val selected = if (editorContext.isIncognito) null else ic.getSelectedText(0)
-        memoryRecorder.backspace(!selected.isNullOrEmpty())
+        if (memoryAllowed()) memoryRecorder.backspace(!selected.isNullOrEmpty())
         if (!selected.isNullOrEmpty()) {
             ic.commitText("", 1)
         } else {
@@ -719,6 +957,7 @@ class MonologInputMethodService : LifecycleInputMethodService() {
     }
 
     private fun handleSpace() {
+        lastKeyEdit = android.os.SystemClock.uptimeMillis()
         if (deferDuringGlide { handleSpace() }) return
         swipeJob?.cancel()
         autocorrectUndo = null

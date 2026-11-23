@@ -31,6 +31,8 @@ import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.BoxWithConstraints
+import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
@@ -48,7 +50,10 @@ import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
+import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.TextButton
+import androidx.compose.material3.DropdownMenu
+import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.remember
 import androidx.compose.ui.Alignment
@@ -84,6 +89,9 @@ import com.notokens.monolog.ui.theme.PaperPillBackground
 @Composable
 fun VoxPanel(
     voxState: VoxState,
+    language: VoxLanguage,
+    languages: List<VoxLanguage>,
+    onLanguage: (VoxLanguage) -> Unit,
     onStartListening: () -> Unit,
     onPauseListening: () -> Unit,
     onClearTranscript: () -> Unit,
@@ -101,6 +109,8 @@ fun VoxPanel(
     val fullTranscript = listOf(voxState.transcript, voxState.partialTranscript)
         .filter(String::isNotBlank).joinToString(" ")
     val isListening = voxState.status == VoxStatus.LISTENING
+    val preparing = voxState.status == VoxStatus.PREPARING
+    var languagesOpen by remember { mutableStateOf(false) }
     val view = LocalView.current
 
     Column(
@@ -153,6 +163,9 @@ fun VoxPanel(
                     fontWeight = FontWeight.Medium,
                     color = PaperKeySubText
                 )
+            }
+            VoxStatus.PREPARING -> {
+                Text("Preparing voice model…", fontSize = 12.sp, color = PaperKeySubText)
             }
             VoxStatus.PROCESSING -> {
                 Text(
@@ -219,21 +232,54 @@ fun VoxPanel(
 
         Spacer(modifier = Modifier.height(10.dp))
 
-        Box(Modifier.fillMaxWidth().height(56.dp)) {
+        BoxWithConstraints(Modifier.fillMaxWidth().height(56.dp)) {
+            if (languages.isNotEmpty()) {
+                Box(Modifier.align(Alignment.CenterStart).widthIn(max = (maxWidth - 58.dp) / 2)) {
+                    Column(
+                        Modifier.clip(RoundedCornerShape(13.dp))
+                            .background(MaterialTheme.colorScheme.primaryContainer)
+                            .clickable(onClickLabel = "Change speech language") {
+                                triggerHapticFeedback(view)
+                                languagesOpen = true
+                            }.padding(horizontal = 9.dp, vertical = 5.dp)
+                    ) {
+                        Text("Speech language", fontSize = 10.sp, maxLines = 1,
+                            color = MaterialTheme.colorScheme.onPrimaryContainer)
+                        Text(language.title + " \u25be", fontSize = 13.sp, fontWeight = FontWeight.SemiBold,
+                            color = MaterialTheme.colorScheme.onPrimaryContainer, maxLines = 1,
+                            overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis)
+                    }
+                    DropdownMenu(languagesOpen, { languagesOpen = false }, Modifier.heightIn(max = 320.dp)) {
+                        languages.forEach { choice ->
+                            DropdownMenuItem(
+                                text = { Text(choice.title) },
+                                onClick = {
+                                    languagesOpen = false
+                                    if (language != choice) onLanguage(choice)
+                                }
+                            )
+                        }
+                    }
+                }
+            }
             Box(
                 modifier = Modifier.align(Alignment.Center)
                     .size(52.dp)
                     .shadow(4.dp, CircleShape)
                     .clip(CircleShape)
                     .background(if (isListening) PaperPillBackground else PaperAccentBlue)
-                    .clickable(enabled = voxState.status != VoxStatus.PROCESSING) {
+                    .clickable(enabled = !preparing && voxState.status != VoxStatus.PROCESSING) {
                         triggerHapticFeedback(view)
                         if (isListening) onPauseListening() else onStartListening()
                     }
                     .semantics { contentDescription = if (isListening) "Pause listening" else "Start listening" },
                 contentAlignment = Alignment.Center
             ) {
-                Text(if (isListening) "❚❚" else "▶", fontSize = 18.sp,
+                if (preparing) CircularProgressIndicator(
+                    modifier = Modifier.size(20.dp),
+                    color = MaterialTheme.colorScheme.onPrimary,
+                    strokeWidth = 2.dp
+                ) else Text(if (isListening) "❚❚" else "▶", fontSize = 18.sp,
                     color = if (isListening) PaperKeyText else MaterialTheme.colorScheme.onPrimary)
             }
             TextButton(modifier = Modifier.align(Alignment.CenterEnd), onClick = {

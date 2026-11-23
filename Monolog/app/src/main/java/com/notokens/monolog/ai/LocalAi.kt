@@ -53,18 +53,21 @@ internal object LocalAi {
     private var engine: Engine? = null
     private var idleClose: Job? = null
     private var lastUsed = 0L
+    private var keepWarm = false
     private val lastRun = MutableStateFlow<String?>(null)
     val lastRunStatus = lastRun.asStateFlow()
 
-    suspend fun warm(context: Context) = withContext(Dispatchers.Default) {
+    suspend fun warm(context: Context, whileVisible: Boolean = false) = withContext(Dispatchers.Default) {
         engineLock.withLock {
             val store = ModelStore.get(context)
-            if (store.state.value is ModelState.Ready && store.active.value == TextModel.GEMMA) {
-                try {
-                    getEngine(context)
-                } finally {
-                    scheduleClose()
-                }
+            val selection = store.active.value ?: return@withLock
+            if (store.state.value !is ModelState.Ready) return@withLock
+            if (whileVisible) keepWarm = true
+            try {
+                if (selection.isGguf) GgufRuntime.warm(store.file(selection))
+                else getEngine(context)
+            } finally {
+                scheduleClose()
             }
         }
     }
@@ -98,6 +101,8 @@ internal object LocalAi {
                                 GemmaResult.Failed(false)
                             } catch (_: LinkageError) {
                                 GemmaResult.Failed(true)
+                            } finally {
+                                scheduleClose()
                             }
                         }
                         var loading = true
@@ -160,6 +165,7 @@ internal object LocalAi {
     private fun scheduleClose() {
         lastUsed = SystemClock.elapsedRealtime()
         idleClose?.cancel()
+        if (keepWarm) return
         val timestamp = lastUsed
         idleClose = scope.launch {
             delay(IDLE_TIMEOUT)
@@ -179,7 +185,11 @@ internal object LocalAi {
 
     fun release() {
         scope.launch {
-            engineLock.withLock { closeEngine() }
+            engineLock.withLock {
+                keepWarm = false
+                idleClose?.cancel()
+                closeEngine()
+            }
         }
     }
 
@@ -187,6 +197,7 @@ internal object LocalAi {
         val previous = engine
         engine = null
         previous?.close()
+        GgufRuntime.release()
     }
 
     private const val IDLE_TIMEOUT = 45_000L

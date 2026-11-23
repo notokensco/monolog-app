@@ -2,6 +2,7 @@ package com.notokens.monolog.ime.vox
 
 enum class VoxStatus {
     IDLE,
+    PREPARING,
     LISTENING,
     PAUSED,
     PROCESSING,

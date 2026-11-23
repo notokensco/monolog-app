@@ -42,7 +42,7 @@ data class EditorContext(
 
     companion object {
         private val credentialHint = Regex(
-            """\b(otp|one[ -]time (code|password|pin)|verification code|security code|passcode|cvv|upi pin)\b""",
+            """\b(otp|one[ -]time (code|password|pin)|verification code|security code|passcode|cvv|cvc|upi pin|card number|aadhaar|bank account number)\b""",
             RegexOption.IGNORE_CASE
         )
         fun default(): EditorContext = EditorContext(

@@ -4,6 +4,8 @@ import android.content.res.AssetManager
 import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.background
 import androidx.compose.foundation.combinedClickable
+import androidx.compose.foundation.horizontalScroll
+import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.grid.GridCells
@@ -37,7 +39,17 @@ import kotlinx.coroutines.withContext
 internal data class Emoji(val text: String, val label: String)
 private data class EmojiGroup(val name: String, val entries: List<Emoji>, val variants: Map<String, List<Emoji>> = emptyMap())
 
+private data class EmojiSearchEntry(val emoji: Emoji, val name: String)
+
 private object EmojiCatalog {
+    @Volatile private var indexed: List<EmojiSearchEntry>? = null
+
+    fun searchIndex(assets: AssetManager): List<EmojiSearchEntry> = indexed ?: synchronized(this) {
+        indexed ?: read(assets).flatMap { group ->
+            group.entries.map { EmojiSearchEntry(it, it.label.lowercase().replace('-', ' ')) }
+        }.also { indexed = it }
+    }
+
     private val labels = mapOf(
         "Smileys & Emotion" to "Faces",
         "People & Body" to "People",
@@ -78,7 +90,7 @@ private object EmojiCatalog {
 }
 
 internal fun preloadEmojiCatalog(assets: AssetManager) {
-    EmojiCatalog.read(assets)
+    EmojiCatalog.searchIndex(assets)
 }
 
 private val EmojiFont = FontFamily(Font(R.font.noto_emoji))
@@ -89,12 +101,48 @@ private val ToolbarEmoji = listOf(
     Emoji("\uD83C\uDF89", "Party popper")
 )
 
+internal data class EmojiMatches(val typed: String, val entries: List<Emoji>)
+
+private val emojiTerms = Regex("""[\p{L}]+(?:[ -][\p{L}]+){0,3}$""")
+private val emojiAliases = mapOf(
+    "smile" to "grinning face", "happy" to "smiling face with smiling eyes",
+    "laugh" to "face with tears of joy", "lol" to "face with tears of joy",
+    "cry" to "loudly crying face", "sad" to "crying face", "love" to "red heart",
+    "thanks" to "folded hands", "pray" to "folded hands",
+    "party" to "party popper", "fire" to "fire", "wow" to "face with open mouth"
+)
+
+internal fun matchEmojiName(assets: AssetManager, before: String): EmojiMatches? {
+    val ending = emojiTerms.find(before)?.value ?: return null
+    val emojis = EmojiCatalog.searchIndex(assets)
+    val words = ending.split(' ', '-')
+    for (size in minOf(3, words.size) downTo 1) {
+        val length = words.takeLast(size).sumOf(String::length) + size - 1
+        val typed = ending.takeLast(length)
+        val query = typed.lowercase().replace('-', ' ')
+        if (query.length < 3) continue
+        val alias = emojiAliases[query]
+        val matches = emojis.mapNotNull { (emoji, name) ->
+            val score = when {
+                name == alias -> 0
+                name == query -> 1
+                name.startsWith(query) -> 2
+                size == 1 && (name.endsWith(" $query") || name.contains(" $query ")) -> 3
+                else -> return@mapNotNull null
+            }
+            emoji to score
+        }.sortedWith(compareBy({ it.second }, { it.first.label.length })).take(7).map { it.first }
+        if (matches.isNotEmpty()) return EmojiMatches(typed, matches)
+    }
+    return null
+}
+
 @Composable
-internal fun EmojiShortcutStrip(recent: List<Emoji>, onPick: (Emoji) -> Unit) {
-    val choices = (recent + ToolbarEmoji).distinctBy(Emoji::text).take(7)
-    LazyRow(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically,
+internal fun EmojiShortcutStrip(recent: List<Emoji>, matches: List<Emoji>? = null, onPick: (Emoji) -> Unit) {
+    val choices = matches ?: (recent + ToolbarEmoji).distinctBy(Emoji::text).take(7)
+    Row(Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()), verticalAlignment = Alignment.CenterVertically,
         horizontalArrangement = Arrangement.Center) {
-        items(choices, key = Emoji::text) { emoji ->
+        choices.forEach { emoji ->
             KeyButton(
                 modifier = Modifier.width(34.dp).height(40.dp),
                 label = emoji.label,

@@ -5,7 +5,7 @@
     <string name="companion_brand_line">Companion by NoTokens</string>
     <string name="subtype_en_us">English (US)</string>
     <string name="quick_capture_name">Monolog Quick Capture</string>
-    <string name="quick_capture_description">Tap the Monolog context key or floating shortcut to capture a screen, even with the keyboard closed. Add pins or a voice note and save the capture to your private Journal. Incognito pauses capture. Screens that block screenshots cannot be captured.</string>
+    <string name="quick_capture_description">Use the Monolog keyboard key or Android accessibility shortcut to capture a screen. When Android reports a hold or two quick taps and exposes its position, Monolog opens actions beside that button. Add pins or a voice note and save the capture to your private Journal. Incognito pauses capture.</string>
     
     <!-- Setup Screen -->
     <string name="setup_tagline">Type. Speak. Act. Remember.</string>

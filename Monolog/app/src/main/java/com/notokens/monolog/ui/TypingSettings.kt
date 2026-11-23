@@ -31,9 +31,9 @@ import kotlin.math.roundToInt
 @Composable
 internal fun KeyboardBehaviorSettings(settings: SettingsStore) {
     val scope = rememberCoroutineScope()
-    val vox by settings.defaultVox.collectAsState(false)
     val phoneActions by settings.phoneActions.collectAsState(true)
     val spellCheck by settings.systemSpellChecker.collectAsState(false)
+    val cursorOnSpace by settings.cursorOnSpace.collectAsState(false)
     val popups by settings.keyPopups.collectAsState(false)
     val popupMs by settings.keyPopupMs.collectAsState(70)
     val height by settings.keyHeightPercent.collectAsState(100)
@@ -42,15 +42,13 @@ internal fun KeyboardBehaviorSettings(settings: SettingsStore) {
     var previewHeight by remember(height) { mutableIntStateOf(height) }
     var previewDelay by remember(popupMs) { mutableIntStateOf(popupMs) }
     SettingsCard("Keyboard layout") {
-        KeyboardSwitch(if (vox) "Default Vox" else "Default Keys", vox) {
-            scope.launch { settings.setDefaultVox(it) }
-        }
         KeyboardSwitch("Android spell checker", spellCheck) { scope.launch { settings.setSystemSpellChecker(it) } }
         if (spellCheck) Text("Offers extra corrections from the spell checker selected in Android settings. Private fields stay local to Monolog.",
             color = PaperKeySubText, style = MaterialTheme.typography.bodySmall)
         KeyboardSwitch("Phone actions in toolbar and AI Ask", phoneActions) { scope.launch { settings.setPhoneActions(it) } }
         if (phoneActions) Text("Suggests actions from typed text or the current clipboard without saving clipboard history.",
             color = PaperKeySubText, style = MaterialTheme.typography.bodySmall)
+        KeyboardSwitch("Hold space to move the cursor", cursorOnSpace) { scope.launch { settings.setCursorOnSpace(it) } }
         KeyboardSwitch("Key popups", popups) { scope.launch { settings.setKeyPopups(it) } }
         if (popups) {
             Text("Popup delay · $previewDelay ms")
@@ -129,83 +127,32 @@ internal fun PersonalDictionarySettings(settings: SettingsStore) {
 }
 
 @Composable
-internal fun VoiceInputSettings(settings: SettingsStore) {
-    val engine by settings.voiceInputEngine.collectAsState(initial = VoiceInputEngine.NATIVE)
+internal fun VoiceInputSettings(settings: SettingsStore, onRequestMicPermission: () -> Unit) {
+    val engine by settings.voiceInputEngine.collectAsState(VoiceInputEngine.NATIVE)
     val pauseMs by settings.voxPause.collectAsState(3200)
     var previewPause by remember(pauseMs) { mutableIntStateOf(pauseMs) }
-    val swapped by settings.swapVoxAndAi.collectAsState(initial = false)
+    val swapped by settings.swapVoxAndAi.collectAsState(false)
+    val defaultVox by settings.defaultVox.collectAsState(false)
+    val smartFilter by settings.smartVoxFilter.collectAsState(true)
     val scope = rememberCoroutineScope()
-    SettingsCard("Vox and AI shortcuts") {
-        Row(verticalAlignment = Alignment.CenterVertically) {
-            Column(Modifier.weight(1f)) {
-                Text("Swap Vox and AI Mode")
-                Text("Hold Space for Vox. Open AI from the toolbar.", color = PaperKeySubText,
-                    style = MaterialTheme.typography.bodySmall)
-            }
-            Switch(swapped, { value -> scope.launch { settings.setSwapVoxAndAi(value) } })
-        }
-    }
-    SettingsCard("Voice input engine") {
-        Text(
-            "Choose your speech recognition engine for Vox typing.",
-            color = PaperKeySubText,
-            style = MaterialTheme.typography.bodySmall
-        )
-        Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
-            RadioButton(engine == VoiceInputEngine.REGIONAL, {
-                scope.launch { settings.setVoiceInputEngine(VoiceInputEngine.REGIONAL) }
-            })
-            Column {
-                Text("VOX AI India")
-                Text("Indian English, Hindi and mixed speech. Download it under On-device AI.", color = PaperKeySubText)
-            }
-        }
+    SettingsCard("Voice controls") {
+        KeyboardSwitch("Open the keyboard in Vox", defaultVox) { scope.launch { settings.setDefaultVox(it) } }
+        KeyboardSwitch("Swap Vox and AI shortcuts", swapped) { scope.launch { settings.setSwapVoxAndAi(it) } }
+        KeyboardSwitch("Smart Filter for filler sounds", smartFilter) { scope.launch { settings.setSmartVoxFilter(it) } }
         Text("Finish after ${"%.1f".format(previewPause / 1000f)} seconds of silence")
         Slider(value = previewPause.toFloat(), onValueChange = { previewPause = it.roundToInt() },
             onValueChangeFinished = { scope.launch { settings.setVoxPause(previewPause) } },
             valueRange = 1800f..6000f, steps = 14)
-        Row(
-            modifier = Modifier
-                .fillMaxWidth()
-                .clickable { scope.launch { settings.setVoiceInputEngine(VoiceInputEngine.NATIVE) } }
-                .padding(vertical = 6.dp),
-            verticalAlignment = Alignment.CenterVertically
-        ) {
-            RadioButton(
-                selected = engine == VoiceInputEngine.NATIVE,
-                onClick = { scope.launch { settings.setVoiceInputEngine(VoiceInputEngine.NATIVE) } }
-            )
-            Spacer(Modifier.width(8.dp))
-            Column(Modifier.weight(1f)) {
-                Text("Native real-time streaming", color = PaperKeyText, style = MaterialTheme.typography.titleSmall)
-                Text(
-                    "Instant on-device transcription with automatic filtering for filler sounds (umm, aa, uhh).",
-                    color = PaperKeySubText,
-                    style = MaterialTheme.typography.bodySmall
-                )
-            }
-        }
-        HorizontalDivider(color = PaperPillBorder)
-        Row(
-            modifier = Modifier
-                .fillMaxWidth()
-                .clickable { scope.launch { settings.setVoiceInputEngine(VoiceInputEngine.MOONSHINE) } }
-                .padding(vertical = 6.dp),
-            verticalAlignment = Alignment.CenterVertically
-        ) {
-            RadioButton(
-                selected = engine == VoiceInputEngine.MOONSHINE,
-                onClick = { scope.launch { settings.setVoiceInputEngine(VoiceInputEngine.MOONSHINE) } }
-            )
-            Spacer(Modifier.width(8.dp))
-            Column(Modifier.weight(1f)) {
-                Text("VOX AI", color = PaperKeyText, style = MaterialTheme.typography.titleSmall)
-                Text(
-                    "Live English captions with the downloadable VOX AI model.",
-                    color = PaperKeySubText,
-                    style = MaterialTheme.typography.bodySmall
-                )
-            }
+        TextButton(onRequestMicPermission) { Text("Microphone permission") }
+    }
+    if (com.notokens.monolog.ime.vox.OfflineMoonshine.available) OfflineVoxSettings()
+    RegionalVoiceSettings()
+    SettingsCard("Android speech") {
+        Text("Use the on-device speech engine supplied by Android. Language support depends on the device.",
+            color = PaperKeySubText)
+        if (engine == VoiceInputEngine.NATIVE) Text("Active in Vox", color = MaterialTheme.colorScheme.primary)
+        else TextButton({ scope.launch { settings.setVoiceInputEngine(VoiceInputEngine.NATIVE) } }) {
+            Text("Use Android speech")
         }
     }
 }

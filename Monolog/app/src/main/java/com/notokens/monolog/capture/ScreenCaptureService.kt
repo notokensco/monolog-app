@@ -2,13 +2,10 @@ package com.notokens.monolog.capture
 
 import android.accessibilityservice.AccessibilityService
 import android.accessibilityservice.AccessibilityButtonController
-import android.content.ComponentName
 import android.content.res.Configuration
-import android.database.ContentObserver
 import android.graphics.Bitmap
-import android.os.Handler
-import android.os.Looper
-import android.provider.Settings
+import android.graphics.Rect
+import android.os.SystemClock
 import android.view.Display
 import android.view.accessibility.AccessibilityEvent
 import com.notokens.monolog.data.SettingsStore
@@ -21,10 +18,7 @@ import kotlinx.coroutines.cancel
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.suspendCancellableCoroutine
-import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.first
-import kotlinx.coroutines.flow.MutableStateFlow
-import kotlinx.coroutines.flow.asStateFlow
 import kotlin.coroutines.resume
 import kotlin.coroutines.resumeWithException
 
@@ -32,20 +26,16 @@ class ScreenCaptureService : AccessibilityService() {
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Main.immediate)
     private var capture: Job? = null
     private val settings by lazy { SettingsStore(applicationContext) }
-    private val floating by lazy { FloatingContextDock(this) { saveScreenshot(Display.DEFAULT_DISPLAY, hideKeyboard = true) } }
-    private var dockEnabled = false
-    private var dockJob: Job? = null
+    private val shortcutMenu by lazy { SystemShortcutMenu(this) }
+    private val shortcutAnchor by lazy { SystemShortcutAnchor(this) }
     private var shortcutTap: Job? = null
-    private val shortcutObserver = object : ContentObserver(Handler(Looper.getMainLooper())) {
-        override fun onChange(selfChange: Boolean) = refreshSystemShortcut()
-    }
+    private var lastSystemButtonClick: Pair<Rect, Long>? = null
     private val screen = object : android.content.BroadcastReceiver() {
         override fun onReceive(context: android.content.Context?, intent: android.content.Intent?) {
-            if (intent?.action == android.content.Intent.ACTION_SCREEN_OFF) {
-                shortcutTap?.cancel()
-                floating.hide()
-            }
-            else refreshSystemShortcut()
+            shortcutTap?.cancel()
+            shortcutTap = null
+            lastSystemButtonClick = null
+            shortcutMenu.hide()
         }
     }
     private val contextButton = object : AccessibilityButtonController.AccessibilityButtonCallback() {
@@ -53,9 +43,7 @@ class ScreenCaptureService : AccessibilityService() {
             if (shortcutTap?.isActive == true) {
                 shortcutTap?.cancel()
                 shortcutTap = null
-                scope.launch {
-                    if (!settings.incognito.first()) floating.showShortcuts()
-                }
+                showSystemShortcutMenu()
             } else {
                 shortcutTap = scope.launch {
                     delay(android.view.ViewConfiguration.getDoubleTapTimeout().toLong())
@@ -64,8 +52,13 @@ class ScreenCaptureService : AccessibilityService() {
                 }
             }
         }
+
         override fun onAvailabilityChanged(controller: AccessibilityButtonController, available: Boolean) {
-            refreshSystemShortcut()
+            if (!available) {
+                shortcutTap?.cancel()
+                shortcutTap = null
+                shortcutMenu.hide()
+            }
         }
     }
 
@@ -73,87 +66,83 @@ class ScreenCaptureService : AccessibilityService() {
         super.onServiceConnected()
         connected = this
         accessibilityButtonController.registerAccessibilityButtonCallback(contextButton)
-        if (dockJob == null) {
-            contentResolver.registerContentObserver(Settings.Secure.getUriFor(BUTTON_TARGETS), false, shortcutObserver)
-            refreshSystemShortcut()
-            registerReceiver(screen, android.content.IntentFilter().apply {
-                addAction(android.content.Intent.ACTION_SCREEN_OFF)
-                addAction(android.content.Intent.ACTION_USER_PRESENT)
-            }, RECEIVER_NOT_EXPORTED)
-            dockJob = scope.launch {
-                combine(settings.floatingContextDock, settings.incognito, settings.shortcutHoldMs,
-                    settings.shortcutHaptics, settings.quickShortcutOrder) { active, incognito, hold, haptics, order ->
-                    floating.configure(hold, haptics, order)
-                    active && !incognito
-                }.collect {
-                    dockEnabled = it
-                    syncFloatingButton()
-                }
-            }
+        if (!screenRegistered) {
+            registerReceiver(screen, android.content.IntentFilter(android.content.Intent.ACTION_SCREEN_OFF),
+                RECEIVER_NOT_EXPORTED)
+            screenRegistered = true
         }
     }
 
-    override fun onAccessibilityEvent(event: AccessibilityEvent?) = Unit
-    override fun onInterrupt() { capture?.cancel() }
+    private var screenRegistered = false
+
+    override fun onAccessibilityEvent(event: AccessibilityEvent?) {
+        if (event?.packageName?.toString() != "com.android.systemui") return
+        if (event.eventType != AccessibilityEvent.TYPE_VIEW_CLICKED &&
+            event.eventType != AccessibilityEvent.TYPE_VIEW_LONG_CLICKED) return
+        val anchor = shortcutAnchor.clicked(event.source) ?: return
+        if (event.eventType == AccessibilityEvent.TYPE_VIEW_LONG_CLICKED) {
+            shortcutTap?.cancel()
+            shortcutTap = null
+            showSystemShortcutMenu(anchor)
+        } else {
+            lastSystemButtonClick = anchor to event.eventTime
+        }
+    }
+
+    private fun showSystemShortcutMenu(heldAnchor: Rect? = null) {
+        if (shortcutMenu.isShowing) {
+            if (heldAnchor == null) shortcutMenu.hide()
+            return
+        }
+        scope.launch {
+            if (settings.incognito.first()) return@launch
+            val recent = lastSystemButtonClick?.takeIf {
+                SystemClock.uptimeMillis() - it.second in 0..450L
+            }?.first
+            val anchor = heldAnchor ?: shortcutAnchor.locate() ?: recent ?: return@launch
+            shortcutMenu.show(anchor, settings.quickShortcutOrder.first(), settings.shortcutHaptics.first())
+        }
+    }
+
+    override fun onInterrupt() {
+        capture?.cancel()
+        shortcutTap?.cancel()
+        shortcutTap = null
+        shortcutMenu.hide()
+    }
 
     override fun onConfigurationChanged(newConfig: Configuration) {
         super.onConfigurationChanged(newConfig)
-        floating.reposition()
-        refreshSystemShortcut()
-    }
-
-    private fun refreshSystemShortcut() {
-        val component = ComponentName(this, ScreenCaptureService::class.java)
-        // Availability applies to the system's button in general. Check Monolog's
-        // assignment so shortcuts for other accessibility services are unaffected.
-        nativeContextShortcut.value = try {
-            Settings.Secure.getString(contentResolver, BUTTON_TARGETS).orEmpty().split(':')
-                .any { ComponentName.unflattenFromString(it) == component }
-        } catch (_: SecurityException) {
-            accessibilityButtonController.isAccessibilityButtonAvailable
-        }
-        syncFloatingButton()
-    }
-
-    private fun syncFloatingButton(starting: Boolean = false) {
-        val power = getSystemService(android.os.PowerManager::class.java)
-        if (dockEnabled && !nativeContextShortcut.value && (starting || capture?.isActive != true) &&
-            power?.isInteractive == true) floating.show()
-        else floating.hide()
+        lastSystemButtonClick = null
+        shortcutMenu.hide()
     }
 
     override fun onDestroy() {
         accessibilityButtonController.unregisterAccessibilityButtonCallback(contextButton)
         if (connected === this) connected = null
-        if (dockJob != null) {
-            unregisterReceiver(screen)
-            contentResolver.unregisterContentObserver(shortcutObserver)
-        }
-        dockEnabled = false
-        nativeContextShortcut.value = false
+        if (screenRegistered) unregisterReceiver(screen)
         scope.cancel()
-        floating.hide()
+        shortcutMenu.hide()
         super.onDestroy()
     }
 
     private fun saveScreenshot(displayId: Int, hideKeyboard: Boolean = false) {
         if (capture?.isActive == true) return
+        shortcutMenu.hide()
         capture = scope.launch {
             val keyboard = softKeyboardController
             val previousMode = keyboard.showMode
             var temporarilyHidden = false
             try {
                 captureToJournal(this@ScreenCaptureService, settings) {
-                    if (dockEnabled) floating.hide()
                     if (hideKeyboard) {
                         temporarilyHidden = previousMode != SHOW_MODE_HIDDEN && keyboard.setShowMode(SHOW_MODE_HIDDEN)
                         delay(300)
-                    } else if (dockEnabled) delay(100)
+                    }
                     screenshot(displayId)
                 }
             } finally {
                 if (temporarilyHidden) keyboard.setShowMode(previousMode)
-                syncFloatingButton(starting = true)
             }
         }
     }
@@ -190,9 +179,6 @@ class ScreenCaptureService : AccessibilityService() {
     }
 
     companion object {
-        private const val BUTTON_TARGETS = "accessibility_button_targets"
-        private val nativeContextShortcut = MutableStateFlow(false)
-        val systemShortcutAssigned = nativeContextShortcut.asStateFlow()
         private var connected: ScreenCaptureService? = null
         val isReady: Boolean get() = connected != null
 

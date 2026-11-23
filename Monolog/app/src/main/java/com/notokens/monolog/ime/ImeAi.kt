@@ -37,6 +37,8 @@ internal class ImeAi(
     private val dictionary: EnglishSuggestions,
     private val connection: () -> InputConnection?,
     private val canUse: () -> Boolean,
+    private val canShowLocalToolbar: () -> Boolean = canUse,
+    private val typedActionsAllowed: () -> Boolean = { true },
     private val proactiveAllowed: () -> Boolean = { true },
     private val automaticNetworkAllowed: () -> Boolean = { true },
     private val personalizationAllowed: () -> Boolean = { true },
@@ -46,6 +48,8 @@ internal class ImeAi(
     private val onTextApplied: (String?, String) -> Unit = { _, _ -> }
 ) {
     private data class Draft(val text: String, val selected: Boolean, val afterCursor: Int = 0)
+    var toolbarInput by mutableStateOf("")
+        private set
     var hasDraft by mutableStateOf(false)
         private set
     private var wordSuggestions by mutableStateOf(emptyList<WordSuggestion>())
@@ -92,6 +96,7 @@ internal class ImeAi(
         } else refreshDraft()
     }
     private var warmup: Job? = null
+    private var deleteUntil = 0L
     private var expectedCursor: Int? = null
     private var cursor = -1
 
@@ -100,6 +105,7 @@ internal class ImeAi(
         clearDraft()
         web = false
         cursor = initialCursor
+        deleteUntil = 0L
     }
 
     fun closePanel() {
@@ -115,10 +121,13 @@ internal class ImeAi(
         askOpen = true
     }
 
-    fun clearDraft() {
+    fun clearDraft(clearToolbarInput: Boolean = true) {
         expectedCursor = null
         suggestionJob?.cancel()
-        hasDraft = false
+        if (clearToolbarInput) {
+            toolbarInput = ""
+            hasDraft = false
+        }
         wordSuggestions = emptyList()
         swipeAlternatives = emptyList()
         shortcutSuggestion = null
@@ -136,16 +145,17 @@ internal class ImeAi(
             return
         }
         if (start == end && end == cursor) return
-        clearDraft()
+        clearDraft(clearToolbarInput = false)
         if (rewriteOpen) closePanel() else abortAction()
         cursor = end
         refreshDraft()
     }
 
     fun textCommitted(value: String) {
+        deleteUntil = 0L
         closePanel()
         cancelLookup()
-        if (!canUse()) {
+        if (!canShowLocalToolbar()) {
             clearDraft()
             return
         }
@@ -158,21 +168,38 @@ internal class ImeAi(
         refreshDraft(typing = true)
     }
 
+    fun backspaceStarted() {
+        deleteUntil = android.os.SystemClock.uptimeMillis() + 100
+        closePanel()
+        clearDraft(clearToolbarInput = false)
+    }
+
     fun refreshDraft(typing: Boolean = false) {
         suggestionJob?.cancel()
         suggestionJob = scope.launch {
-            if (typing) delay(42)
-            if (!canUse() || askOpen) return@launch
+            val wait = maxOf(if (typing) 42L else 0L, deleteUntil - android.os.SystemClock.uptimeMillis())
+            if (wait > 0) delay(wait)
+            if (!canShowLocalToolbar() || askOpen) return@launch
             val ic = connection() ?: return@launch
-            val selected = ic.getSelectedText(0)?.toString().orEmpty()
-            val before = ic.getTextBeforeCursor(400, 0)?.toString().orEmpty()
-            val after = if (selected.isEmpty()) ic.getTextAfterCursor(400, 0)?.toString().orEmpty() else ""
+            val surrounding = ic.getSurroundingText(400, 400, 0)?.takeIf { state ->
+                state.selectionStart in 0..state.text.length && state.selectionEnd in state.selectionStart..state.text.length
+            }
+            val text = surrounding?.text
+            val selected = if (surrounding == null || text == null) ic.getSelectedText(0)?.toString().orEmpty()
+                else text.substring(surrounding.selectionStart, surrounding.selectionEnd)
+            val before = if (surrounding == null || text == null) ic.getTextBeforeCursor(400, 0)?.toString().orEmpty()
+                else text.substring(0, surrounding.selectionStart)
+            val after = if (selected.isNotEmpty()) ""
+                else if (surrounding == null || text == null) ic.getTextAfterCursor(400, 0)?.toString().orEmpty()
+                else text.substring(surrounding.selectionEnd)
             val visibleText = selected.ifBlank { before + after }
             checkDraftPrivacy(visibleText)
+            toolbarInput = if (selected.isEmpty()) before.takeLast(96) else " "
             hasDraft = visibleText.isNotBlank()
-            inlineActions = if (phoneActionsEnabled() && personalizationAllowed()) {
+            inlineActions = if (phoneActionsEnabled() && typedActionsAllowed()) {
                 DeviceActions.detect(selected.ifBlank { before }, automaticNetworkAllowed())
             } else emptyList()
+            if (!canUse()) return@launch
             shortcutSuggestion = ShortcutSuggestions.detect(selected.ifBlank { before })?.let { suggestion ->
                 if (personalizationAllowed()) suggestion
                 else suggestion.takeUnless { it.page == com.notokens.monolog.ime.shortcuts.ShortcutPage.NOTE }

@@ -12,6 +12,8 @@ import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.horizontalScroll
+import androidx.compose.foundation.text.KeyboardActions
+import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.LazyListScope
@@ -44,6 +46,7 @@ import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.TextRange
 import androidx.compose.ui.text.input.TextFieldValue
+import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
@@ -55,6 +58,8 @@ import androidx.compose.ui.layout.ContentScale
 import com.notokens.monolog.capture.captureToJournal
 import com.notokens.monolog.capture.TagMetadataCodec
 import com.notokens.monolog.ime.vox.VoiceNoteBody
+import com.notokens.monolog.memory.JournalAnswer
+import com.notokens.monolog.memory.MemorySearch
 import com.notokens.monolog.capture.copyCompanionWindow
 import com.notokens.monolog.data.*
 import com.notokens.monolog.setup.SetupScreen
@@ -95,7 +100,7 @@ private fun pickReminderTime(context: Context, initial: Long, inkMode: Boolean, 
 
 enum class CompanionDestination(val route: String) {
     NEW_NOTE("note/new"), NEW_REMINDER("reminder/new"),
-    TODAY("today"), JOURNAL("journal"), LIBRARY("library"), SETTINGS("settings")
+    TODAY("today"), JOURNAL("journal"), LIBRARY("library"), SETTINGS("settings"), VOICE("settings/voice")
 }
 
 @Composable
@@ -261,9 +266,19 @@ fun CompanionApp(
                         val notes = visibleBackupYears(allNotes)
                         val photoRefs by repo.notePhotos.collectAsState(initial = emptyList())
                         val photosByNote = remember(photoRefs) { photoRefs.groupBy { it.noteId } }
-                        var searchRequest by rememberSaveable { mutableIntStateOf(0) }
+                        var query by rememberSaveable { mutableStateOf("") }
+                        var askRequest by remember { mutableIntStateOf(0) }
+                        var answering by remember { mutableStateOf(false) }
+                        val searchField = remember { FocusRequester() }
+                        LaunchedEffect(journalEntry) {
+                            if (journalEntry.arguments?.getBoolean("ask") == true) {
+                                withFrameNanos { }
+                                searchField.requestFocus()
+                            }
+                        }
                         CollectionScreen("Journal", showWeather = true, footer = {
-                            if (!imeVisible) JournalAskBar({ nav.navigate("note/new") }, { searchRequest++ })
+                            JournalAskBar(query, { query = it }, "Ask about your days\u2026", searchField,
+                                answering, { nav.navigate("note/new") }, { askRequest++ })
                         }) {
                             item(contentType = "memory") {
                                 MemoryJournal(
@@ -271,8 +286,9 @@ fun CompanionApp(
                                     onOpenReminder = { nav.navigate("reminder/edit/$it") },
                                     onNewNote = { nav.navigate("note/new") },
                                     visibleNotes = notes, photos = photosByNote,
-                                    initiallySearching = journalEntry.arguments?.getBoolean("ask") == true,
-                                    searchRequest = searchRequest
+                                    query = query, onClearQuery = { query = "" },
+                                    onFocusSearch = { searchField.requestFocus(); keyboard?.show() },
+                                    askRequest = askRequest, onAnswering = { answering = it }
                                 )
                             }
                             item { ArchivedYearsLink { nav.navigate(SettingsPage.ACCOUNT.route) } }
@@ -284,11 +300,31 @@ fun CompanionApp(
                         var creating by remember { mutableStateOf(false) }
                         var capturePending by remember { mutableStateOf(false) }
                         val screenScope = rememberCoroutineScope()
+                        val librarySearch = remember(context) { MemorySearch(context.applicationContext) }
+                        val searchField = remember { FocusRequester() }
+                        var answering by remember { mutableStateOf(false) }
+                        var answer by remember { mutableStateOf<JournalAnswer?>(null) }
+                        var answerError by remember { mutableStateOf(false) }
+                        var answerJob by remember { mutableStateOf<kotlinx.coroutines.Job?>(null) }
+                        var relatedIds by remember { mutableStateOf(emptySet<Long>()) }
+                        LaunchedEffect(query) {
+                            answerJob?.cancel()
+                            answer = null
+                            answerError = false
+                            relatedIds = emptySet()
+                            if (query.isNotBlank()) {
+                                delay(240)
+                                try {
+                                    relatedIds = librarySearch.search(query).mapNotNull { it.record.noteId }.toSet()
+                                } catch (cancelled: CancellationException) { throw cancelled }
+                                catch (_: Exception) { /* Keep matching titles and image tags available. */ }
+                            }
+                        }
                         val allNotes by repo.notes.collectAsState(initial = emptyList())
                         val notes = visibleBackupYears(allNotes)
                         val photoRefs by repo.notePhotos.collectAsState(initial = emptyList())
                         val photosByNote = remember(photoRefs) { photoRefs.groupBy { it.noteId } }
-                        val entries = remember(notes, photosByNote, filter, query) {
+                        val entries = remember(notes, photosByNote, filter, query, relatedIds) {
                             val candidates = notes.filter { note ->
                                 val metadata = TagMetadataCodec.decode(note.body)
                                 when (filter) {
@@ -298,7 +334,9 @@ fun CompanionApp(
                                     else -> true
                                 }
                             }
-                            if (query.isBlank()) candidates else candidates.matchingJournalEntries(query)
+                            if (query.isBlank()) candidates else {
+                                (candidates.matchingJournalEntries(query) + candidates.filter { it.id in relatedIds }).distinctBy { it.id }
+                            }
                         }
                         ScreenFrame(null, showLocalAi = true) {
                             WeatherChip()
@@ -349,15 +387,15 @@ fun CompanionApp(
                                         }
                                     }
                                 }
-                                item {
-                                    TextField(value = query, onValueChange = { query = it.take(240) },
-                                        modifier = Modifier.fillMaxWidth().glassSurface(28), singleLine = true,
-                                        placeholder = { Text("Search photos, notes & memories") },
-                                        leadingIcon = { MonologIcon(Glyph.SEARCH) },
-                                        colors = TextFieldDefaults.colors(
-                                            focusedContainerColor = Color.Transparent, unfocusedContainerColor = Color.Transparent,
-                                            focusedIndicatorColor = Color.Transparent, unfocusedIndicatorColor = Color.Transparent))
+                                answer?.let { result ->
+                                    item {
+                                        Column(Modifier.fillMaxWidth().glassSurface(20).padding(14.dp)) {
+                                            Text("From your memories", style = MaterialTheme.typography.labelMedium, color = muted)
+                                            Text(result.text, color = ink)
+                                        }
+                                    }
                                 }
+                                if (answerError) item { Text("The answer is unavailable. Search results are shown below.", color = muted) }
                                 item {
                                     Row(Modifier.horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(7.dp)) {
                                         listOf("All" to null, "Photos" to Glyph.PHOTO, "Screenshots" to Glyph.CAPTURE, "Voice" to Glyph.MIC).forEach { (label, glyph) ->
@@ -389,16 +427,25 @@ fun CompanionApp(
                                         MonologIcon(Glyph.ARROW)
                                     }
                                 }
-                                item {
-                                    Row(Modifier.fillMaxWidth().glassSurface(24).clickable {
-                                        nav.navigate("journal?ask=true")
-                                    }.padding(horizontal = 14.dp, vertical = 10.dp),
-                                        verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                                        MonologIcon(Glyph.SEARCH, Modifier.size(17.dp))
-                                        Text("Ask about your memories…", color = muted)
-                                    }
-                                }
                             }
+                            JournalAskBar(query, { query = it }, "Ask about your memories\u2026", searchField,
+                                answering, { nav.navigate("note/new") }, {
+                                    if (query.isNotBlank() && !answering) {
+                                        val asked = query
+                                        focusManager.clearFocus(force = true)
+                                        keyboard?.hide()
+                                        answerJob = screenScope.launch {
+                                            answering = true
+                                            answerError = false
+                                            try {
+                                                val result = librarySearch.ask(asked)
+                                                if (query == asked) answer = result
+                                            } catch (cancelled: CancellationException) { throw cancelled }
+                                            catch (_: Exception) { answerError = true }
+                                            finally { answering = false }
+                                        }
+                                    }
+                                })
                         }
                     }
                     composable("note/new") { NoteEditor(null, emptyList(), onCancel = navigateBack) }
@@ -526,6 +573,7 @@ fun CompanionApp(
                                     SettingsLink(SettingsPage.ACCOUNT) { nav.navigate(it.route) }
                                     SettingsLink(SettingsPage.APPEARANCE) { nav.navigate(it.route) }
                                     SettingsLink(SettingsPage.KEYBOARD) { nav.navigate(it.route) }
+                                    SettingsLink(SettingsPage.VOICE) { nav.navigate(it.route) }
                                     SettingsLink(SettingsPage.TONES) { nav.navigate(it.route) }
                                     SettingsLink(SettingsPage.LANGUAGES) { nav.navigate(it.route) }
                                 }
@@ -613,7 +661,7 @@ fun CompanionApp(
                                                 Text("Weather from device location", Modifier.weight(1f), color = ink)
                                                 Switch(weather, { checked -> scope.launch { settings.setLocationWeather(checked) } })
                                             }
-                                            Text("Weather sends rounded coordinates to MET Norway while you use Monolog. Tap the weather card to grant location access.",
+                                            Text("Weather sends rounded coordinates to MET Norway and uses Android to look up the area name. Tap the weather card to grant location access.",
                                                 color = muted, style = MaterialTheme.typography.bodySmall)
                                         }
                                     }
@@ -649,7 +697,6 @@ fun CompanionApp(
                                             }
                                         }
                                         KeyboardBehaviorSettings(settings)
-                                        VoiceInputSettings(settings)
                                         PersonalDictionarySettings(settings)
                                         val holdMs by settings.shortcutHoldMs.collectAsState(initial = 500)
                                         val shortcutHaptics by settings.shortcutHaptics.collectAsState(initial = true)
@@ -668,25 +715,16 @@ fun CompanionApp(
                                             SetupScreen(onRequestMicPermission = onRequestMicPermission)
                                         }
                                     }
+                                    SettingsPage.VOICE -> VoiceInputSettings(settings, onRequestMicPermission)
                                     SettingsPage.TONES -> ToneSettings(settings)
                                     SettingsPage.LANGUAGES -> SettingsCard("Keyboard language and translation") {
                                         LanguageSettings(settings)
                                     }
                                     SettingsPage.MODELS -> AiSettings()
                                     SettingsPage.CAPTURE -> {
-                                        val floatingDock by settings.floatingContextDock.collectAsState(initial = false)
-                                        val systemShortcut by com.notokens.monolog.capture.ScreenCaptureService.systemShortcutAssigned.collectAsState()
-                                        SettingsCard("Floating context button") {
-                                            Row(verticalAlignment = Alignment.CenterVertically) {
-                                                Text("Circular shortcut dock", Modifier.weight(1f), color = ink)
-                                                Switch(floatingDock, { scope.launch { settings.setFloatingContextDock(it) } })
-                                            }
-                                            Text("Enable Quick Capture in Accessibility settings. Tap the Monolog button to capture, or hold to open its dock.",
+                                        SettingsCard("Android accessibility shortcut") {
+                                            Text("Tap the Android shortcut for Quick Capture. Monolog opens its actions beside that button on devices that report a hold or double tap.",
                                                 color = muted, style = MaterialTheme.typography.bodySmall)
-                                            if (floatingDock && systemShortcut) {
-                                                Text("Turn off Monolog’s Android accessibility shortcut to switch to the movable button. Keep Quick Capture enabled.",
-                                                    color = muted, style = MaterialTheme.typography.bodySmall)
-                                            }
                                             OutlinedButton(onClick = {
                                                 com.notokens.monolog.capture.CaptureSetupActivity.openAccessibilitySettings(context)
                                             }) { Text("Open Accessibility settings") }
@@ -754,6 +792,7 @@ private enum class SettingsPage(val id: String, val title: String, val summary: 
     ACCOUNT("account", "Account & backup", "Google account, encrypted Drive backup, and past years", Glyph.SHIELD),
     APPEARANCE("appearance", "Appearance", "Paper, Ink, and transparency", Glyph.INK),
     KEYBOARD("keyboard", "Keyboard & shortcuts", "Setup, hold duration, and haptics", Glyph.SETTINGS),
+    VOICE("voice", "VOX and Voice Features", "Speech packs, language, and dictation controls", Glyph.MIC),
     TONES("tones", "Tones", "Smart tone suggestions for work and chat", Glyph.BOLT),
     LANGUAGES("languages", "Languages & packs", "Layouts and offline translation", Glyph.GLOBE),
     MODELS("models", "On-device AI", "Offline text model downloads", Glyph.BOLT),
@@ -847,12 +886,29 @@ private fun ScreenFrame(onBack: (() -> Unit)?, showLocalAi: Boolean = false, con
 }
 
 @Composable
-private fun JournalAskBar(onNew: () -> Unit, onSearch: () -> Unit) {
-    Row(Modifier.fillMaxWidth().glassSurface(26).padding(horizontal = 6.dp, vertical = 3.dp),
+private fun JournalAskBar(
+    query: String, onQuery: (String) -> Unit, hint: String, focusRequester: FocusRequester,
+    answering: Boolean, onNew: () -> Unit, onAsk: () -> Unit
+) {
+    Row(Modifier.fillMaxWidth().glassSurface(26).padding(horizontal = 6.dp),
         verticalAlignment = Alignment.CenterVertically) {
-        IconControl(Glyph.PLUS, "New journal note", onNew)
-        Text("Ask about your days…", Modifier.weight(1f).clickable(onClick = onSearch).padding(10.dp), color = muted)
-        IconControl(Glyph.SEARCH, "Open journal search", onSearch)
+        IconControl(Glyph.PLUS, "New note", onNew)
+        TextField(query, { onQuery(it.take(300)) },
+            modifier = Modifier.weight(1f).focusRequester(focusRequester), singleLine = true,
+            placeholder = { Text(hint, color = muted, maxLines = 1) },
+            colors = TextFieldDefaults.colors(focusedContainerColor = Color.Transparent,
+                unfocusedContainerColor = Color.Transparent, focusedIndicatorColor = Color.Transparent,
+                unfocusedIndicatorColor = Color.Transparent),
+            keyboardOptions = KeyboardOptions(imeAction = ImeAction.Search),
+            keyboardActions = KeyboardActions(onSearch = { if (query.isNotBlank() && !answering) onAsk() }))
+        if (answering) ProcessingDots()
+        else if (query.isNotBlank()) {
+            IconControl(Glyph.CLOSE, "Clear search", { onQuery("") })
+            IconControl(Glyph.BOLT, "Ask on-device AI", onAsk)
+        } else {
+            val keyboard = LocalSoftwareKeyboardController.current
+            IconControl(Glyph.SEARCH, "Search or ask", { focusRequester.requestFocus(); keyboard?.show() })
+        }
     }
 }
 

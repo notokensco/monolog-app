@@ -38,6 +38,7 @@ class MainActivity : ComponentActivity() {
         const val ACTION_NEW_NOTE = "com.notokens.monolog.NEW_NOTE"
         const val ACTION_NEW_REMINDER = "com.notokens.monolog.NEW_REMINDER"
         const val ACTION_OPEN_TODAY = "com.notokens.monolog.OPEN_TODAY"
+        const val ACTION_OPEN_VOICE = "com.notokens.monolog.OPEN_VOICE"
         const val ACTION_OPEN_SETTINGS = "com.notokens.monolog.OPEN_SETTINGS"
     }
 
@@ -114,6 +115,7 @@ class MainActivity : ComponentActivity() {
             ACTION_NEW_NOTE -> destination = CompanionDestination.NEW_NOTE
             ACTION_NEW_REMINDER -> destination = CompanionDestination.NEW_REMINDER
             ACTION_OPEN_TODAY -> destination = CompanionDestination.TODAY
+            ACTION_OPEN_VOICE -> destination = CompanionDestination.VOICE
             ACTION_OPEN_SETTINGS -> destination = CompanionDestination.SETTINGS
         }
     }

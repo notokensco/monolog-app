@@ -26,7 +26,7 @@ class CaptureSetupActivity : ComponentActivity() {
                     onDismissRequest = ::finish,
                     title = { Text("Enable quick screenshots") },
                     text = {
-                        Text("Enable Monolog Quick Capture in Android Accessibility settings. In Monolog Settings, enable the circular shortcut dock to capture with the keyboard closed. Tap M or the floating button to capture. Toggle the floating dock off to hide it.")
+                        Text("Enable the Android accessibility shortcut for Monolog Quick Capture. Tap it once to capture the screen or twice for shortcuts beside the Android button. You can also tap M while the keyboard is open.")
                     },
                     confirmButton = {
                         TextButton(onClick = {

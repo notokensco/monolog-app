@@ -116,7 +116,8 @@ internal fun VoiceNoteControl(
                 vox.clearTranscript()
                 val selected = KeyboardLanguage.of(language)
                 vox.startListening(selected.speechTag, selected.label)
-                recording = captions.status == VoxStatus.LISTENING || captions.status == VoxStatus.PROCESSING
+                recording = captions.status == VoxStatus.LISTENING ||
+                    captions.status == VoxStatus.PROCESSING || captions.status == VoxStatus.PREPARING
                 if (recording) busyCallback(true) else error = captions.errorMessage ?: "Microphone unavailable."
             }
         }) {

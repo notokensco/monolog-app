@@ -20,6 +20,7 @@ import androidx.compose.runtime.setValue
 import androidx.compose.runtime.staticCompositionLocalOf
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.blur
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.shadow
 import androidx.compose.ui.draw.drawBehind
@@ -61,6 +62,14 @@ import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 
 internal data class KeyAppearance(val borders: Boolean = false, val popups: Boolean = false, val popupMs: Int = 70)
+class CursorDrag(val start: () -> Unit, val move: (Int) -> Unit, val end: () -> Unit)
+
+internal data class CursorKeys(
+    val drag: CursorDrag? = null,
+    val active: Boolean = false,
+    val character: String? = null
+)
+internal val LocalCursorKeys = staticCompositionLocalOf { CursorKeys() }
 internal val LocalKeyAppearance = staticCompositionLocalOf { KeyAppearance() }
 
 internal fun triggerHapticFeedback(view: View, isLong: Boolean = false) {
@@ -84,6 +93,7 @@ fun KeyButton(
     previewText: String? = null,
     longClickLabel: String? = null,
     onLongClick: (() -> Unit)? = null,
+    cursorDrag: CursorDrag? = null,
     repeatOnHold: Boolean = glyph == Glyph.BACKSPACE,
     glow: Boolean = false,
     tracing: Boolean = false,
@@ -92,6 +102,10 @@ fun KeyButton(
 ) {
     val view = LocalView.current
     val appearance = LocalKeyAppearance.current
+    val cursor = LocalCursorKeys.current
+    val keyCharacter = (previewText ?: text)?.takeIf { it.length == 1 }
+    val dimmed = cursor.active && (keyCharacter == null || !keyCharacter.equals(cursor.character, ignoreCase = true))
+    val currentDrag by rememberUpdatedState(cursorDrag)
     var isPressed by remember { mutableStateOf(false) }
     val controller by rememberUpdatedState(LocalKeyPreview.current)
     val popupDelay by rememberUpdatedState(appearance.popupMs)
@@ -145,9 +159,13 @@ fun KeyButton(
                 semanticsClick { onClick(); true }
                 if (onLongClick != null) semanticsLongClick(longClickLabel) { onLongClick(); true }
             }
-            .pointerInput(onLongClick != null, repeatOnHold) {
+            .pointerInput(onLongClick != null, cursorDrag != null, repeatOnHold) {
                 coroutineScope {
-                    class Press(val preview: KeyPreview.Preview?, var action: Job? = null, var handled: Boolean = false)
+                    class Press(val preview: KeyPreview.Preview?, var action: Job? = null, var handled: Boolean = false) {
+                        var drag: CursorDrag? = null
+                        var offset = 0f
+                    }
+                    val stepWidth = 18.dp.toPx()
                     val presses = mutableMapOf<PointerId, Press>()
                     try {
                         awaitPointerEventScope {
@@ -158,6 +176,7 @@ fun KeyButton(
                                     if (active != null && (!change.pressed || change.isConsumed)) {
                                         presses.remove(change.id)
                                         active.action?.cancel()
+                                        active.drag?.end?.invoke()
                                         val completed = !change.pressed && !change.isConsumed
                                         controller?.up(active, active.preview.takeIf { completed && (!active.handled || repeatOnHold) })
                                         if (completed && !active.handled) {
@@ -165,6 +184,14 @@ fun KeyButton(
                                             triggerHapticFeedback(view)
                                             tap()
                                         }
+                                    } else if (active?.drag != null) {
+                                        active.offset += change.position.x - change.previousPosition.x
+                                        val steps = (active.offset / stepWidth).toInt()
+                                        if (steps != 0) {
+                                            active.offset -= steps * stepWidth
+                                            active.drag?.move?.invoke(steps)
+                                        }
+                                        change.consume()
                                     } else if (active == null && change.pressed && !change.previousPressed && !change.isConsumed) {
                                         change.consume()
                                         val press = Press(legend?.let { KeyPreview.Preview(it, bounds) }, handled = repeatOnHold)
@@ -180,13 +207,15 @@ fun KeyButton(
                                                     delay(55)
                                                 }
                                             }
-                                        } else if (hold != null) {
+                                        } else if (hold != null || currentDrag != null) {
                                             press.action = launch {
                                                 delay(viewConfiguration.longPressTimeoutMillis)
                                                 press.handled = true
                                                 controller?.up(press, null)
                                                 triggerHapticFeedback(view, isLong = true)
-                                                hold?.invoke()
+                                                press.drag = currentDrag
+                                                if (press.drag != null) press.drag?.start?.invoke()
+                                                else hold?.invoke()
                                             }
                                         }
                                     }
@@ -195,7 +224,11 @@ fun KeyButton(
                             }
                         }
                     } finally {
-                        presses.values.forEach { it.action?.cancel(); controller?.up(it, null) }
+                        presses.values.forEach {
+                            it.action?.cancel()
+                            it.drag?.end?.invoke()
+                            controller?.up(it, null)
+                        }
                         isPressed = false
                     }
                 }
@@ -204,12 +237,17 @@ fun KeyButton(
                 vertical = if (appearance.borders) 2.dp else if (isPill) 7.dp else 2.dp)
             .activeKeyGlow(glow, circular = true)
             .then(if (appearance.borders) Modifier.materialKey(
-                (if (finalBg == Color.Transparent) PaperPillBackground else finalBg)
-                    .compositeOver(MaterialTheme.colorScheme.surface),
+                if (isAccent) finalBg else lerp(
+                    (if (finalBg == Color.Transparent) PaperPillBackground else finalBg)
+                        .compositeOver(MaterialTheme.colorScheme.surface),
+                    MaterialTheme.colorScheme.primaryContainer,
+                    if (isPressed || isActive) .19f else if (isPill) .38f else .31f
+                ),
                 isPressed, isPill
             ) else Modifier.clip(RoundedCornerShape(if (isPill) 24.dp else 8.dp))
                 .then(pillModifier).background(finalBg))
-            .aiKeyTracing(tracing),
+            .aiKeyTracing(tracing)
+            .then(if (dimmed) Modifier.blur(2.6.dp) else Modifier),
         contentAlignment = Alignment.Center
     ) {
         if (glyph != null) {

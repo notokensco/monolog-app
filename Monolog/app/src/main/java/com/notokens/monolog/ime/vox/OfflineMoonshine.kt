@@ -8,6 +8,9 @@ import android.content.Context
 import android.os.Build
 import java.io.File
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.launch
 import kotlinx.coroutines.runInterruptible
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
@@ -18,6 +21,8 @@ internal object OfflineMoonshine {
     private val spec = ModelSpec.stt("en", ARCH, false)
     private val downloader by lazy { AssetDownloader() }
     private val modelAccess = Mutex()
+    private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
+    private var cached: Transcriber? = null
 
     val available: Boolean get() = Build.SUPPORTED_ABIS.firstOrNull() in
         setOf("arm64-v8a", "armeabi-v7a", "x86_64")
@@ -61,10 +66,38 @@ internal object OfflineMoonshine {
     }
 
     suspend fun remove(context: Context) = modelAccess.withLock {
+        closeCached()
         withContext(Dispatchers.IO) { directory(context).deleteRecursively() }
     }
 
-    suspend fun open(context: Context): Transcriber = modelAccess.withLock { load(context) }
+    private fun transcriber(context: Context) = cached ?: load(context).also { cached = it }
+
+    suspend fun warm(context: Context) = withContext(Dispatchers.Default) {
+        modelAccess.withLock { if (ready(context)) transcriber(context) }
+    }
+
+    suspend fun <T> use(context: Context, block: suspend (Transcriber) -> T): T = modelAccess.withLock {
+        val engine = transcriber(context)
+        try {
+            block(engine)
+        } catch (failure: Throwable) {
+            engine.removeAllListeners()
+            closeCached()
+            throw failure
+        } finally {
+            if (cached === engine) engine.removeAllListeners()
+        }
+    }
+
+    fun release() {
+        scope.launch { modelAccess.withLock { closeCached() } }
+    }
+
+    private fun closeCached() {
+        val engine = cached
+        cached = null
+        engine?.close()
+    }
 
     private fun load(context: Context): Transcriber = Transcriber().apply {
         try {

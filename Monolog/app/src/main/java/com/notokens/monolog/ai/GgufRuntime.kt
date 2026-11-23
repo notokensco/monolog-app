@@ -8,7 +8,7 @@ import java.io.File
 @Keep
 internal object GgufRuntime {
     val available get() = BuildConfig.MONOLOG_HAS_GGUF && Process.is64Bit()
-    private val loaded by lazy {
+    private val library = lazy {
         if (!available) false else try {
             System.loadLibrary("monolog_gguf")
             true
@@ -16,6 +16,19 @@ internal object GgufRuntime {
             false
         }
     }
+
+    private val loaded by library
+
+    fun warm(model: File) {
+        if (loaded && model.isFile) check(prepare(model.path)) { "Could not load the offline text model" }
+    }
+
+    fun release() {
+        if (library.isInitialized() && loaded) unload()
+    }
+
+    private external fun prepare(path: String): Boolean
+    private external fun unload()
 
     fun complete(model: File, prompt: String, tokenLimit: Int): String? {
         if (!loaded || !model.isFile) return null
