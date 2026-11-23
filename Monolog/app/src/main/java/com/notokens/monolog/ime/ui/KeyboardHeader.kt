@@ -30,7 +30,8 @@ fun KeyboardHeader(
     onCaptureContext: () -> Unit,
     onToggleDashboard: () -> Unit,
     dashboardOpen: Boolean,
-    onEnterVox: () -> Unit,
+    onModeAction: () -> Unit,
+    toolbarAi: Boolean,
     isContextActive: Boolean = false,
     suggestions: @Composable () -> Unit = {},
     modifier: Modifier = Modifier
@@ -43,10 +44,15 @@ fun KeyboardHeader(
         IconControl(if (dashboardOpen) Glyph.CLOSE else Glyph.DASHBOARD,
             if (dashboardOpen) "Close keyboard dashboard" else "Keyboard dashboard", onToggleDashboard)
         Box(Modifier.weight(1f), contentAlignment = Alignment.Center) {
-            if (editorContext.isIncognito) Text("Monolog", color = PaperKeyText, fontSize = 14.sp)
-            else suggestions()
+            suggestions()
         }
-        if (!editorContext.isIncognito) IconControl(Glyph.MIC, "Open Vox", onEnterVox)
+        if (!editorContext.isRestrictedField && !editorContext.isNumber) {
+            IconControl(
+                if (toolbarAi) Glyph.BOLT else Glyph.MIC,
+                if (toolbarAi) "Open Monolog AI" else "Open Vox",
+                onModeAction
+            )
+        }
         ContextKey(
             enabled = !editorContext.isIncognito,
             active = isContextActive,
@@ -58,7 +64,7 @@ fun KeyboardHeader(
 
 @Composable
 @OptIn(ExperimentalFoundationApi::class)
-private fun ContextKey(
+internal fun ContextKey(
     enabled: Boolean = true,
     active: Boolean = false,
     onClick: () -> Unit,

@@ -33,8 +33,10 @@ internal class MemorySearch(private val context: Context,
         val sourceNotes = db.notes().observeAll().first().associateBy { it.id }
         records.mapNotNull { row ->
             var evidence = MemoryRepository.decode(row)
-            val fullText = sourceNotes[row.noteId]?.let { note ->
-                val capture = TagMetadataCodec.decode(JournalCipher.open(note.body, "note-body"))
+            val capture = sourceNotes[row.noteId]?.let { note ->
+                TagMetadataCodec.decode(JournalCipher.open(note.body, "note-body"))
+            }
+            val fullText = capture?.let {
                 if (capture.hasMetadata) capture.bottomComment + " " + capture.tags.joinToString(" ") { it.text }
                 else capture.cleanBody
             }.orEmpty()
@@ -44,7 +46,8 @@ internal class MemorySearch(private val context: Context,
                 evidence = evidence.copy(excerpt = fullText.substring(start, minOf(fullText.length, start + 600)))
             }
             val text = evidence.summary + " " + evidence.excerpt.orEmpty() + " " + evidence.tags.joinToString(" ")
-            val exact = queryTerms.intersect(terms(text + " " + fullText)).size.toDouble() / queryTerms.size.coerceAtLeast(1)
+            val keywords = capture?.imageKeywords.orEmpty().joinToString(" ")
+            val exact = queryTerms.intersect(terms("$text $fullText $keywords")).size.toDouble() / queryTerms.size.coerceAtLeast(1)
             val semantic = if (vector != null && row.embedding != null &&
                 row.vectorRevision == row.revision && row.encoderVersion == SentenceEncoder.VERSION) {
                 runCatching { SentenceEncoder.cosine(vector, JournalCipher.open(row.embedding, "memory-vector")) }.getOrDefault(0.0)

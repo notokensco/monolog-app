@@ -22,6 +22,7 @@ import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.suspendCancellableCoroutine
 import kotlinx.coroutines.flow.combine
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlin.coroutines.resume
@@ -34,18 +35,34 @@ class ScreenCaptureService : AccessibilityService() {
     private val floating by lazy { FloatingContextDock(this) { saveScreenshot(Display.DEFAULT_DISPLAY, hideKeyboard = true) } }
     private var dockEnabled = false
     private var dockJob: Job? = null
+    private var shortcutTap: Job? = null
     private val shortcutObserver = object : ContentObserver(Handler(Looper.getMainLooper())) {
         override fun onChange(selfChange: Boolean) = refreshSystemShortcut()
     }
     private val screen = object : android.content.BroadcastReceiver() {
         override fun onReceive(context: android.content.Context?, intent: android.content.Intent?) {
-            if (intent?.action == android.content.Intent.ACTION_SCREEN_OFF) floating.hide()
+            if (intent?.action == android.content.Intent.ACTION_SCREEN_OFF) {
+                shortcutTap?.cancel()
+                floating.hide()
+            }
             else refreshSystemShortcut()
         }
     }
     private val contextButton = object : AccessibilityButtonController.AccessibilityButtonCallback() {
         override fun onClicked(controller: AccessibilityButtonController) {
-            saveScreenshot(Display.DEFAULT_DISPLAY, hideKeyboard = true)
+            if (shortcutTap?.isActive == true) {
+                shortcutTap?.cancel()
+                shortcutTap = null
+                scope.launch {
+                    if (!settings.incognito.first()) floating.showShortcuts()
+                }
+            } else {
+                shortcutTap = scope.launch {
+                    delay(android.view.ViewConfiguration.getDoubleTapTimeout().toLong())
+                    shortcutTap = null
+                    saveScreenshot(Display.DEFAULT_DISPLAY, hideKeyboard = true)
+                }
+            }
         }
         override fun onAvailabilityChanged(controller: AccessibilityButtonController, available: Boolean) {
             refreshSystemShortcut()

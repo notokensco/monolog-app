@@ -73,6 +73,7 @@ internal object AiText {
         if (!trimmed.endsWith('?')) return null
         val last = trimmed.dropLast(1).substringAfterLast('?').substringAfterLast('\n')
             .split(Regex("[.!]\\s+")).last().trim() + "?"
+        if (arithmetic.matches(last)) return last
         if (last.length !in 8..240) return null
         val question = greeting.replaceFirst(last, "")
         val conversational = Regex("^(?:who|what|when|where|why|how|which|whose|can|could|would|should|is|are|do|does|did|kya|कौन|क्या|कब|कैसे|कहाँ)\\b.+\\?$", RegexOption.IGNORE_CASE)
@@ -123,14 +124,21 @@ internal object AiText {
     fun rewritePrompt(draft: String, style: RewriteStyle): String {
         val instruction = when (style) {
             RewriteStyle.POLISH -> "Correct the grammar and punctuation of this message."
-            RewriteStyle.SHORTEN -> "Shorten this message while keeping the details."
-            RewriteStyle.FRIENDLY -> "Make this message sound friendlier."
-            RewriteStyle.PROFESSIONAL -> "Make this message sound professional."
+            RewriteStyle.SHORTEN -> "Remove repetition, filler, and unnecessary introductions. Use fewer words while retaining every request and exact detail."
+            RewriteStyle.FRIENDLY -> "Rewrite using warm, natural language and a considerate phrasing of the request. Change both wording and sentence structure."
+            RewriteStyle.PROFESSIONAL -> "Rewrite this as a polished workplace message. Replace slang and vague phrasing with specific, courteous language. State the request clearly and restructure the sentences."
         }
-        return "$instruction Output only the revised message.\n\nMessage: \"$draft\""
+        return "$instruction Preserve names, numbers, dates, meaning, and the original language. Return only the revised message, without quotes or explanations.\n\nMessage: \"$draft\""
     }
 
     fun rewriteTokenLimit(draft: String): Int = (draft.length / 2 + 10).coerceIn(16, 150)
+
+    fun matchesRewriteStyle(draft: String, candidate: String, style: RewriteStyle): Boolean {
+        if (style == RewriteStyle.POLISH) return true
+        val original = word.findAll(draft.lowercase(Locale.ROOT)).map { it.value }.toList()
+        val revised = word.findAll(candidate.lowercase(Locale.ROOT)).map { it.value }.toList()
+        return if (style == RewriteStyle.SHORTEN) revised.size < original.size else revised != original
+    }
 
     fun simpleRewrite(draft: String): String {
         val clean = polishSeparators(draft)

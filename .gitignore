@@ -46,3 +46,5 @@ __pycache__/
 
 # Samples
 Context/
+
+/Monolog/app/src/main/rust/target/

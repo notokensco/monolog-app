@@ -32,10 +32,13 @@ data class EditorContext(
     val isNoPersonalizedLearning: Boolean,
     val packageName: String?,
     val isUserIncognito: Boolean = false,
-    val isCredentialField: Boolean = false
+    val isCredentialField: Boolean = false,
+    val sensitiveDraft: Boolean = false
 ) {
+    val isRestrictedField: Boolean
+        get() = isPassword || isCredentialField
     val isIncognito: Boolean
-        get() = isPassword || isNoPersonalizedLearning || isUserIncognito || isCredentialField
+        get() = isRestrictedField || isNoPersonalizedLearning || isUserIncognito || sensitiveDraft
 
     companion object {
         private val credentialHint = Regex(

@@ -7,6 +7,8 @@
     <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
     <uses-permission android:name="android.permission.RECEIVE_BOOT_COMPLETED" />
     <uses-permission android:name="android.permission.INTERNET" />
+    <uses-permission android:name="android.permission.ACCESS_COARSE_LOCATION" />
+    <uses-permission android:name="android.permission.ACCESS_FINE_LOCATION" />
 
     <queries>
         <intent>
@@ -86,10 +88,6 @@
             android:exported="false"
             android:process=":journal_brief" />
 
-        <service
-            android:name=".ime.vox.WhisperTranscriptionService"
-            android:exported="false"
-            android:process=":vox_transcription" />
         <receiver android:name=".reminders.ReminderReceiver" android:exported="false" />
         <receiver android:name=".reminders.ReminderRescheduleReceiver" android:exported="true">
             <intent-filter>
@@ -98,6 +96,14 @@
                 <action android:name="android.intent.action.TIMEZONE_CHANGED" />
             </intent-filter>
         </receiver>
+        <provider
+            android:name="androidx.core.content.FileProvider"
+            android:authorities="${applicationId}.imeclipboard"
+            android:exported="false"
+            android:grantUriPermissions="true">
+            <meta-data android:name="android.support.FILE_PROVIDER_PATHS"
+                android:resource="@xml/ime_clipboard_paths" />
+        </provider>
     </application>
 
 </manifest>

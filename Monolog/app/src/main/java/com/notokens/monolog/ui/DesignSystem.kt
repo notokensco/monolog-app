@@ -199,12 +199,21 @@ fun Modifier.monologBackdrop(keyboard: Boolean = false): Modifier {
     val dark = LocalMonologDark.current
     val background = MaterialTheme.colorScheme.background
     if (LocalReduceTransparency.current) return background(background)
+    val theme = com.notokens.monolog.ui.theme.LocalThemeMode.current
+    val photo = com.notokens.monolog.ui.theme.LocalThemePhoto.current
+    val neutral = theme == com.notokens.monolog.data.ThemeMode.INK || theme == com.notokens.monolog.data.ThemeMode.PAPER
+    val palette = when (theme) {
+        com.notokens.monolog.data.ThemeMode.OCEAN -> listOf(Color(0xFFE7F6F5), Color(0xFFB7E2E8), Color(0xFFD4EADA))
+        com.notokens.monolog.data.ThemeMode.TERRACOTTA -> listOf(Color(0xFFFFF1E5), Color(0xFFF3CFC5), Color(0xFFEFDAE9))
+        else -> if (neutral) {
+            if (dark) listOf(background, Color(0xFF18191D), Color(0xFF25262C))
+            else listOf(Color(0xFFFAF9F7), Color(0xFFEEEDEA), Color(0xFFF8F7F4))
+        } else if (dark) listOf(background, Color(0xFF131722), Color(0xFF191928))
+        else listOf(Color(0xFFF1F2FB), Color(0xFFDDE2FB), Color(0xFFF1E8F4))
+    }
 
     return drawWithCache {
-        val base = Brush.verticalGradient(
-            if (dark) listOf(background, Color(0xFF131722), Color(0xFF191928))
-            else listOf(Color(0xFFF1F2F9), Color(0xFFDEE5F7), Color(0xFFF1E8F4))
-        )
+        val base = Brush.verticalGradient(palette)
         fun glow(color: Color, x: Float, y: Float, radius: Float) = Brush.radialGradient(
             listOf(color, color.copy(alpha = .12f), color.copy(alpha = 0f)),
             center = Offset(size.width * x, size.height * y),
@@ -234,6 +243,18 @@ fun Modifier.monologBackdrop(keyboard: Boolean = false): Modifier {
 
         onDrawBehind {
             drawRect(base)
+            if (photo != null && size.width >= 1f && size.height >= 1f) {
+                val aspect = size.width / size.height
+                val sourceWidth = minOf(photo.width, (photo.height * aspect).toInt().coerceAtLeast(1))
+                val sourceHeight = minOf(photo.height, (photo.width / aspect).toInt().coerceAtLeast(1))
+                drawImage(photo, srcOffset = androidx.compose.ui.unit.IntOffset((photo.width - sourceWidth) / 2, (photo.height - sourceHeight) / 2),
+                    srcSize = androidx.compose.ui.unit.IntSize(sourceWidth, sourceHeight),
+                    dstSize = androidx.compose.ui.unit.IntSize(size.width.toInt(), size.height.toInt()))
+                drawRect(background.copy(alpha = if (keyboard) .57f else .68f))
+                return@onDrawBehind
+            }
+            if (neutral || theme == com.notokens.monolog.data.ThemeMode.OCEAN ||
+                theme == com.notokens.monolog.data.ThemeMode.TERRACOTTA) return@onDrawBehind
             drawRect(light)
             drawRect(blue)
             drawRect(lavender)

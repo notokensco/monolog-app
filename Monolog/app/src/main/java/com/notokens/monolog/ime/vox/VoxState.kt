@@ -17,6 +17,6 @@ data class VoxState(
     val errorMessage: String? = null,
     val language: String = "English",
     val finalSegment: String = "",
-    val usesWhisper: Boolean = false,
+    val engineLabel: String = "Native",
     val partialTranscript: String = ""
 )

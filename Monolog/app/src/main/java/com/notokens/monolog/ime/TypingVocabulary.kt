@@ -46,6 +46,29 @@ internal object TypingVocabulary {
         milkar saath sath alag taraf yahan wahan idhar udhar saamne samne andar bahar upar
         niche neeche ek do teen char chaar paanch che saat aath nau das apun scene jugaad
         majak mazaak badme baadme thoda thodi thode zyada jyada bahut bohot kam itna itni
+        mujhey tujhe tujhey tumko humne aapne usne isne unhone inhone kisko kiske kiski
+        kisne kuchh koi bhi wahi wohi waisa waise waisehi aise aisa aisi isliye kyunki
+        samajh samjha samjhi samjho samajhna samjhana samjhao bataya batayi bheja bheji
+        pahunch pohonch pahuncha pahunchi pahunchna pohonchna pahunchunga pahunchungi
+        nikla nikli nikle nikal niklo nikalna aane jaane karne lene dene hone waali
+        karwana karwa karwao karwaya karwaunga hojana hogaya hogayi hogaye hojayega
+        aayegi aayenge aaoge aayoge jaogi jaoge jaayegi jaayenge aata aati aate jaata
+        jaati jaate jaatehi rehta rehti rehte rehna ruko rukna rukoge rakhunga uthna
+        utha uthao uthana uthunga baith baitho baithna baitha baithe sojao sona soya
+        soyi uthgaya jagna khol kholo kholna band bandh khula khuli lagta lagti lagte
+        laga lagi lage lagana milta milti milega milegi mile pooch puch poochna puchna
+        poochho pucho pucha poocha kaha kaho kehna kehdo kehdiya kehraha sunke dekhke
+        dekhliya dekhlena dekhlo dekhlenge dikh dikhna dikhao dikha dikhaya dikhayi
+        chalo chalna chale chalen chali chalta chalti chalte chalenge chalega chaltaa
+        karke karkehi kardo karnahe karliye kardiya kardiyaah kardoge kardungi karoge
+        wapas vaapas vapas laut aage piche peeche nazdeek paas door dur bagal beech
+        zarurat jarurat dikkat pareshani pareshaan pareeksha pariksha parwah jawab
+        sawaal sawal prashna haalat tabiyat sehat dawa dava davai dawaai bukhar
+        barish baarish mausam garmi sardi thand thandi garam dhoop cheezein cheez
+        samaan saamaan kharcha kharch mehenga mahanga sasta hafte hafta mahina saal
+        somvaar mangalvaar budhvaar guruvaar shukravaar shanivaar ravivaar sacchi
+        sach sachchi sachme bilkulhi ekdum ekdam kafi kaafi lagbhag shayad shayed
+        dobara dubaara phirse firse roj humesha hamesha turant waise actually
     """)
 
     val hinglishPairs = mapOf(

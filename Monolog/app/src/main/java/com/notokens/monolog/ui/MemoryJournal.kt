@@ -2,11 +2,13 @@ package com.notokens.monolog.ui
 
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.horizontalScroll
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.Alignment
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.dp
@@ -32,18 +34,29 @@ internal fun MemorySettings() {
     val context = LocalContext.current
     val preferences = remember { MemoryPreferences(context) }
     var enabled by remember { mutableStateOf(preferences.enabled) }
+    var confirmDisable by remember { mutableStateOf(false) }
     val encoder = remember { SentenceEncoder.get(context) }
     val status by encoder.status.collectAsState()
     SettingsCard("Journal memory") {
         Row(verticalAlignment = androidx.compose.ui.Alignment.CenterVertically) {
             Text("Remember meaningful moments", Modifier.weight(1f), color = PaperKeyText)
-            Switch(enabled, { enabled = it; preferences.enabled = it })
+            Switch(enabled, { next ->
+                if (next) { enabled = true; preferences.enabled = true }
+                else confirmDisable = true
+            })
         }
         Text("Monolog keeps compact records of meaningful text it helped you type. These are Drafted observations, even when you tap Send. Incognito and protected fields are excluded.",
             color = PaperKeySubText, style = MaterialTheme.typography.bodySmall)
         Text("Notes, screenshots, and reminders you explicitly save are retained. Edit, pin, or delete their journal moments at any time.",
             color = PaperKeySubText, style = MaterialTheme.typography.bodySmall)
     }
+    if (confirmDisable) AlertDialog(
+        onDismissRequest = { confirmDisable = false },
+        title = { Text("Turn off journal memory?") },
+        text = { Text("Monolog will stop saving new moments from your typing. Existing moments and anything you save yourself will stay in your journal.") },
+        confirmButton = { TextButton({ enabled = false; preferences.enabled = false; confirmDisable = false }) { Text("Turn off") } },
+        dismissButton = { TextButton({ confirmDisable = false }) { Text("Keep on") } }
+    )
     SettingsCard("Offline semantic search") {
         Text(status, color = PaperKeyText)
         Text("Multilingual MiniLM · 384-dimensional quantized vectors. The encoder and tokenizer download is approximately 135 MB. Keyword search is available immediately.",
@@ -53,7 +66,11 @@ internal fun MemorySettings() {
 }
 
 @Composable
-internal fun MemoryJournal(onOpenNote: (Long) -> Unit, onOpenReminder: (Long) -> Unit, onNewNote: () -> Unit, visibleNotes: List<com.notokens.monolog.data.Note>) {
+internal fun MemoryJournal(
+    onOpenNote: (Long) -> Unit, onOpenReminder: (Long) -> Unit, onNewNote: () -> Unit,
+    visibleNotes: List<com.notokens.monolog.data.Note>, photos: Map<Long, List<com.notokens.monolog.data.NotePhotoRef>>,
+    initiallySearching: Boolean = false, searchRequest: Int = 0
+) {
     val context = LocalContext.current
     val db = remember { MonologDatabase.get(context) }
     val repository = remember { MemoryRepository(context) }
@@ -67,6 +84,10 @@ internal fun MemoryJournal(onOpenNote: (Long) -> Unit, onOpenReminder: (Long) ->
     val records by db.memories().observeAll().collectAsState(initial = emptyList())
     var date by rememberSaveable { mutableStateOf(LocalDate.now().toString()) }
     var period by rememberSaveable { mutableStateOf("Day") }
+    var showDay by rememberSaveable { mutableStateOf(false) }
+    var showSearch by rememberSaveable { mutableStateOf(initiallySearching) }
+    LaunchedEffect(searchRequest) { if (searchRequest > 0) showSearch = true }
+    val month = remember(date) { java.time.YearMonth.from(LocalDate.parse(date)) }
     var query by rememberSaveable { mutableStateOf("") }
     var matches by remember { mutableStateOf<List<MemoryMatch>?>(null) }
     var brief by remember { mutableStateOf<DayBrief?>(null) }
@@ -131,8 +152,9 @@ internal fun MemoryJournal(onOpenNote: (Long) -> Unit, onOpenReminder: (Long) ->
         MemoryIndexWork.enqueue(context)
     }
     LaunchedEffect(selectedRecords.map { it.id to it.revision }, selectedNotes.map { it.id to it.updatedAt },
-        date, period, modelReady, refreshRecap) {
+        date, period, modelReady, refreshRecap, showDay) {
         brief = null
+        if (!showDay) return@LaunchedEffect
         buildingRecap = hasRecapSources
         try {
             val refresh = refreshRecap != lastRefresh
@@ -156,6 +178,19 @@ internal fun MemoryJournal(onOpenNote: (Long) -> Unit, onOpenReminder: (Long) ->
         catch (_: Exception) { matches = emptyList(); error = "Search is unavailable. Your saved moments are kept." }
     }
     Column(Modifier.fillMaxWidth(), verticalArrangement = Arrangement.spacedBy(10.dp)) {
+        if (!showDay && !showSearch) {
+            JournalTimeline(month, records.filter { it.noteId == null || it.noteId in noteIds }, visibleNotes, photos,
+                onMonth = { date = it.atDay(1).toString() },
+                onDay = { date = it.toString(); period = "Day"; showDay = true },
+                onNote = onOpenNote,
+                onSearch = { showSearch = true })
+        }
+        if (showDay || showSearch) {
+        TextButton({ showDay = false; showSearch = false; query = ""; answerJob?.cancel() }) {
+            Text("Back to timeline")
+        }
+        if (showDay) {
+
         Column(Modifier.fillMaxWidth().glassSurface(24).padding(16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
             Text(when (period) { "Day" -> "Your day in brief"; "Month" -> "Your month in brief"; else -> "$year in brief" },
                 color = PaperKeyText, style = MaterialTheme.typography.titleLarge)
@@ -189,6 +224,7 @@ internal fun MemoryJournal(onOpenNote: (Long) -> Unit, onOpenReminder: (Long) ->
             }
 
         }
+        }
         TextField(query, {
             answerJob?.cancel()
             query = it.take(300)
@@ -205,7 +241,7 @@ internal fun MemoryJournal(onOpenNote: (Long) -> Unit, onOpenReminder: (Long) ->
             Button(onClick = { askJournal() }, enabled = query.isNotBlank() && !busy) {
                 MonologIcon(Glyph.BOLT, Modifier.size(16.dp), MaterialTheme.colorScheme.onPrimary)
                 Spacer(Modifier.width(6.dp))
-                Text(if (busy) "Thinking…" else "Ask journal")
+                if (busy) ProcessingDots() else Text("Ask journal")
             }
             if (!semanticReady) TextButton(encoder::download) { Text("Enable semantic search") }
         }
@@ -283,6 +319,7 @@ internal fun MemoryJournal(onOpenNote: (Long) -> Unit, onOpenReminder: (Long) ->
         if (shown.isEmpty() && query.isNotBlank()) Text("No matching recorded moments in $year.", color = PaperKeySubText)
         if (shown.isEmpty() && query.isBlank()) Text("No moments in this period.", color = PaperKeySubText)
         if (error.isNotBlank()) Text(error, color = MaterialTheme.colorScheme.error)
+        }
     }
     editing?.let { row ->
         val evidence = remember(row.id, row.revision) { MemoryRepository.decode(row) }

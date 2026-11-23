@@ -120,7 +120,7 @@ fun CompanionApp(
     }
     val settingsScroll = rememberScrollState()
     val backStack by nav.currentBackStackEntryAsState()
-    val route = backStack?.destination?.route ?: CompanionDestination.TODAY.route
+    val route = backStack?.destination?.route?.substringBefore('?') ?: CompanionDestination.TODAY.route
     val focusManager = LocalFocusManager.current
     val keyboard = LocalSoftwareKeyboardController.current
     val navigateBack: () -> Unit = {
@@ -253,16 +253,26 @@ fun CompanionApp(
                             }
                         }
                     }
-                    composable("journal") {
+                    composable("journal?ask={ask}", arguments = listOf(navArgument("ask") {
+                        type = NavType.BoolType
+                        defaultValue = false
+                    })) { journalEntry ->
                         val allNotes by repo.notes.collectAsState(initial = emptyList())
                         val notes = visibleBackupYears(allNotes)
-                        CollectionScreen("Journal") {
+                        val photoRefs by repo.notePhotos.collectAsState(initial = emptyList())
+                        val photosByNote = remember(photoRefs) { photoRefs.groupBy { it.noteId } }
+                        var searchRequest by rememberSaveable { mutableIntStateOf(0) }
+                        CollectionScreen("Journal", showWeather = true, footer = {
+                            if (!imeVisible) JournalAskBar({ nav.navigate("note/new") }, { searchRequest++ })
+                        }) {
                             item(contentType = "memory") {
                                 MemoryJournal(
                                     onOpenNote = { nav.navigate("note/$it") },
                                     onOpenReminder = { nav.navigate("reminder/edit/$it") },
                                     onNewNote = { nav.navigate("note/new") },
-                                    visibleNotes = notes
+                                    visibleNotes = notes, photos = photosByNote,
+                                    initiallySearching = journalEntry.arguments?.getBoolean("ask") == true,
+                                    searchRequest = searchRequest
                                 )
                             }
                             item { ArchivedYearsLink { nav.navigate(SettingsPage.ACCOUNT.route) } }
@@ -290,7 +300,8 @@ fun CompanionApp(
                             }
                             if (query.isBlank()) candidates else candidates.matchingJournalEntries(query)
                         }
-                        ScreenFrame(null) {
+                        ScreenFrame(null, showLocalAi = true) {
+                            WeatherChip()
                             LazyColumn(Modifier.weight(1f).fillMaxWidth(),
                                 contentPadding = PaddingValues(top = 20.dp, bottom = 24.dp),
                                 verticalArrangement = Arrangement.spacedBy(14.dp)) {
@@ -348,9 +359,10 @@ fun CompanionApp(
                                             focusedIndicatorColor = Color.Transparent, unfocusedIndicatorColor = Color.Transparent))
                                 }
                                 item {
-                                    Row(Modifier.horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                                        listOf("All", "Photos", "Screenshots", "Voice").forEach { label ->
-                                            FilterChip(filter == label, { filter = label }, { Text(label) })
+                                    Row(Modifier.horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(7.dp)) {
+                                        listOf("All" to null, "Photos" to Glyph.PHOTO, "Screenshots" to Glyph.CAPTURE, "Voice" to Glyph.MIC).forEach { (label, glyph) ->
+                                            FilterChip(filter == label, { filter = label }, { Text(label) }, shape = RoundedCornerShape(22.dp),
+                                                leadingIcon = glyph?.let { icon -> { MonologIcon(icon, Modifier.size(14.dp)) } })
                                         }
                                     }
                                 }
@@ -373,8 +385,17 @@ fun CompanionApp(
                                     Row(Modifier.fillMaxWidth().glassSurface(24).clickable { nav.navigate("journal") }.padding(16.dp),
                                         verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(12.dp)) {
                                         MonologIcon(Glyph.BOOK)
-                                        Text("Open today's journal", Modifier.weight(1f), color = ink)
+                                        Text("Open Journal", Modifier.weight(1f), color = ink)
                                         MonologIcon(Glyph.ARROW)
+                                    }
+                                }
+                                item {
+                                    Row(Modifier.fillMaxWidth().glassSurface(24).clickable {
+                                        nav.navigate("journal?ask=true")
+                                    }.padding(horizontal = 14.dp, vertical = 10.dp),
+                                        verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                                        MonologIcon(Glyph.SEARCH, Modifier.size(17.dp))
+                                        Text("Ask about your memories…", color = muted)
                                     }
                                 }
                             }
@@ -526,19 +547,55 @@ fun CompanionApp(
                                     SettingsPage.ACCOUNT -> AccountBackupSettings()
                                     SettingsPage.MEMORY -> MemorySettings()
                                     SettingsPage.APPEARANCE -> {
+                                        val borders by settings.keyBorders.collectAsState(false)
+                                        val weather by settings.locationWeather.collectAsState(false)
+                                        var photoStatus by remember { mutableStateOf<String?>(null) }
+                                        val wallpaperPicker = rememberLauncherForActivityResult(ActivityResultContracts.PickVisualMedia()) { uri ->
+                                            if (uri != null) scope.launch {
+                                                try {
+                                                    com.notokens.monolog.ui.theme.ThemeWallpaper.save(context, uri)
+                                                    settings.activateWallpaper()
+                                                    photoStatus = null
+                                                } catch (cancelled: CancellationException) { throw cancelled }
+                                                catch (_: Exception) { photoStatus = "Couldn’t open this image." }
+                                            }
+                                        }
+                                        val selectPhoto = {
+                                            wallpaperPicker.launch(androidx.activity.result.PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.ImageOnly))
+                                        }
                                         SettingsCard("Theme") {
                                             Column(Modifier.selectableGroup(), verticalArrangement = Arrangement.spacedBy(4.dp)) {
-                                                ThemeChoice("Ink mode", "Charcoal glass with blue and violet accents", Glyph.INK, appearance.theme == ThemeMode.INK) {
+                                                ThemeChoice("Ink mode", "Muted charcoal", Glyph.INK, appearance.theme == ThemeMode.INK) {
                                                     scope.launch { settings.setThemeMode(ThemeMode.INK) }
                                                 }
-                                                ThemeChoice("Paper mode", "Pearl glass with soft blue and blush accents", Glyph.PAPER, appearance.theme == ThemeMode.PAPER) {
+                                                ThemeChoice("Paper mode", "Quiet warm gray", Glyph.PAPER, appearance.theme == ThemeMode.PAPER) {
                                                     scope.launch { settings.setThemeMode(ThemeMode.PAPER) }
                                                 }
+                                                listOf(
+                                                    Triple(ThemeMode.IRIS, "Iris", "Cool lavender and blue"),
+                                                    Triple(ThemeMode.OCEAN, "Ocean", "Teal and sea glass"),
+                                                    Triple(ThemeMode.TERRACOTTA, "Terracotta", "Peach and warm rose")
+                                                ).forEach { (theme, title, detail) ->
+                                                    ThemeChoice(title, detail, Glyph.PAPER, appearance.theme == theme) {
+                                                        scope.launch { settings.setThemeMode(theme) }
+                                                    }
+                                                }
+                                                ThemeChoice("Custom image", "Use one of your photos", Glyph.PHOTO, appearance.theme == ThemeMode.PHOTO) {
+                                                    if (appearance.wallpaperRevision == 0L) selectPhoto()
+                                                    else scope.launch { settings.setThemeMode(ThemeMode.PHOTO) }
+                                                }
+                                                if (appearance.wallpaperRevision != 0L) TextButton(selectPhoto) { Text("Change image") }
+                                                photoStatus?.let { Text(it, color = MaterialTheme.colorScheme.error) }
                                                 ThemeChoice("Follow system", "Match your device appearance", Glyph.GLOBE, appearance.theme == ThemeMode.SYSTEM) {
                                                     scope.launch { settings.setThemeMode(ThemeMode.SYSTEM) }
                                                 }
                                             }
                                             HorizontalDivider(Modifier.padding(vertical = 12.dp), color = PaperPillBorder)
+                                            Row(verticalAlignment = Alignment.CenterVertically) {
+                                                Text("Keyboard key borders", Modifier.weight(1f), color = ink)
+                                                Switch(borders, { checked -> scope.launch { settings.setKeyBorders(checked) } })
+                                            }
+
                                             Row(horizontalArrangement = Arrangement.spacedBy(12.dp), verticalAlignment = Alignment.CenterVertically) {
                                                 Column(Modifier.weight(1f)) {
                                                     Text("Reduce transparency", color = ink, style = MaterialTheme.typography.titleSmall)
@@ -550,6 +607,14 @@ fun CompanionApp(
                                                     modifier = Modifier.semantics { contentDescription = "Reduce transparency" }
                                                 )
                                             }
+                                        }
+                                        SettingsCard("Weather") {
+                                            Row(verticalAlignment = Alignment.CenterVertically) {
+                                                Text("Weather from device location", Modifier.weight(1f), color = ink)
+                                                Switch(weather, { checked -> scope.launch { settings.setLocationWeather(checked) } })
+                                            }
+                                            Text("Weather sends rounded coordinates to MET Norway while you use Monolog. Tap the weather card to grant location access.",
+                                                color = muted, style = MaterialTheme.typography.bodySmall)
                                         }
                                     }
                                     SettingsPage.KEYBOARD -> {
@@ -583,6 +648,8 @@ fun CompanionApp(
                                                     modifier = Modifier.semantics { contentDescription = "Long-press numbers and symbols" })
                                             }
                                         }
+                                        KeyboardBehaviorSettings(settings)
+                                        VoiceInputSettings(settings)
                                         PersonalDictionarySettings(settings)
                                         val holdMs by settings.shortcutHoldMs.collectAsState(initial = 500)
                                         val shortcutHaptics by settings.shortcutHaptics.collectAsState(initial = true)
@@ -689,7 +756,7 @@ private enum class SettingsPage(val id: String, val title: String, val summary: 
     KEYBOARD("keyboard", "Keyboard & shortcuts", "Setup, hold duration, and haptics", Glyph.SETTINGS),
     TONES("tones", "Tones", "Smart tone suggestions for work and chat", Glyph.BOLT),
     LANGUAGES("languages", "Languages & packs", "Layouts and offline translation", Glyph.GLOBE),
-    MODELS("models", "On-device AI", "Gemini Nano and Gemma downloads", Glyph.BOLT),
+    MODELS("models", "On-device AI", "Offline text model downloads", Glyph.BOLT),
     CAPTURE("capture", "Quick Capture", "Screenshot border color", Glyph.CAPTURE),
     PRIVACY("privacy", "Privacy & data", "Incognito, Web suggestions, and storage", Glyph.SHIELD);
 
@@ -722,6 +789,7 @@ private fun Screen(
     content: @Composable () -> Unit
 ) {
     ScreenFrame(onBack) {
+        if (showDate) WeatherChip()
         Column(Modifier.weight(1f).fillMaxWidth().verticalScroll(scrollState).padding(vertical = 12.dp)) {
             ScreenTitle(title, showDate)
             Spacer(Modifier.height(12.dp))
@@ -734,10 +802,13 @@ private fun Screen(
 private fun CollectionScreen(
     title: String,
     showDate: Boolean = false,
+    showWeather: Boolean = false,
     onBack: (() -> Unit)? = null,
+    footer: (@Composable () -> Unit)? = null,
     content: LazyListScope.() -> Unit
 ) {
-    ScreenFrame(onBack) {
+    ScreenFrame(onBack, showLocalAi = showWeather) {
+        if (showWeather) WeatherChip()
         LazyColumn(
             Modifier.weight(1f).fillMaxWidth(),
             contentPadding = PaddingValues(vertical = 12.dp),
@@ -746,11 +817,12 @@ private fun CollectionScreen(
             item(contentType = "title") { ScreenTitle(title, showDate) }
             content()
         }
+        footer?.invoke()
     }
 }
 
 @Composable
-private fun ScreenFrame(onBack: (() -> Unit)?, content: @Composable ColumnScope.() -> Unit) {
+private fun ScreenFrame(onBack: (() -> Unit)?, showLocalAi: Boolean = false, content: @Composable ColumnScope.() -> Unit) {
     val onSettings = LocalSettingsAction.current
     Box(Modifier.fillMaxSize(), contentAlignment = Alignment.TopCenter) {
         Column(Modifier.widthIn(max = 640.dp).fillMaxWidth().fillMaxHeight().padding(horizontal = 16.dp)) {
@@ -762,10 +834,25 @@ private fun ScreenFrame(onBack: (() -> Unit)?, content: @Composable ColumnScope.
                     fontWeight = FontWeight.SemiBold, modifier = Modifier.weight(1f),
                     maxLines = 1, overflow = TextOverflow.Ellipsis
                 )
+                if (showLocalAi) Row(Modifier.glassSurface(18).padding(horizontal = 8.dp, vertical = 4.dp),
+                    verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(4.dp)) {
+                    MonologIcon(Glyph.SHIELD, Modifier.size(13.dp), muted)
+                    Text("On-device AI", color = muted, style = MaterialTheme.typography.labelSmall)
+                }
                 if (onBack == null) IconControl(Glyph.SETTINGS, "Settings", onSettings, frosted = true)
             }
             content()
         }
+    }
+}
+
+@Composable
+private fun JournalAskBar(onNew: () -> Unit, onSearch: () -> Unit) {
+    Row(Modifier.fillMaxWidth().glassSurface(26).padding(horizontal = 6.dp, vertical = 3.dp),
+        verticalAlignment = Alignment.CenterVertically) {
+        IconControl(Glyph.PLUS, "New journal note", onNew)
+        Text("Ask about your days…", Modifier.weight(1f).clickable(onClick = onSearch).padding(10.dp), color = muted)
+        IconControl(Glyph.SEARCH, "Open journal search", onSearch)
     }
 }
 
@@ -844,6 +931,7 @@ private fun NoteTile(
 ) {
     val decoded = remember(note.body) { TagMetadataCodec.decode(note.body) }
     val excerpt = remember(decoded.cleanBody) { markdownExcerpt(decoded.cleanBody).take(120) }
+    val audio = remember(note.body) { VoiceNoteBody.audio(note.body) ?: decoded.bottomAudio ?: decoded.tags.firstNotNullOfOrNull { it.audio } }
 
     Column(
         Modifier
@@ -859,7 +947,7 @@ private fun NoteTile(
                 Box(
                     modifier = Modifier
                         .fillMaxWidth()
-                        .height(115.dp)
+                        .height(148.dp)
                         .clip(RoundedCornerShape(14.dp))
                         .clickable { onPhotoClick?.invoke(photos.first().id) ?: onClick() }
                 ) {
@@ -868,7 +956,7 @@ private fun NoteTile(
                         "Attached photo",
                         Modifier.fillMaxSize(),
                         contentScale = ContentScale.Crop,
-                        thumbnailSize = 140.dp
+                        thumbnailSize = 210.dp
                     )
                     if (decoded.tags.isNotEmpty() || decoded.bottomIsVoice) {
                         Surface(
@@ -898,6 +986,11 @@ private fun NoteTile(
                         }
                     }
                 }
+            } else if (audio != null) {
+                Box(Modifier.fillMaxWidth().height(106.dp).glassSurface(17, GlassAccent.LAVENDER),
+                    contentAlignment = Alignment.Center) {
+                    VoiceNotePlayback(audio, "Play voice note")
+                }
             }
             Text(
                 note.title,
@@ -908,7 +1001,7 @@ private fun NoteTile(
                 overflow = TextOverflow.Ellipsis
             )
             if (photos.isEmpty()) {
-                if (decoded.bottomIsVoice) {
+                if (decoded.bottomIsVoice && audio == null) {
                     Surface(
                         shape = RoundedCornerShape(10.dp),
                         color = PaperAccentBlue.copy(alpha = 0.12f)
@@ -1128,7 +1221,7 @@ private fun NoteEditor(initial: Note?, savedPhotos: List<NotePhotoRef>, onCancel
                             }
                             val savedBody = if (isCapture) {
                                 TagMetadataCodec.encodeCapture(capture.tags, capture.bottomIsVoice || captureAudio != null,
-                                    currentBody, capture.additionalBody, captureAudio)
+                                    currentBody, capture.additionalBody, captureAudio, capture.imageKeywords)
                             } else {
                                 val updated = initial?.let { TagMetadataCodec.replaceVisibleBody(it.body, currentBody) } ?: currentBody
                                 VoiceNoteBody.attach(updated, voiceAudio)

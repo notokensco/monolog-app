@@ -108,24 +108,24 @@ internal fun KeyboardSearchPanel(
                 textStyle = MaterialTheme.typography.bodyLarge.copy(color = PaperKeyText),
                 decorationBox = { inner ->
                     Box {
-                        if (query.text.isEmpty()) Text("Ask or search your journal", color = PaperKeySubText)
+                        if (query.text.isEmpty()) Text(if (ai.journalAllowed) "Ask or search your journal" else "Ask offline", color = PaperKeySubText)
                         inner()
                     }
                 }
             )
         }
         Row(verticalAlignment = Alignment.CenterVertically) {
-            TextButton(ai::toggleWeb) {
+            if (ai.webAllowed) TextButton(ai::toggleWeb) {
                 Text(if (ai.web) "Web on" else "Web off")
             }
             TextButton({ ai.ask(query.text) }, enabled = query.text.isNotBlank() && !ai.busy) {
                 Text(if (ai.web) "Search & answer" else "Ask")
             }
         }
-        if (ai.busy) Text("Working…", color = PaperKeySubText)
+        if (ai.busy) com.notokens.monolog.ui.ProcessingDots()
+        if (ai.askActions.isNotEmpty()) Row { DeviceActionButtons(ai.askActions) }
         if (ai.web) {
-            Text(if (com.notokens.monolog.ai.CloudAi.enabled(context)) "This question uses online AI."
-                else if (WebLookup.configured) "Only this query is sent to the search service."
+            Text(if (WebLookup.configured) "Only this query is sent to the search service."
                 else "Uses Wikipedia. For other results, open a web search.",
                 style = MaterialTheme.typography.labelSmall, color = PaperKeySubText)
             TextButton({ ai.searchWeb(query.text) }, enabled = query.text.isNotBlank()) {
@@ -133,7 +133,7 @@ internal fun KeyboardSearchPanel(
             }
         }
         ai.preview?.let { AiResultCard(it, ai::apply) }
-        if (!ai.web && ai.preview?.text == com.notokens.monolog.ai.AiText.UNKNOWN_ANSWER) {
+        if (ai.webAllowed && !ai.web && ai.preview?.text == com.notokens.monolog.ai.AiText.UNKNOWN_ANSWER) {
             TextButton({
                 ai.toggleWeb()
                 ai.ask(query.text)
@@ -141,7 +141,7 @@ internal fun KeyboardSearchPanel(
                 Text("Find a sourced answer")
             }
         }
-        if (query.text.isNotBlank() && !ai.web && ai.preview == null && !ai.busy) {
+        if (ai.journalAllowed && query.text.isNotBlank() && !ai.web && ai.preview == null && !ai.busy && ai.askActions.isEmpty()) {
             Column(
                 Modifier.fillMaxWidth().heightIn(max = 80.dp).verticalScroll(rememberScrollState()).padding(top = 6.dp),
                 verticalArrangement = Arrangement.spacedBy(4.dp)

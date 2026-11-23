@@ -70,31 +70,69 @@ class MonologInputMethodService : LifecycleInputMethodService() {
     private data class CorrectionUndo(val original: String, val inserted: String,
         val connection: android.view.inputmethod.InputConnection, val end: Int)
     private var autocorrectUndo: CorrectionUndo? = null
+    private var phoneActionsEnabled by mutableStateOf(true)
     private var editorActive by mutableStateOf(false)
+    private var defaultVox = false
+    private var keyboardSession = 0
+    private var layoutSession by mutableStateOf(0)
+    private data class EditorIdentity(val app: String?, val field: Int, val name: String?, val inputType: Int)
+    private var visibleEditor: EditorIdentity? = null
+    private val sensitiveDraft = SensitiveDraft()
+    private var voxComposition: android.view.inputmethod.InputConnection? = null
+    private var voxPrefix = ""
+    private var suppressDraftMemory = false
     private var language by mutableStateOf(KeyboardLanguage.of("en"))
     private val dictionary by lazy { EnglishSuggestions(applicationContext) }
     private var swipeJob: Job? = null
+    private val afterGlide = ArrayDeque<() -> Unit>()
     private var selectionVersion = 0L
     private var lastShiftTap: Long? = null
     private val memoryRecorder by lazy { com.notokens.monolog.memory.DraftMemoryRecorder(applicationContext, settingsScope) }
     private val ai by lazy {
         ImeAi(this, settingsScope, settingsStore, dictionary, { currentInputConnection }, ::aiAllowed,
             proactiveAllowed = { editorContext.packageName != packageName },
-            automaticNetworkAllowed = { !editorContext.isUri },
+            automaticNetworkAllowed = { !editorContext.isUri && !editorContext.isIncognito },
+            personalizationAllowed = ::memoryAllowed,
+            checkDraftPrivacy = ::checkDraftPrivacy,
+            phoneActionsEnabled = { phoneActionsEnabled },
             activePackage = { editorContext.packageName.orEmpty() }) { old, text ->
-            memoryRecorder.replace(old, text, aiAllowed())
+            markTyped(text)
+            memoryRecorder.replace(old, text, memoryAllowed())
         }
     }
 
-    private fun aiAllowed(): Boolean = privacyReady && editorActive && !editorContext.isIncognito &&
+    private fun aiAllowed(): Boolean = privacyReady && editorActive && !editorContext.isRestrictedField &&
         !editorContext.isNumber && !editorContext.isEmail
+    private fun memoryAllowed(): Boolean = aiAllowed() && !editorContext.isIncognito && !suppressDraftMemory
+
+    private fun markTyped(text: String) {
+        if (!aiAllowed() || suppressDraftMemory) return
+        if (sensitiveDraft.append(text)) enterSensitiveMode()
+    }
+
+    private fun checkDraftPrivacy(text: String) {
+        if (!suppressDraftMemory && sensitiveDraft.matches(text)) enterSensitiveMode()
+    }
+
+    private fun enterSensitiveMode() {
+        suppressDraftMemory = true
+        memoryRecorder.clear()
+        sensitiveDraft.clear()
+        editorContext = editorContext.copy(sensitiveDraft = true)
+        ai.disableWebSuggestions()
+        ai.abortAction()
+
+    }
 
     // Address bars are text editors too. Local gesture decoding does not need AI permission.
     private fun swipeAllowed(): Boolean = swipeTypingEnabled && privacyReady && editorActive &&
-        !editorContext.isIncognito && !editorContext.isNumber
+        !editorContext.isRestrictedField && !editorContext.isNumber
 
     override fun onCreate() {
         super.onCreate()
+        settingsScope.launch(Dispatchers.IO) {
+            com.notokens.monolog.ime.vox.OfflineMoonshine.removeRetiredModels(applicationContext)
+        }
         settingsScope.launch(Dispatchers.Default) {
             delay(350)
             preloadEmojiCatalog(assets)
@@ -114,15 +152,21 @@ class MonologInputMethodService : LifecycleInputMethodService() {
                     captureAfterHide?.cancel()
                     isShortcutsOpen = false
                     shortcutDraft = ShortcutDraft()
-                    if (isVoxOpen) handleExitVox()
                 } else if (editorActive) {
                     ai.refreshDraft()
                 }
             }
         }
         settingsScope.launch {
-            settingsStore.keyboardLanguage.collect { language = KeyboardLanguage.of(it) }
+            settingsStore.keyboardLanguage.collect {
+                language = KeyboardLanguage.of(it)
+                settingsScope.launch(Dispatchers.Default) { NativeTyping.warm(applicationContext, it) }
+            }
         }
+        settingsScope.launch { settingsStore.phoneActions.collect { phoneActionsEnabled = it; ai.onPhoneActionsChanged() } }
+        settingsScope.launch { settingsStore.defaultVox.collect { defaultVox = it } }
+        settingsScope.launch { settingsStore.smartVoxFilter.collect { voxController.smartFilter = it } }
+        settingsScope.launch { settingsStore.sensitiveWords.collect(sensitiveDraft::setWords) }
         settingsScope.launch {
             settingsStore.personalWords.collect(dictionary::setPersonalWords)
         }
@@ -145,9 +189,12 @@ class MonologInputMethodService : LifecycleInputMethodService() {
 
     private val voxController by lazy {
         VoxController(this, settingsScope) { state ->
+            val previous = voxState
             voxState = state
-            if (isVoxOpen && state.finalSegment.isNotBlank()) {
-                if (!saveSpokenNote(state.transcript)) ai.stableSpeech(state.finalSegment)
+            if (isVoxOpen && state.finalSegment.isNotBlank() && state.transcript != previous.transcript) {
+                handleCommitTranscript(state.finalSegment)
+            } else if (isVoxOpen && state.partialTranscript != previous.partialTranscript) {
+                updateVoxComposition(state.partialTranscript)
             }
         }
     }
@@ -169,7 +216,9 @@ class MonologInputMethodService : LifecycleInputMethodService() {
                         }
                     }
                     MonologKeyboardView(
+                        layoutSession = layoutSession,
                         editorContext = editorContext,
+                        editorActive = editorActive,
                         keyboardState = keyboardState,
                         voxState = voxState,
                         isShortcutsOpen = isShortcutsOpen,
@@ -195,9 +244,10 @@ class MonologInputMethodService : LifecycleInputMethodService() {
                         onStartListening = { voxController.startListening(language.speechTag, language.label) },
                         onPauseListening = { voxController.pauseOrStopListening() },
                         onClearTranscript = { voxController.clearTranscript(); ai.clearDraft() },
-                        onCommitTranscript = ::handleCommitTranscript,
                         onRequestPermission = ::handleRequestMicPermission,
                         onCharTyped = ::handleCharTyped,
+                        onPasteImage = ::pasteImage,
+                        onLetterTyped = ::handleLetterTyped,
                         onSwipe = ::handleSwipe,
                         onBackspace = ::handleBackspace,
                         onSpace = ::handleSpace,
@@ -219,14 +269,22 @@ class MonologInputMethodService : LifecycleInputMethodService() {
     }
 
     override fun onStartInputView(info: EditorInfo?, restarting: Boolean) {
+        afterGlide.clear()
         super.onStartInputView(info, restarting)
         autocorrectUndo = null
         swipeJob?.cancel()
+        keyboardSession++
+        val identity = info?.let { EditorIdentity(it.packageName, it.fieldId, it.fieldName, it.inputType) }
+        val sameEditor = restarting && identity != null && identity == visibleEditor
+        visibleEditor = identity
+        sensitiveDraft.clear()
+        suppressDraftMemory = false
         val resolved = EditorContext.fromEditorInfo(info)
         memoryRecorder.start(info?.packageName.orEmpty())
         editorContext = resolved.copy(isUserIncognito = userIncognito)
         editorActive = info != null
         ai.reset(info?.takeIf { it.initialSelStart == it.initialSelEnd }?.initialSelEnd ?: -1)
+        verifyEditorPrivacy()
         ai.refreshDraft()
 
         // Always close any active private panels when switching editors
@@ -237,11 +295,17 @@ class MonologInputMethodService : LifecycleInputMethodService() {
             handleExitVox()
         }
 
-        // If editor is numeric, automatically show symbols/numbers layer
+        // Sending a message can restart the same editor while the IME remains visible.
+        if (sameEditor) return
+        layoutSession++
         keyboardState = if (resolved.isNumber) {
             KeyboardState(layer = KeyboardLayer.SYMBOLS, shiftState = ShiftState.OFF)
         } else {
             KeyboardState(layer = KeyboardLayer.LETTERS, shiftState = ShiftState.ONCE)
+        }
+        if (defaultVox && aiAllowed()) {
+            voxState = VoxState()
+            isVoxOpen = true
         }
     }
 
@@ -252,7 +316,10 @@ class MonologInputMethodService : LifecycleInputMethodService() {
     }
 
     override fun onFinishInputView(finishingInput: Boolean) {
-        if (aiAllowed()) memoryRecorder.boundary() else memoryRecorder.clear()
+        afterGlide.clear()
+        verifyEditorPrivacy()
+        if (memoryAllowed()) memoryRecorder.boundary() else memoryRecorder.clear()
+        clearVoxComposition()
         editorActive = false
         swipeJob?.cancel()
         ai.reset()
@@ -262,12 +329,17 @@ class MonologInputMethodService : LifecycleInputMethodService() {
         shortcutDraft = ShortcutDraft()
         searchQuery = null
         isVoxOpen = false
-        editorContext = EditorContext.default().copy(isUserIncognito = userIncognito)
-        keyboardState = KeyboardState()
     }
 
     override fun onWindowHidden() {
+        afterGlide.clear()
         super.onWindowHidden()
+        keyboardSession++
+        layoutSession++
+        visibleEditor = null
+        keyboardState = KeyboardState()
+        isShortcutsOpen = false
+        shortcutDraft = ShortcutDraft()
         ai.reset()
         searchQuery = null
         if (isVoxOpen) handleExitVox()
@@ -283,6 +355,7 @@ class MonologInputMethodService : LifecycleInputMethodService() {
     }
 
     override fun onFinishInput() {
+        afterGlide.clear()
         editorActive = false
         swipeJob?.cancel()
         ai.reset()
@@ -326,6 +399,10 @@ class MonologInputMethodService : LifecycleInputMethodService() {
 
     private fun handleSuggestedShortcut(suggestion: ShortcutSuggestion) {
         if (!aiAllowed() || suggestion != ai.shortcutSuggestion) return
+        if (editorContext.isIncognito) {
+            Toast.makeText(this, "Reminder detected. Leave Incognito to save it.", Toast.LENGTH_SHORT).show()
+            return
+        }
         swipeJob?.cancel()
         searchQuery = null
         ai.closePanel()
@@ -402,30 +479,58 @@ class MonologInputMethodService : LifecycleInputMethodService() {
     }
 
     private fun handleExitVox() {
+        clearVoxComposition()
         voxController.cleanup()
         isVoxOpen = false
         voxController.clearTranscript()
         ai.clearDraft()
     }
 
+    private fun updateVoxComposition(partial: String) {
+        if (partial.isBlank() || !aiAllowed() || partial.startsWith("add a note", ignoreCase = true) ||
+            partial.startsWith("add note", ignoreCase = true)) {
+            clearVoxComposition()
+            return
+        }
+        val connection = currentInputConnection ?: return
+        if (voxComposition !== connection) voxPrefix = speechPrefix(connection)
+        if (connection.setComposingText(voxPrefix + partial, 1)) voxComposition = connection
+    }
+
+    private fun clearVoxComposition() {
+        val connection = voxComposition ?: return
+        voxComposition = null
+        if (connection === currentInputConnection) connection.commitText("", 1)
+        else connection.finishComposingText()
+    }
+
+    private fun speechPrefix(connection: android.view.inputmethod.InputConnection): String =
+        if (connection.getTextBeforeCursor(1, 0)?.lastOrNull()?.isWhitespace() == false) " " else ""
+
     private fun handleCommitTranscript(rawTranscript: String) {
-        val transcript = voxController.cleanTranscript(rawTranscript)
+        val transcript = rawTranscript.trim()
+        markTyped(transcript)
         if (saveSpokenNote(transcript)) return
         if (transcript.isNotBlank()) {
             if (isShortcutsOpen && shortcutDraft.isEditing) shortcutDraft = shortcutDraft.insert(transcript)
-            else if (currentInputConnection?.commitText(transcript, 1) == true) {
-                ai.textCommitted(transcript)
-                memoryRecorder.committed(transcript, aiAllowed())
+            else currentInputConnection?.let { connection ->
+                val prefix = if (voxComposition === connection) voxPrefix else speechPrefix(connection)
+                val inserted = prefix + transcript
+                if (connection.commitText(inserted, 1)) {
+                    voxComposition = null
+                    ai.textCommitted(inserted)
+                    ai.stableSpeech(transcript)
+                    memoryRecorder.committed(inserted, memoryAllowed())
+                }
             }
         }
-        handleExitVox()
     }
 
     private fun saveSpokenNote(transcript: String): Boolean {
         val command = Regex("^\\s*add\\s+(?:a\\s+)?note\\b[\\s,.:;-]*", RegexOption.IGNORE_CASE)
         val prefix = command.find(transcript) ?: return false
         val body = transcript.substring(prefix.range.last + 1).trim()
-        if (body.isBlank() || !aiAllowed()) return false
+        if (body.isBlank() || !memoryAllowed()) return false
         val recorder = voxController.takeVoiceSegment()
         handleExitVox()
         settingsScope.launch {
@@ -455,7 +560,14 @@ class MonologInputMethodService : LifecycleInputMethodService() {
         } catch (_: Exception) {}
     }
 
+    private fun deferDuringGlide(input: () -> Unit): Boolean {
+        if (swipeJob?.isActive != true) return false
+        afterGlide.addLast(input)
+        return true
+    }
+
     private fun handleSwipe(points: List<SwipePoint>) {
+        if (deferDuringGlide { handleSwipe(points) }) return
         val inputLanguage = language
         if (!swipeAllowed() || !inputLanguage.supportsLatinSwipe || keyboardState.layer != KeyboardLayer.LETTERS) return
         val connection = currentInputConnection ?: return
@@ -463,6 +575,7 @@ class MonologInputMethodService : LifecycleInputMethodService() {
         val shortcut = shortcutDraft.takeIf { isShortcutsOpen && it.isEditing }
         val state = keyboardState
         val selection = selectionVersion
+        val session = keyboardSession
         val before = when {
             query != null -> query.text.take(query.selection.min).takeLast(96)
             shortcut != null -> shortcut.activeValue.let { it.text.take(it.selection.min).takeLast(96) }
@@ -470,36 +583,70 @@ class MonologInputMethodService : LifecycleInputMethodService() {
         }
         swipeJob?.cancel()
         swipeJob = settingsScope.launch {
-            val ranked = withContext(Dispatchers.Default) { dictionary.swipe(inputLanguage, points, before) }
-            val word = ranked.firstOrNull() ?: return@launch
-            // A swipe belongs to the editor and cursor that were active when it ended.
-            if (!swipeAllowed() || language != inputLanguage || currentInputConnection !== connection ||
-                searchQuery != query || keyboardState != state ||
-                shortcut != shortcutDraft.takeIf { isShortcutsOpen && it.isEditing } ||
-                isShortcutsOpen && shortcut == null ||
-                query == null && shortcut == null && selectionVersion != selection) return@launch
+            try {
+                val ranked = withContext(Dispatchers.Default) { dictionary.swipe(inputLanguage, points, before) }
+                val word = ranked.firstOrNull() ?: return@launch
+                // A swipe belongs to the editor and cursor that were active when it ended.
+                if (!swipeAllowed() || language != inputLanguage || currentInputConnection !== connection ||
+                    searchQuery != query || keyboardState != state ||
+                    shortcut != shortcutDraft.takeIf { isShortcutsOpen && it.isEditing } ||
+                    isShortcutsOpen && shortcut == null ||
+                    query == null && shortcut == null && selectionVersion != selection &&
+                    (!connection.getSelectedText(0).isNullOrEmpty() ||
+                        connection.getTextBeforeCursor(96, 0)?.toString().orEmpty() != before)) return@launch
 
-            val previous = when {
-                query != null -> query.text.getOrNull(query.selection.min - 1)
-                shortcut != null -> shortcut.activeValue.let { it.text.getOrNull(it.selection.min - 1) }
-                else -> connection.getTextBeforeCursor(1, 0)?.lastOrNull()
-            }
-            swipeJob = null
-            val inserted = formatSwipeWord(word, state.shiftState, previous)
-            if (query != null || shortcut != null) {
-                handleCharTyped(inserted)
-            } else if (connection.commitText(inserted, 1)) {
-                autocorrectUndo = null
-                ai.textCommitted(inserted)
-                memoryRecorder.committed(inserted, aiAllowed())
-                ai.offerSwipeAlternatives(inserted.trimStart(),
-                    ranked.drop(1).map { formatSwipeWord(it, state.shiftState, null) })
-                keyboardState = keyboardState.onLetterTyped()
+                val previous = when {
+                    query != null -> query.text.getOrNull(query.selection.min - 1)
+                    shortcut != null -> shortcut.activeValue.let { it.text.getOrNull(it.selection.min - 1) }
+                    else -> connection.getTextBeforeCursor(1, 0)?.lastOrNull()
+                }
+                swipeJob = null
+                val inserted = formatSwipeWord(word, state.shiftState, previous)
+                if (query != null || shortcut != null) {
+                    handleCharTyped(inserted)
+                } else if (connection.commitText(inserted, 1)) {
+                    markTyped(inserted)
+                    autocorrectUndo = null
+                    ai.textCommitted(inserted)
+                    memoryRecorder.committed(inserted, memoryAllowed())
+                    ai.offerSwipeAlternatives(inserted.trimStart(),
+                        ranked.drop(1).map { formatSwipeWord(it, state.shiftState, null) })
+                    keyboardState = keyboardState.onLetterTyped()
+                }
+            } finally {
+                if (swipeJob === kotlin.coroutines.coroutineContext[Job]) swipeJob = null
+                if (keyboardSession == session && editorActive && settingsScope.coroutineContext[Job]?.isActive == true) {
+                    while (swipeJob == null && afterGlide.isNotEmpty()) afterGlide.removeFirst().invoke()
+                }
             }
         }
     }
 
+    private fun pasteImage(image: com.notokens.monolog.ime.ui.ClipboardImage): Boolean {
+        if (!editorActive || editorContext.isIncognito || !image.file.isFile) return false
+        val accepted = currentInputEditorInfo?.contentMimeTypes.orEmpty().any {
+            android.content.ClipDescription.compareMimeTypes(image.mime, it)
+        }
+        val inserted = accepted && runCatching {
+            val info = android.view.inputmethod.InputContentInfo(image.uri(this),
+                android.content.ClipDescription("Copied image", arrayOf(image.mime)), null)
+            currentInputConnection?.commitContent(info,
+                android.view.inputmethod.InputConnection.INPUT_CONTENT_GRANT_READ_URI_PERMISSION, null) == true
+        }.getOrDefault(false)
+        if (!inserted) Toast.makeText(this, "This field does not accept this image", Toast.LENGTH_SHORT).show()
+        return inserted
+    }
+
+    private fun handleLetterTyped(text: String) {
+        if (deferDuringGlide { handleLetterTyped(text) }) return
+        val cased = if (keyboardState.shiftState.isUppercase) {
+            if (text == "ß") "ẞ" else text.uppercase(java.util.Locale.ROOT)
+        } else text.lowercase(java.util.Locale.ROOT)
+        handleCharTyped(cased)
+    }
+
     private fun handleCharTyped(text: String) {
+        if (deferDuringGlide { handleCharTyped(text) }) return
         swipeJob?.cancel()
         lastShiftTap = null
         autocorrectUndo = null
@@ -518,18 +665,20 @@ class MonologInputMethodService : LifecycleInputMethodService() {
             return
         }
         val ic = currentInputConnection ?: return
+        markTyped(text)
         if (commitAutoCorrection(text)) {
             keyboardState = keyboardState.onLetterTyped()
             return
         }
         if (ic.commitText(text, 1)) {
             ai.textCommitted(text)
-            memoryRecorder.committed(text, aiAllowed())
+            memoryRecorder.committed(text, memoryAllowed())
         }
         keyboardState = keyboardState.onLetterTyped()
     }
 
     private fun handleBackspace() {
+        if (deferDuringGlide { handleBackspace() }) return
         swipeJob?.cancel()
         searchQuery?.let { query ->
             ai.abortAction()
@@ -546,6 +695,7 @@ class MonologInputMethodService : LifecycleInputMethodService() {
             return
         }
         val ic = currentInputConnection ?: return
+        sensitiveDraft.backspace()
         if (undoAutoCorrection()) return
         ai.closePanel()
         ai.clearDraft()
@@ -569,6 +719,7 @@ class MonologInputMethodService : LifecycleInputMethodService() {
     }
 
     private fun handleSpace() {
+        if (deferDuringGlide { handleSpace() }) return
         swipeJob?.cancel()
         autocorrectUndo = null
         if (searchQuery != null) {
@@ -580,14 +731,16 @@ class MonologInputMethodService : LifecycleInputMethodService() {
             return
         }
         val ic = currentInputConnection ?: return
+        markTyped(" ")
         if (commitAutoCorrection(" ")) return
         if (ic.commitText(" ", 1)) {
             ai.textCommitted(" ")
-            memoryRecorder.committed(" ", aiAllowed())
+            memoryRecorder.committed(" ", memoryAllowed())
         }
     }
 
     private fun handleAction() {
+        if (deferDuringGlide { handleAction() }) return
         swipeJob?.cancel()
         autocorrectUndo = null
         searchQuery?.let { ai.ask(it.text); return }
@@ -596,8 +749,23 @@ class MonologInputMethodService : LifecycleInputMethodService() {
             return
         }
         ai.reset()
-        if (aiAllowed()) memoryRecorder.boundary() else memoryRecorder.clear()
+        verifyEditorPrivacy()
+        if (memoryAllowed()) memoryRecorder.boundary() else memoryRecorder.clear()
         editorContext.performAction(currentInputConnection)
+    }
+
+    private fun verifyEditorPrivacy() {
+        if (!memoryAllowed()) return
+        val connection = currentInputConnection ?: return
+        val extracted = connection.getExtractedText(android.view.inputmethod.ExtractedTextRequest(), 0)?.text
+        if (extracted != null) {
+            checkDraftPrivacy(extracted.toString())
+            return
+        }
+        val selection = connection.getSelectedText(0)?.toString().orEmpty()
+        val whole = connection.getTextBeforeCursor(1600, 0)?.toString().orEmpty() + selection +
+            connection.getTextAfterCursor(1600, 0)?.toString().orEmpty()
+        checkDraftPrivacy(whole)
     }
 
     private fun cursorEnd(ic: android.view.inputmethod.InputConnection): Int? =
@@ -606,16 +774,16 @@ class MonologInputMethodService : LifecycleInputMethodService() {
             ?.let { it.startOffset + it.selectionEnd }
 
     private fun commitAutoCorrection(delimiter: String): Boolean {
-        if (!autocorrectEnabled || !aiAllowed() || editorContext.isUri || language.id != "en" ||
+        if (!autocorrectEnabled || !aiAllowed() || editorContext.isIncognito || editorContext.isUri || language.id != "en" ||
             delimiter.length != 1 || delimiter[0] !in " .,!?;:" ||
             editorContext.inputType and (android.text.InputType.TYPE_TEXT_FLAG_NO_SUGGESTIONS or
                 android.text.InputType.TYPE_TEXT_FLAG_AUTO_COMPLETE) != 0) return false
         val ic = currentInputConnection ?: return false
-        if (!ic.getSelectedText(0).isNullOrEmpty()) return false
-        if (ic.getTextAfterCursor(1, 0)?.firstOrNull()?.let { it.isLetterOrDigit() || it == '_' } == true) return false
         val before = ic.getTextBeforeCursor(128, 0)?.toString() ?: return false
         val correction = dictionary.automaticCorrection(before) ?: return false
         if (correction.typed == correction.replacement) return false
+        if (!ic.getSelectedText(0).isNullOrEmpty()) return false
+        if (ic.getTextAfterCursor(1, 0)?.firstOrNull()?.let { it.isLetterOrDigit() || it == '_' } == true) return false
         ic.beginBatchEdit()
         try {
             if (!ic.deleteSurroundingText(correction.typed.length, 0)) return false
@@ -624,8 +792,8 @@ class MonologInputMethodService : LifecycleInputMethodService() {
                 ic.commitText(correction.typed, 1)
                 return false
             }
-            memoryRecorder.replace(correction.typed, correction.replacement, aiAllowed())
-            memoryRecorder.committed(delimiter, aiAllowed())
+            memoryRecorder.replace(correction.typed, correction.replacement, memoryAllowed())
+            memoryRecorder.committed(delimiter, memoryAllowed())
             val end = cursorEnd(ic)
             autocorrectUndo = end?.let { CorrectionUndo(correction.typed, inserted, ic, it) }
             ai.reset(end ?: -1)
@@ -648,7 +816,7 @@ class MonologInputMethodService : LifecycleInputMethodService() {
                 ic.commitText(undo.inserted, 1)
                 return true
             }
-            memoryRecorder.replace(undo.inserted, undo.original, aiAllowed())
+            memoryRecorder.replace(undo.inserted, undo.original, memoryAllowed())
             ai.reset(cursorEnd(ic) ?: -1)
             ai.refreshDraft(typing = true)
             return true

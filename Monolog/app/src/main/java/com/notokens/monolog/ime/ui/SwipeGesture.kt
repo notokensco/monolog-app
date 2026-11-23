@@ -22,6 +22,7 @@ import com.notokens.monolog.ime.QwertyLayout
 import com.notokens.monolog.ime.SwipePoint
 
 @Composable
+@OptIn(androidx.compose.ui.ExperimentalComposeUiApi::class)
 internal fun swipeTypingModifier(
     enabled: Boolean,
     rows: List<String> = QwertyLayout.rows,
@@ -36,7 +37,7 @@ internal fun swipeTypingModifier(
         .drawWithContent {
             drawContent()
             if (points.size > 1) {
-                val trailLength = 68.dp.toPx()
+                val trailLength = 84.dp.toPx()
                 clipRect {
                     var remaining = trailLength
                     for (index in points.lastIndex downTo 1) {
@@ -66,10 +67,19 @@ internal fun swipeTypingModifier(
                     return SwipePoint(x * QwertyLayout.width / width,
                         point.y * QwertyLayout.rowSpacing * QwertyLayout.rows.size / height)
                 }
-                if (!QwertyLayout.startsOnLetter(normalize(down.position), rows)) return@awaitEachGesture
+                val firstLetter = QwertyLayout.letterAt(normalize(down.position), rows) ?: return@awaitEachGesture
 
                 var swiping = false
-                val slop = maxOf(viewConfiguration.touchSlop, width / QwertyLayout.width * .28f)
+                val slop = maxOf(viewConfiguration.touchSlop, width / QwertyLayout.width * .55f)
+                fun record(point: Offset) {
+                    if ((point - points.last()).getDistance() < 1.5.dp.toPx()) return
+                    if (points.size >= 192) {
+                        val sampled = points.filterIndexed { index, _ -> index % 2 == 0 }
+                        points.clear()
+                        points.addAll(sampled)
+                    }
+                    points.add(point)
+                }
                 try {
                     while (true) {
                         val event = awaitPointerEvent(PointerEventPass.Initial)
@@ -79,7 +89,8 @@ internal fun swipeTypingModifier(
                             if (change.uptimeMillis - down.uptimeMillis >=
                                 viewConfiguration.longPressTimeoutMillis) break
                             // Fast glides may arrive as a down and displaced up with no move frame.
-                            if ((change.position - down.position).getDistance() < slop) {
+                            val letter = QwertyLayout.letterAt(normalize(change.position), rows)
+                            if ((change.position - down.position).getDistance() < slop || letter == firstLetter || letter == null) {
                                 if (!change.pressed) break
                                 continue
                             }
@@ -88,19 +99,13 @@ internal fun swipeTypingModifier(
                         }
                         // Claim the drag before the starting key can treat the release as a tap.
                         change.consume()
+                        change.historical.forEach { sample -> record(sample.position) }
                         if (!change.pressed) {
                             if (change.position != points.last()) points.add(change.position)
                             onComplete(points.map(::normalize))
                             break
                         }
-                        if ((change.position - points.last()).getDistance() >= 1.5.dp.toPx()) {
-                            if (points.size >= 192) {
-                                val sampled = points.filterIndexed { index, _ -> index % 2 == 0 }
-                                points.clear()
-                                points.addAll(sampled)
-                            }
-                            points.add(change.position)
-                        }
+                        record(change.position)
                     }
                 } finally {
                     points.clear()

@@ -26,6 +26,47 @@ internal data class VisionEvidence(
     val width: Int,
     val height: Int
 ) {
+    fun imageKeywords(bitmap: Bitmap): List<String> {
+        val names = (objects.map { it.text }.filterNot { it == "unclassified" } + labels)
+            .map { it.lowercase(Locale.ROOT) }.distinct()
+        val searchable = names + if ("footwear" in names) listOf("shoe", "shoes") else emptyList()
+        val colors = if (bitmap.config == Bitmap.Config.HARDWARE) emptyList() else
+            (objects.take(3).map { it.box } + Rect(0, 0, width, height))
+            .mapNotNull { prominentColor(bitmap, it) }.distinct()
+        return (searchable + colors + colors.flatMap { color -> searchable.take(3).map { "$color $it" } })
+            .distinct().take(30)
+    }
+
+    private fun prominentColor(bitmap: Bitmap, box: Rect): String? {
+        val left = box.left.coerceIn(0, bitmap.width)
+        val right = box.right.coerceIn(left, bitmap.width)
+        val top = box.top.coerceIn(0, bitmap.height)
+        val bottom = box.bottom.coerceIn(top, bitmap.height)
+        if (left == right || top == bottom) return null
+        val palette = listOf("red", "orange", "yellow", "green", "teal", "blue", "purple", "pink")
+        val counts = IntArray(palette.size)
+        val hsv = FloatArray(3)
+        for (row in 0 until 18) for (column in 0 until 18) {
+            val x = left + (right - left - 1) * column / 17
+            val y = top + (bottom - top - 1) * row / 17
+            android.graphics.Color.colorToHSV(bitmap.getPixel(x, y), hsv)
+            if (hsv[1] >= .38f && hsv[2] >= .22f) {
+                val index = when (hsv[0]) {
+                    in 15f..<44f -> 1
+                    in 44f..<72f -> 2
+                    in 72f..<158f -> 3
+                    in 158f..<195f -> 4
+                    in 195f..<253f -> 5
+                    in 253f..<297f -> 6
+                    in 297f..<343f -> 7
+                    else -> 0
+                }
+                counts[index]++
+            }
+        }
+        return counts.indices.maxByOrNull { counts[it] }?.takeIf { counts[it] >= 26 }?.let(palette::get)
+    }
+
     fun description(): String = buildString {
         text.forEach { item -> appendLine("Text at " + position(item.box) + ": " + item.text) }
         if (labels.isNotEmpty()) append("Whole-image labels: ").appendLine(labels.joinToString())
@@ -75,22 +116,8 @@ internal object CaptureVision {
     }
 
     suspend fun ask(context: Context, bitmap: Bitmap, question: String): String {
-        val instruction = AiText.answerPrompt(question) + "\nUse only what is visible in the image."
-        if (CloudAi.enabled(context)) return withAiFallback(
-            online = { CloudAi.answer(context, instruction, bitmap) },
-            offline = { askOffline(context, bitmap, question, instruction) }
-        )
-        return askOffline(context, bitmap, question, instruction)
-    }
-
-    private suspend fun askOffline(context: Context, bitmap: Bitmap, question: String, instruction: String): String {
-        val nano = NanoAi.answer(context, instruction, bitmap)
-        if (nano != null) return AiText.checkedAnswer(question, nano) ?: AiText.UNKNOWN_ANSWER
-
         val vision = inspect(context, bitmap)
-        val caption = NanoAi.caption(context, bitmap)
         val evidence = buildString {
-            if (caption != null) appendLine("Image description: $caption")
             // Prefer readable content to status bar text and broad classifier labels.
             val content = vision.text.filter { it.box.centerY() > vision.height * .045f }
             val questionWords = Regex("""[\p{L}\p{N}]{4,}""").findAll(question.lowercase(Locale.ROOT)).map { it.value }.toSet()

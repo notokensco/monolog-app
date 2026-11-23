@@ -23,7 +23,8 @@ internal fun List<Note>.captureEvidence(query: String): String {
         .map { it.value }.filter { it.length >= 3 && it !in questionWords }.toSet()
     if (terms.isEmpty()) return ""
     return asSequence().mapNotNull { note ->
-        val analysis = TagMetadataCodec.decode(note.body).analysis
+        val decoded = TagMetadataCodec.decode(note.body)
+        val analysis = (decoded.analysis + "\n" + decoded.imageKeywords.joinToString(", ")).trim()
         if (analysis.isBlank()) return@mapNotNull null
         val lines = analysis.lineSequence().map { it.removePrefix("> ") }.toList()
         val matches = lines.filter { line -> terms.any { line.contains(it, ignoreCase = true) } }

@@ -5,10 +5,7 @@ import android.view.View
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.layout.Box
-import androidx.compose.foundation.layout.Column
-import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxHeight
-import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.shape.RoundedCornerShape
@@ -20,9 +17,22 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.setValue
+import androidx.compose.runtime.staticCompositionLocalOf
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.draw.shadow
+import androidx.compose.ui.draw.drawBehind
+import androidx.compose.ui.geometry.CornerRadius
+import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.geometry.Rect
+import androidx.compose.ui.geometry.Size
+import androidx.compose.ui.graphics.Brush
+import androidx.compose.ui.graphics.lerp
+import androidx.compose.ui.graphics.compositeOver
+import androidx.compose.ui.graphics.drawscope.Stroke
+import androidx.compose.ui.layout.boundsInRoot
+import androidx.compose.ui.layout.onGloballyPositioned
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.input.pointer.PointerId
 import androidx.compose.ui.input.pointer.PointerEventPass
@@ -50,6 +60,9 @@ import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 
+internal data class KeyAppearance(val borders: Boolean = false, val popups: Boolean = false, val popupMs: Int = 70)
+internal val LocalKeyAppearance = staticCompositionLocalOf { KeyAppearance() }
+
 internal fun triggerHapticFeedback(view: View, isLong: Boolean = false) {
     view.performHapticFeedback(if (isLong) HapticFeedbackConstants.LONG_PRESS else HapticFeedbackConstants.KEYBOARD_TAP)
 }
@@ -68,6 +81,7 @@ fun KeyButton(
     contentColor: Color? = null,
     glyph: Glyph? = null,
     label: String? = null,
+    previewText: String? = null,
     longClickLabel: String? = null,
     onLongClick: (() -> Unit)? = null,
     repeatOnHold: Boolean = glyph == Glyph.BACKSPACE,
@@ -77,7 +91,17 @@ fun KeyButton(
     content: (@Composable () -> Unit)? = null
 ) {
     val view = LocalView.current
+    val appearance = LocalKeyAppearance.current
     var isPressed by remember { mutableStateOf(false) }
+    val controller by rememberUpdatedState(LocalKeyPreview.current)
+    val popupDelay by rememberUpdatedState(appearance.popupMs)
+    val legend by rememberUpdatedState(previewText ?: text ?: when(glyph) {
+        Glyph.SHIFT -> "⇧"
+        Glyph.BACKSPACE -> "⌫"
+        Glyph.ENTER -> "↵"
+        else -> label?.take(16) ?: glyph?.name?.lowercase()?.replaceFirstChar(Char::uppercaseChar)
+    })
+    var bounds by remember { mutableStateOf(Rect.Zero) }
     val tap by rememberUpdatedState(onClick)
     val hold by rememberUpdatedState(onLongClick)
 
@@ -91,6 +115,8 @@ fun KeyButton(
 
     val finalBg = if (isPressed && !isAccent) {
         PaperKeyActive
+    } else if (appearance.borders && !isPill && baseBg == Color.Transparent) {
+        PaperPillBackground
     } else {
         baseBg
     }
@@ -102,7 +128,7 @@ fun KeyButton(
         else -> PaperKeyText
     }
 
-    val pillModifier = if (isPill) {
+    val pillModifier = if (isPill && !appearance.borders) {
         Modifier.border(if (isActive) 2.dp else 1.dp,
             if (isActive) MaterialTheme.colorScheme.primary else PaperPillBorder, RoundedCornerShape(24.dp))
     } else {
@@ -112,12 +138,7 @@ fun KeyButton(
     Box(
         modifier = modifier
             .fillMaxHeight()
-            .padding(horizontal = 1.dp, vertical = if (isPill) 7.dp else 2.dp)
-            .activeKeyGlow(glow, circular = true)
-            .clip(RoundedCornerShape(if (isPill) 24.dp else 8.dp))
-            .then(pillModifier)
-            .background(finalBg)
-            .aiKeyTracing(tracing)
+            .then(if (LocalKeyPreview.current != null) Modifier.onGloballyPositioned { bounds = it.boundsInRoot() } else Modifier)
             .semantics {
                 val description = label ?: glyph?.name?.lowercase()
                 if (description != null) contentDescription = description
@@ -126,28 +147,28 @@ fun KeyButton(
             }
             .pointerInput(onLongClick != null, repeatOnHold) {
                 coroutineScope {
-                    class Press(var action: Job? = null, var handled: Boolean = false)
+                    class Press(val preview: KeyPreview.Preview?, var action: Job? = null, var handled: Boolean = false)
                     val presses = mutableMapOf<PointerId, Press>()
                     try {
                         awaitPointerEventScope {
-                            val tolerance = viewConfiguration.touchSlop
                             while (true) {
                                 val event = awaitPointerEvent(PointerEventPass.Main)
                                 for (change in event.changes) {
                                     val active = presses[change.id]
-                                    val outside = change.position.x !in -tolerance..(size.width + tolerance) ||
-                                        change.position.y !in -tolerance..(size.height + tolerance)
-                                    if (active != null && (!change.pressed || change.isConsumed || outside)) {
+                                    if (active != null && (!change.pressed || change.isConsumed)) {
                                         presses.remove(change.id)
                                         active.action?.cancel()
-                                        if (!change.pressed && !change.isConsumed && !outside && !active.handled) {
+                                        val completed = !change.pressed && !change.isConsumed
+                                        controller?.up(active, active.preview.takeIf { completed && (!active.handled || repeatOnHold) })
+                                        if (completed && !active.handled) {
                                             change.consume()
                                             triggerHapticFeedback(view)
                                             tap()
                                         }
                                     } else if (active == null && change.pressed && !change.previousPressed && !change.isConsumed) {
                                         change.consume()
-                                        val press = Press(handled = repeatOnHold)
+                                        val press = Press(legend?.let { KeyPreview.Preview(it, bounds) }, handled = repeatOnHold)
+                                        press.preview?.let { controller?.down(press, it, popupDelay) }
                                         presses[change.id] = press
                                         if (repeatOnHold) {
                                             triggerHapticFeedback(view)
@@ -163,6 +184,7 @@ fun KeyButton(
                                             press.action = launch {
                                                 delay(viewConfiguration.longPressTimeoutMillis)
                                                 press.handled = true
+                                                controller?.up(press, null)
                                                 triggerHapticFeedback(view, isLong = true)
                                                 hold?.invoke()
                                             }
@@ -173,11 +195,21 @@ fun KeyButton(
                             }
                         }
                     } finally {
-                        presses.values.forEach { it.action?.cancel() }
+                        presses.values.forEach { it.action?.cancel(); controller?.up(it, null) }
                         isPressed = false
                     }
                 }
-            },
+            }
+            .padding(horizontal = if (appearance.borders) 2.dp else 1.dp,
+                vertical = if (appearance.borders) 2.dp else if (isPill) 7.dp else 2.dp)
+            .activeKeyGlow(glow, circular = true)
+            .then(if (appearance.borders) Modifier.materialKey(
+                (if (finalBg == Color.Transparent) PaperPillBackground else finalBg)
+                    .compositeOver(MaterialTheme.colorScheme.surface),
+                isPressed, isPill
+            ) else Modifier.clip(RoundedCornerShape(if (isPill) 24.dp else 8.dp))
+                .then(pillModifier).background(finalBg))
+            .aiKeyTracing(tracing),
         contentAlignment = Alignment.Center
     ) {
         if (glyph != null) {
@@ -186,34 +218,46 @@ fun KeyButton(
             content()
         } else if (text != null) {
             if (subText != null) {
-                Column(
-                    horizontalAlignment = Alignment.CenterHorizontally,
-                    modifier = Modifier.padding(top = 1.dp)
-                ) {
-                    Text(
-                        text = subText,
-                        color = PaperKeySubText,
-                        fontSize = 9.sp,
-                        fontWeight = FontWeight.Medium,
-                        lineHeight = 10.sp
-                    )
-                    Text(
-                        text = text,
-                        color = textColor,
-                        fontSize = fontSize,
-                        fontWeight = fontWeight,
-                        textAlign = TextAlign.Center
-                    )
-                }
-            } else {
                 Text(
-                    text = text,
-                    color = textColor,
-                    fontSize = fontSize,
-                    fontWeight = fontWeight,
-                    textAlign = TextAlign.Center
+                    text = subText,
+                    modifier = Modifier.align(Alignment.TopEnd).padding(top = 3.dp, end = 3.dp),
+                    color = PaperKeySubText,
+                    fontSize = 9.sp,
+                    fontWeight = FontWeight.Medium,
+                    lineHeight = 10.sp
                 )
             }
+            Text(
+                text = text,
+                color = textColor,
+                fontSize = fontSize,
+                fontWeight = fontWeight,
+                textAlign = TextAlign.Center
+            )
         }
     }
+}
+
+
+private fun Modifier.materialKey(face: Color, pressed: Boolean, wide: Boolean): Modifier {
+    val radius = if (wide) 12.dp else 9.dp
+    return shadow(if (pressed) 0.5.dp else 2.dp, RoundedCornerShape(radius), clip = false)
+        .drawBehind {
+            val corners = CornerRadius(radius.toPx())
+            val depth = if (pressed) 1.dp.toPx() else 3.dp.toPx()
+            val step = if (pressed) 1.5.dp.toPx() else 0f
+            drawRoundRect(lerp(face, Color.Black, .33f), cornerRadius = corners)
+            val faceSize = Size(size.width, (size.height - depth - step).coerceAtLeast(1f))
+            drawRoundRect(
+                Brush.verticalGradient(listOf(lerp(face, Color.White, .23f), face, lerp(face, Color.Black, .075f)),
+                    startY = step, endY = step + faceSize.height),
+                topLeft = Offset(0f, step), size = faceSize, cornerRadius = corners
+            )
+            val inset = .45.dp.toPx()
+            if (faceSize.width > inset * 2 && faceSize.height > inset * 2) {
+                drawRoundRect(Brush.verticalGradient(listOf(Color.White.copy(alpha = .32f), Color.Black.copy(alpha = .08f))),
+                    topLeft = Offset(inset, step + inset), size = Size(faceSize.width - 2 * inset, faceSize.height - 2 * inset),
+                    cornerRadius = corners, style = Stroke(inset * 2))
+            }
+        }
 }

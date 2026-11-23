@@ -13,6 +13,8 @@ import androidx.compose.runtime.getValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalUriHandler
+import androidx.compose.ui.platform.LocalContext
+import androidx.compose.runtime.remember
 import com.notokens.monolog.ai.GgufRuntime
 import com.notokens.monolog.ai.ModelState
 import com.notokens.monolog.ai.ModelStore
@@ -26,6 +28,19 @@ internal fun TextModelPicker(store: ModelStore) {
     val state by store.state.collectAsState()
     val error by store.error.collectAsState()
     val browser = LocalUriHandler.current
+    val context = LocalContext.current
+    val recommendation = remember(context) {
+        val manager = context.getSystemService(android.app.ActivityManager::class.java)
+        val info = android.app.ActivityManager.MemoryInfo()
+        manager?.getMemoryInfo(info)
+        val gib = info.totalMem / (1024.0 * 1024 * 1024)
+        val cores = Runtime.getRuntime().availableProcessors()
+        when {
+            !GgufRuntime.available || manager?.isLowRamDevice == true || gib < 5.5 || cores < 6 -> TextModel.GEMMA
+            gib < 9.0 || cores < 8 -> TextModel.QWEN3
+            else -> TextModel.QWEN35
+        }
+    }
     SettingsCard("Offline text model") {
         Text("Install one model for offline answers and rewrites. A verified download replaces the previous model.",
             color = PaperKeySubText)
@@ -33,7 +48,13 @@ internal fun TextModelPicker(store: ModelStore) {
             val supported = !model.isGguf || GgufRuntime.available
             Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
                 Column(Modifier.weight(1f)) {
-                    Text(model.displayName)
+                    Text(when (model) {
+                        TextModel.GEMMA -> "Good"
+                        TextModel.QWEN3 -> "Better"
+                        TextModel.QWEN35 -> "Best"
+                    })
+                    if (model == recommendation) Text("Recommended for this phone", color = MaterialTheme.colorScheme.primary,
+                        style = MaterialTheme.typography.labelSmall)
                     Text(if (model == active) "Installed" else
                         if (supported) model.downloadSize else "GGUF runtime unavailable",
                         color = PaperKeySubText, style = MaterialTheme.typography.bodySmall)

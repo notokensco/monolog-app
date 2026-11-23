@@ -48,6 +48,8 @@ internal class FloatingContextDock(private val context: Context, private val cap
         if (view == null && lock?.isKeyguardLocked != true) render(false)
     }
 
+    fun showShortcuts() = render(true)
+
     fun reposition() {
         if (view != null) render(false)
     }

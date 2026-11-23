@@ -43,8 +43,10 @@ internal class EnglishSuggestions(private val context: Context) {
 
     fun continuations(before: String, hinglish: Boolean): List<String> {
         val previous = token.find(before.trimEnd())?.value?.lowercase(Locale.ROOT)
-        return (if (hinglish) TypingVocabulary.hinglishPairs[previous] ?: nextWords[previous]
+        if (previous == null) return emptyList()
+        val fallback = (if (hinglish) TypingVocabulary.hinglishPairs[previous] ?: nextWords[previous]
             else nextWords[previous]).orEmpty()
+        return (NativeTyping.nextWords(before, hinglish) + fallback).distinct().take(3)
     }
 
     /** Called on the key path: only a small lookup or a precomputed candidate, no dictionary work. */
@@ -65,7 +67,7 @@ internal class EnglishSuggestions(private val context: Context) {
 
     fun swipe(language: KeyboardLanguage, points: List<SwipePoint>, before: String): List<String> {
         val hinglish = language.id == "hi-Latn"
-        NativeTyping.swipe(context, language, points, continuations(before, hinglish))?.let { return it }
+        NativeTyping.swipe(context, language, points, before, continuations(before, hinglish))?.let { return it }
         return when (language.id) {
             "en" -> listOfNotNull(swipeDecoder.decode(points))
             "hi-Latn" -> listOfNotNull(hinglishSwipeDecoder.decode(points))
@@ -73,7 +75,7 @@ internal class EnglishSuggestions(private val context: Context) {
         }
     }
 
-    suspend fun suggest(beforeCursor: String, language: String): List<WordSuggestion> = withContext(Dispatchers.Default) {
+    suspend fun suggest(beforeCursor: String, language: String, personalized: Boolean = true): List<WordSuggestion> = withContext(Dispatchers.Default) {
         val hinglish = language == "hi-Latn"
         val legacy = language == "en" || hinglish
         preparedCorrection = null
@@ -86,11 +88,12 @@ internal class EnglishSuggestions(private val context: Context) {
             return@withContext emptyList()
         }
         val word = typed.lowercase(Locale.ROOT)
-        val next = if (legacy) continuations(beforeCursor.take(match.range.first), hinglish) else emptyList()
-        val personal = personalWords.entries.asSequence()
+        val before = beforeCursor.take(match.range.first)
+        val next = if (legacy) continuations(before, hinglish) else emptyList()
+        val personal = (if (personalized) personalWords.entries else emptySet()).asSequence()
             .filter { (key, _) -> key.startsWith(word) && key != word }
             .map { it.value }.take(3).toList()
-        NativeTyping.suggestions(context, language, word, next)?.let { ranked ->
+        NativeTyping.suggestions(context, language, word, before, next)?.let { ranked ->
             val correction = ranked.correction
             if (language == "en" && correction != null && typed == word && word.length >= 4) {
                 preparedCorrection = PreparedCorrection(beforeCursor.takeLast(128), correction)

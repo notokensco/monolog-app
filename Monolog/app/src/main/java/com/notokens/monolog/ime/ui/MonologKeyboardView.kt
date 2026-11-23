@@ -1,18 +1,20 @@
 package com.notokens.monolog.ime.ui
 
+import kotlinx.coroutines.launch
+
 import android.content.res.Configuration
 import androidx.compose.animation.AnimatedContent
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
-import androidx.compose.animation.scaleIn
-import androidx.compose.animation.scaleOut
 import androidx.compose.animation.togetherWith
+import androidx.compose.animation.core.tween
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.ui.platform.LocalContext
 import com.notokens.monolog.data.SettingsStore
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.Text
@@ -74,7 +76,9 @@ import com.notokens.monolog.ui.theme.PaperKeyText
 
 @Composable
 internal fun MonologKeyboardView(
+    layoutSession: Int,
     editorContext: EditorContext,
+    editorActive: Boolean,
     keyboardState: KeyboardState,
     voxState: VoxState,
     isShortcutsOpen: Boolean,
@@ -99,9 +103,10 @@ internal fun MonologKeyboardView(
     onStartListening: () -> Unit,
     onPauseListening: () -> Unit,
     onClearTranscript: () -> Unit,
-    onCommitTranscript: (String) -> Unit,
     onRequestPermission: () -> Unit,
     onCharTyped: (String) -> Unit,
+    onPasteImage: (ClipboardImage) -> Boolean,
+    onLetterTyped: (String) -> Unit,
     onSwipe: (List<SwipePoint>) -> Unit,
     onBackspace: () -> Unit,
     onSpace: () -> Unit,
@@ -118,22 +123,52 @@ internal fun MonologKeyboardView(
 ) {
     val configuration = LocalConfiguration.current
     val isLandscape = configuration.orientation == Configuration.ORIENTATION_LANDSCAPE
-    val rowHeight = if (isLandscape) 38.dp else 54.dp
     val recentEmoji = remember { mutableStateListOf<Emoji>() }
+    var numberPadOpen by remember(layoutSession, keyboardState.layer) { mutableStateOf(false) }
+    val showSymbolTools = keyboardState.layer == KeyboardLayer.SYMBOLS ||
+        keyboardState.layer == KeyboardLayer.MORE_SYMBOLS
     val density = LocalDensity.current
     var keyboardHeightPx by remember { mutableIntStateOf(0) }
     val isAiActive = searchQuery != null
     val context = LocalContext.current
     val settings = remember(context) { SettingsStore(context.applicationContext) }
+    val swapVoxAndAi by settings.swapVoxAndAi.collectAsState(initial = false)
+    val heightPercent by settings.keyHeightPercent.collectAsState(initial = 100)
+    val keyBorders by settings.keyBorders.collectAsState(initial = false)
+    val keyPopups by settings.keyPopups.collectAsState(initial = false)
+    val keyPopupMs by settings.keyPopupMs.collectAsState(initial = 70)
+    val maxRowHeight = ((configuration.screenHeightDp.dp - 170.dp) / 4).coerceAtLeast(32.dp)
+    val rowHeight = ((if (isLandscape) 38.dp else 54.dp) * (heightPercent / 100f))
+        .coerceIn(30.dp, maxRowHeight)
+    val bodyHeight = rowHeight * 4 + 24.dp
+    val smartFilter by settings.smartVoxFilter.collectAsState(initial = true)
+    val keyboardScope = androidx.compose.runtime.rememberCoroutineScope()
+    val onHoldSpace = if (swapVoxAndAi) onEnterVox else onOpenSearch
     val privateMode = editorContext.isIncognito
-    val clips = rememberKeyboardClips(settings, privateMode)
-    var dashboardOpen by remember { mutableStateOf(false) }
+    val clips = rememberKeyboardClips(settings, privateMode, editorActive)
+    val clipboardEnabled by settings.keyboardClipboard.collectAsState(false)
+    val images = rememberClipboardImages(clipboardEnabled, privateMode, editorActive)
+    val phoneActions by settings.phoneActions.collectAsState(false)
+    val customTriggers by settings.sensitiveWords.collectAsState("")
+    val copiedActions = com.notokens.monolog.ime.rememberClipboardActions(
+        phoneActions && editorActive && !privateMode && ai.journalAllowed, customTriggers)
+    fun pickEmoji(emoji: Emoji) {
+        onCharTyped(emoji.text)
+        if (!privateMode) {
+            recentEmoji.remove(emoji)
+            recentEmoji.add(0, emoji)
+            if (recentEmoji.size > 36) recentEmoji.removeAt(recentEmoji.lastIndex)
+        }
+    }
+    var dashboardOpen by remember(layoutSession) { mutableStateOf(false) }
     LaunchedEffect(isShortcutsOpen, isVoxOpen, isAiActive) {
         if (isShortcutsOpen || isVoxOpen || isAiActive) dashboardOpen = false
     }
     val overlayHeight = (configuration.screenHeightDp.dp - with(density) { keyboardHeightPx.toDp() })
         .coerceAtLeast(100.dp)
 
+    KeyPreviewHost(keyPopups && !dashboardOpen && !isVoxOpen) {
+    androidx.compose.runtime.CompositionLocalProvider(LocalKeyAppearance provides KeyAppearance(keyBorders, keyPopups, keyPopupMs)) {
     Column(modifier.fillMaxWidth().monologBackdrop(keyboard = true).navigationBarsPadding()
         .onSizeChanged { keyboardHeightPx = it.height }) {
         // If Vox mode is open, render the full Vox Panel
@@ -143,7 +178,12 @@ internal fun MonologKeyboardView(
                 onStartListening = onStartListening,
                 onPauseListening = onPauseListening,
                 onClearTranscript = onClearTranscript,
-                onCommitTranscript = onCommitTranscript,
+                smartFilter = smartFilter,
+                onToggleSmartFilter = { keyboardScope.launch { settings.setSmartVoxFilter(!smartFilter) } },
+                contextEnabled = !privateMode,
+                contextActive = ScreenCaptureService.isReady,
+                onContext = onCaptureContext,
+                onContextHold = onToggleShortcuts,
                 onCancel = onExitVox,
                 onRequestPermission = onRequestPermission,
                 onOpenModels = onOpenSettings
@@ -160,7 +200,7 @@ internal fun MonologKeyboardView(
                 )
             }
 
-            if (aiAllowed && !dashboardOpen && !isShortcutsOpen && searchQuery == null) {
+            if (aiAllowed && !isShortcutsOpen && searchQuery == null) {
                 KeyboardAiControls(ai, language)
             }
 
@@ -171,11 +211,13 @@ internal fun MonologKeyboardView(
                     onCaptureContext = onCaptureContext,
                     onToggleDashboard = { dashboardOpen = !dashboardOpen },
                     dashboardOpen = dashboardOpen,
-                    onEnterVox = onEnterVox,
+                    onModeAction = if (swapVoxAndAi) onOpenSearch else onEnterVox,
+                    toolbarAi = swapVoxAndAi,
                     isContextActive = !editorContext.isIncognito && (isShortcutsOpen || ScreenCaptureService.isReady),
                     suggestions = {
-                        if (aiAllowed && !dashboardOpen && !isShortcutsOpen && searchQuery == null) {
-                            KeyboardSuggestionStrip(ai, language, onSuggestedShortcut)
+                        if (!dashboardOpen && !isShortcutsOpen && searchQuery == null) {
+                            if (showSymbolTools) EmojiShortcutStrip(recentEmoji, ::pickEmoji)
+                            else if (aiAllowed) KeyboardSuggestionStrip(ai, language, onSuggestedShortcut, copiedActions)
                         }
                     }
                 )
@@ -215,100 +257,93 @@ internal fun MonologKeyboardView(
 
             AnimatedContent(
                 dashboardOpen,
-                transitionSpec = { (fadeIn() + scaleIn(initialScale = .96f)) togetherWith
-                    (fadeOut() + scaleOut(targetScale = .96f)) },
+                modifier = Modifier.fillMaxWidth().height(bodyHeight),
+                transitionSpec = { fadeIn(tween(100)) togetherWith fadeOut(tween(100)) },
                 label = "Keyboard dashboard"
             ) { shown ->
-                if (shown) KeyboardDashboard(settings, privateMode, clips,
-                    onSettings = onOpenSettings, onIncognito = onToggleIncognito, onHide = onCloseKeyboard,
-                    onVox = onEnterVox, onPaste = { value -> onCharTyped(value); dashboardOpen = false })
+                if (shown) KeyboardDashboard(
+                    settings = settings,
+                    privateMode = privateMode,
+                    clips = clips,
+                    images = images,
+                    onPasteImage = { if (onPasteImage(it)) dashboardOpen = false },
+                    rowHeight = rowHeight,
+                    onSettings = onOpenSettings,
+                    onIncognito = onToggleIncognito,
+                    onHide = onCloseKeyboard,
+                    onVox = onEnterVox,
+                    onPaste = { value -> onCharTyped(value); dashboardOpen = false }
+                )
                 else Column(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .padding(start = 3.dp, end = 3.dp, top = 4.dp, bottom = 16.dp)
-            ) {
-                when (keyboardState.layer) {
-                    KeyboardLayer.LETTERS -> LettersLayout(
-                        rowHeight = rowHeight,
-                        shiftState = keyboardState.shiftState,
-                        editorContext = editorContext,
-                        language = language,
-                        onCharTyped = onCharTyped,
-                        swipeEnabled = swipeAllowed && language.supportsLatinSwipe && (!isShortcutsOpen || shortcutDraft.isEditing),
-                        longPressCharacters = longPressCharacters,
-                        onSwipe = onSwipe,
-                        onShiftClick = onShiftClick,
-                        onCapsLock = onCapsLock,
-                        onBackspace = onBackspace,
-                        onToggleSymbols = onToggleSymbols,
-                        onToggleEmoji = onToggleEmoji,
-                        onSpace = onSpace,
-                        onOpenSettings = onOpenSettings,
-                        onOpenSearch = onOpenSearch,
-                        isAiActive = isAiActive,
-                        onToggleIncognito = onToggleIncognito,
-                        onAction = onAction
-                    )
+                    modifier = Modifier
+                        .fillMaxSize()
+                        .padding(start = 3.dp, end = 3.dp, top = 4.dp, bottom = 16.dp)
+                ) {
+                    when (keyboardState.layer) {
+                        KeyboardLayer.LETTERS -> LettersLayout(
+                            rowHeight = rowHeight,
+                            shiftState = keyboardState.shiftState,
+                            editorContext = editorContext,
+                            language = language,
+                            onCharTyped = onCharTyped,
+                            onLetterTyped = onLetterTyped,
+                            swipeEnabled = swipeAllowed && language.supportsLatinSwipe && (!isShortcutsOpen || shortcutDraft.isEditing),
+                            longPressCharacters = longPressCharacters,
+                            onSwipe = onSwipe,
+                            onShiftClick = onShiftClick,
+                            onCapsLock = onCapsLock,
+                            onBackspace = onBackspace,
+                            onToggleSymbols = onToggleSymbols,
+                            onToggleEmoji = onToggleEmoji,
+                            onSpace = onSpace,
+                            onHoldSpace = onHoldSpace,
+                            spacebarVox = swapVoxAndAi,
+                            isAiActive = isAiActive,
+                            onToggleIncognito = onToggleIncognito,
+                            onAction = onAction
+                        )
 
-                    KeyboardLayer.SYMBOLS -> SymbolsLayout(
-                        rowHeight = rowHeight,
-                        editorContext = editorContext,
-                        onCharTyped = onCharTyped,
-                        onToggleMoreSymbols = onToggleMoreSymbols,
-                        onBackspace = onBackspace,
-                        onToggleSymbols = onToggleSymbols,
-                        onToggleEmoji = onToggleEmoji,
-                        onSpace = onSpace,
-                        onOpenSettings = onOpenSettings,
-                        onOpenSearch = onOpenSearch,
-                        isAiActive = isAiActive,
-                        onToggleIncognito = onToggleIncognito,
-                        onAction = onAction
-                    )
+                        KeyboardLayer.SYMBOLS, KeyboardLayer.MORE_SYMBOLS -> SymbolsLayout(
+                            moreSymbols = keyboardState.layer == KeyboardLayer.MORE_SYMBOLS,
+                            rowHeight = rowHeight,
+                            numberPadOpen = numberPadOpen,
+                            onNumberPad = { numberPadOpen = !numberPadOpen },
+                            editorContext = editorContext,
+                            onCharTyped = onCharTyped,
+                            onToggleMoreSymbols = onToggleMoreSymbols,
+                            onBackspace = onBackspace,
+                            onToggleSymbols = onToggleSymbols,
+                            onToggleEmoji = onToggleEmoji,
+                            onSpace = onSpace,
+                            onHoldSpace = onHoldSpace,
+                            spacebarVox = swapVoxAndAi,
+                            isAiActive = isAiActive,
+                            onToggleIncognito = onToggleIncognito,
+                            onAction = onAction
+                        )
 
-                    KeyboardLayer.MORE_SYMBOLS -> MoreSymbolsLayout(
-                        rowHeight = rowHeight,
-                        editorContext = editorContext,
-                        onCharTyped = onCharTyped,
-                        onToggleMoreSymbols = onToggleMoreSymbols,
-                        onBackspace = onBackspace,
-                        onToggleSymbols = onToggleSymbols,
-                        onToggleEmoji = onToggleEmoji,
-                        onSpace = onSpace,
-                        onOpenSettings = onOpenSettings,
-                        onOpenSearch = onOpenSearch,
-                        isAiActive = isAiActive,
-                        onToggleIncognito = onToggleIncognito,
-                        onAction = onAction
-                    )
-
-                    KeyboardLayer.EMOJI -> EmojiLayout(
-                        rowHeight = rowHeight,
-                        recent = if (editorContext.isIncognito) emptyList() else recentEmoji,
-                        onEmojiPicked = { emoji ->
-                            onCharTyped(emoji.text)
-                            if (!editorContext.isIncognito) {
-                                recentEmoji.remove(emoji)
-                                recentEmoji.add(0, emoji)
-                                if (recentEmoji.size > 36) recentEmoji.removeAt(recentEmoji.lastIndex)
-                            }
-                        },
-                        editorContext = editorContext,
-                        onCharTyped = onCharTyped,
-                        onBackspace = onBackspace,
-                        onToggleLetters = onToggleEmoji,
-                        onSpace = onSpace,
-                        onOpenSettings = onOpenSettings,
-                        onOpenSearch = onOpenSearch,
-                        isAiActive = isAiActive,
-                        onToggleIncognito = onToggleIncognito,
-                        onAction = onAction
-                    )
+                        KeyboardLayer.EMOJI -> EmojiLayout(
+                            rowHeight = rowHeight,
+                            recent = if (editorContext.isIncognito) emptyList() else recentEmoji,
+                            onEmojiPicked = ::pickEmoji,
+                            editorContext = editorContext,
+                            onCharTyped = onCharTyped,
+                            onBackspace = onBackspace,
+                            onToggleLetters = onToggleEmoji,
+                            onSpace = onSpace,
+                            onHoldSpace = onHoldSpace,
+                            spacebarVox = swapVoxAndAi,
+                            isAiActive = isAiActive,
+                            onToggleIncognito = onToggleIncognito,
+                            onAction = onAction
+                        )
+                    }
                 }
             }
         }
     }
-    }
+}
+}
 }
 
 private object AboveKeyboardHeader : PopupPositionProvider {
@@ -331,6 +366,7 @@ private fun LettersLayout(
     editorContext: EditorContext,
     language: KeyboardLanguage,
     onCharTyped: (String) -> Unit,
+    onLetterTyped: (String) -> Unit,
     swipeEnabled: Boolean,
     longPressCharacters: Boolean,
     onSwipe: (List<SwipePoint>) -> Unit,
@@ -340,13 +376,16 @@ private fun LettersLayout(
     onToggleSymbols: () -> Unit,
     onToggleEmoji: () -> Unit,
     onSpace: () -> Unit,
-    onOpenSettings: () -> Unit,
-    onOpenSearch: () -> Unit,
+    onHoldSpace: () -> Unit,
+    spacebarVox: Boolean,
     isAiActive: Boolean,
     onToggleIncognito: () -> Unit,
     onAction: () -> Unit
 ) {
     val isUpper = shiftState.isUppercase
+    val typeLetterOrSymbol: (String) -> Unit = { value ->
+        if (value.any(Char::isLetter)) onLetterTyped(value) else onCharTyped(value)
+    }
     val nativeKeys = remember(language) { language.nativeKeys() }
     var page by remember(language) { mutableIntStateOf(0) }
 
@@ -371,14 +410,14 @@ private fun LettersLayout(
             Row(Modifier.fillMaxWidth().height(rowHeight)) {
                 rows[0].forEachIndexed { index, letter ->
                     LetterKey(Modifier.weight(1f), letter, isUpper, longPressCharacters,
-                        language.alternateLetters[letter], "1234567890"[index], onCharTyped)
+                        language.alternateLetters[letter], "1234567890"[index], typeLetterOrSymbol)
                 }
             }
             Row(Modifier.fillMaxWidth().height(rowHeight)) {
                 if (homeInset > 0) Spacer(Modifier.weight(homeInset))
                 rows[1].forEachIndexed { index, letter ->
                     LetterKey(Modifier.weight(1f), letter, isUpper, longPressCharacters,
-                        language.alternateLetters[letter], "@#\u00a3_&-+()"[index], onCharTyped)
+                        language.alternateLetters[letter], "@#\u00a3_&-+()"[index], typeLetterOrSymbol)
                 }
                 if (homeInset > 0) Spacer(Modifier.weight(homeInset))
             }
@@ -399,7 +438,7 @@ private fun LettersLayout(
                 )
                 rows[2].forEachIndexed { index, letter ->
                     LetterKey(Modifier.weight(1f), letter, isUpper, longPressCharacters,
-                        language.alternateLetters[letter], "*/:;!?'"[index], onCharTyped)
+                        language.alternateLetters[letter], "*\"':;!?"[index], typeLetterOrSymbol)
                 }
                 KeyButton(Modifier.weight(QwertyLayout.shiftWeight), glyph = Glyph.BACKSPACE,
                     isSpecial = true, onClick = onBackspace)
@@ -413,8 +452,8 @@ private fun LettersLayout(
         onModeClick = onToggleSymbols,
         onEmojiClick = onToggleEmoji,
         onSpace = onSpace,
-        onOpenSettings = onOpenSettings,
-        onOpenSearch = onOpenSearch,
+        onHoldSpace = onHoldSpace,
+        spacebarVox = spacebarVox,
         isAiActive = isAiActive,
         onToggleIncognito = onToggleIncognito,
         onAction = onAction,
@@ -465,6 +504,9 @@ private fun LetterKey(
 @Composable
 private fun SymbolsLayout(
     rowHeight: Dp,
+    moreSymbols: Boolean,
+    numberPadOpen: Boolean,
+    onNumberPad: () -> Unit,
     editorContext: EditorContext,
     onCharTyped: (String) -> Unit,
     onToggleMoreSymbols: () -> Unit,
@@ -472,65 +514,73 @@ private fun SymbolsLayout(
     onToggleSymbols: () -> Unit,
     onToggleEmoji: () -> Unit,
     onSpace: () -> Unit,
-    onOpenSettings: () -> Unit,
-    onOpenSearch: () -> Unit,
+    onHoldSpace: () -> Unit,
+    spacebarVox: Boolean,
     isAiActive: Boolean,
     onToggleIncognito: () -> Unit,
     onAction: () -> Unit
 ) {
-    val row1 = listOf("1", "2", "3", "4", "5", "6", "7", "8", "9", "0")
-    val row2 = listOf("@", "#", "$", "%", "&", "-", "+", "(", ")", "/")
-    val row3 = listOf("*", "\"", "'", ":", ";", "!", "?")
+    val row1 = if (moreSymbols) listOf("~", "`", "|", "•", "√", "π", "÷", "×", "¶", "∆")
+        else listOf("1", "2", "3", "4", "5", "6", "7", "8", "9", "0")
+    val row2 = if (moreSymbols) listOf("$", "€", "¥", "¢", "^", "°", "=", "{", "}", "\\")
+        else listOf("@", "#", "£", "_", "&", "-", "+", "(", ")", "/")
+    val row3 = if (moreSymbols) listOf("%", "_", "[", "]", "©", "®", "™")
+        else listOf("*", "\"", "'", ":", ";", "!", "?")
 
-    // Row 1
-    Row(modifier = Modifier.fillMaxWidth().height(rowHeight)) {
-        row1.forEach { char ->
-            KeyButton(
-                modifier = Modifier.weight(1f),
-                text = char,
-                onClick = { onCharTyped(char) }
-            )
-        }
-    }
-
-    // Row 2
-    Row(modifier = Modifier.fillMaxWidth().height(rowHeight)) {
-        row2.forEach { char ->
-            KeyButton(
-                modifier = Modifier.weight(1f),
-                text = char,
-                onClick = { onCharTyped(char) }
-            )
-        }
-    }
-
-    // Row 3
-    Row(modifier = Modifier.fillMaxWidth().height(rowHeight)) {
-        KeyButton(
-            modifier = Modifier.weight(1.4f),
-            text = "=\\<",
-            fontSize = 14.sp,
-            fontWeight = FontWeight.SemiBold,
-            isSpecial = true,
-            onClick = onToggleMoreSymbols
-        )
-
-        row3.forEach { char ->
-            KeyButton(
-                modifier = Modifier.weight(1f),
-                text = char,
-                onClick = { onCharTyped(char) }
-            )
+    if (numberPadOpen) {
+        DigitsGrid(rowHeight, onCharTyped, onBackspace)
+    } else {
+        // Row 1
+        Row(modifier = Modifier.fillMaxWidth().height(rowHeight)) {
+            row1.forEach { char ->
+                KeyButton(
+                    modifier = Modifier.weight(1f),
+                    text = char,
+                    onClick = { onCharTyped(char) }
+                )
+            }
         }
 
-        KeyButton(
-            modifier = Modifier.weight(1.4f),
-            text = "⌫",
-            glyph = Glyph.BACKSPACE,
-            fontSize = 18.sp,
-            isSpecial = true,
-            onClick = onBackspace
-        )
+        // Row 2
+        Row(modifier = Modifier.fillMaxWidth().height(rowHeight)) {
+            row2.forEach { char ->
+                KeyButton(
+                    modifier = Modifier.weight(1f),
+                    text = char,
+                    onClick = { onCharTyped(char) }
+                )
+            }
+        }
+
+        // Row 3
+        Row(modifier = Modifier.fillMaxWidth().height(rowHeight)) {
+            KeyButton(
+                modifier = Modifier.weight(1.4f),
+                text = if (moreSymbols) "123" else "=\\<",
+                fontSize = 14.sp,
+                fontWeight = FontWeight.SemiBold,
+                isSpecial = true,
+                onClick = onToggleMoreSymbols
+            )
+
+            row3.forEach { char ->
+                KeyButton(
+                    modifier = Modifier.weight(1f),
+                    text = char,
+                    onClick = { onCharTyped(char) }
+                )
+            }
+
+            KeyButton(
+                modifier = Modifier.weight(1.4f),
+                text = "⌫",
+                glyph = Glyph.BACKSPACE,
+                fontSize = 18.sp,
+                isSpecial = true,
+                onClick = onBackspace
+            )
+        }
+
     }
 
     // Row 4
@@ -540,9 +590,11 @@ private fun SymbolsLayout(
         editorContext = editorContext,
         onModeClick = onToggleSymbols,
         onEmojiClick = onToggleEmoji,
+        onNumberPad = onNumberPad,
+        numberPadOpen = numberPadOpen,
         onSpace = onSpace,
-        onOpenSettings = onOpenSettings,
-        onOpenSearch = onOpenSearch,
+        onHoldSpace = onHoldSpace,
+        spacebarVox = spacebarVox,
         isAiActive = isAiActive,
         onToggleIncognito = onToggleIncognito,
         onAction = onAction,
@@ -551,91 +603,24 @@ private fun SymbolsLayout(
 }
 
 @Composable
-private fun MoreSymbolsLayout(
+private fun DigitsGrid(
     rowHeight: Dp,
-    editorContext: EditorContext,
     onCharTyped: (String) -> Unit,
-    onToggleMoreSymbols: () -> Unit,
-    onBackspace: () -> Unit,
-    onToggleSymbols: () -> Unit,
-    onToggleEmoji: () -> Unit,
-    onSpace: () -> Unit,
-    onOpenSettings: () -> Unit,
-    onOpenSearch: () -> Unit,
-    isAiActive: Boolean,
-    onToggleIncognito: () -> Unit,
-    onAction: () -> Unit
+    onBackspace: () -> Unit
 ) {
-    val row1 = listOf("~", "`", "|", "•", "√", "π", "÷", "×", "¶", "∆")
-    val row2 = listOf("£", "€", "¥", "¢", "^", "°", "=", "{", "}", "\\")
-    val row3 = listOf("%", "_", "[", "]", "©", "®", "™")
-
-    // Row 1
-    Row(modifier = Modifier.fillMaxWidth().height(rowHeight)) {
-        row1.forEach { char ->
-            KeyButton(
-                modifier = Modifier.weight(1f),
-                text = char,
-                onClick = { onCharTyped(char) }
-            )
+    val rows = listOf(listOf("1", "2", "3", "+"), listOf("4", "5", "6", "-"), listOf("7", "8", "9", "0"))
+    rows.forEachIndexed { index, row ->
+        Row(Modifier.fillMaxWidth().height(rowHeight)) {
+            row.forEach { digit ->
+                KeyButton(Modifier.weight(1f), text = digit, onClick = { onCharTyped(digit) })
+            }
+            when (index) {
+                0 -> KeyButton(Modifier.weight(1f), text = "/", onClick = { onCharTyped("/") })
+                1 -> KeyButton(Modifier.weight(1f), glyph = Glyph.BACKSPACE, isSpecial = true, onClick = onBackspace)
+                else -> KeyButton(Modifier.weight(1f), text = "=", onClick = { onCharTyped("=") })
+            }
         }
     }
-
-    // Row 2
-    Row(modifier = Modifier.fillMaxWidth().height(rowHeight)) {
-        row2.forEach { char ->
-            KeyButton(
-                modifier = Modifier.weight(1f),
-                text = char,
-                onClick = { onCharTyped(char) }
-            )
-        }
-    }
-
-    // Row 3
-    Row(modifier = Modifier.fillMaxWidth().height(rowHeight)) {
-        KeyButton(
-            modifier = Modifier.weight(1.4f),
-            text = "123",
-            fontSize = 14.sp,
-            fontWeight = FontWeight.SemiBold,
-            isSpecial = true,
-            onClick = onToggleMoreSymbols
-        )
-
-        row3.forEach { char ->
-            KeyButton(
-                modifier = Modifier.weight(1f),
-                text = char,
-                onClick = { onCharTyped(char) }
-            )
-        }
-
-        KeyButton(
-            modifier = Modifier.weight(1.4f),
-            text = "⌫",
-            glyph = Glyph.BACKSPACE,
-            fontSize = 18.sp,
-            isSpecial = true,
-            onClick = onBackspace
-        )
-    }
-
-    // Row 4
-    BottomRow(
-        rowHeight = rowHeight,
-        modeLabel = "ABC",
-        editorContext = editorContext,
-        onModeClick = onToggleSymbols,
-        onEmojiClick = onToggleEmoji,
-        onSpace = onSpace,
-        onOpenSettings = onOpenSettings,
-        onOpenSearch = onOpenSearch,
-        isAiActive = isAiActive,
-        onToggleIncognito = onToggleIncognito,
-        onAction = onAction,
-        onCharTyped = onCharTyped
-    )
 }
 
 @Composable
@@ -648,13 +633,13 @@ private fun EmojiLayout(
     onBackspace: () -> Unit,
     onToggleLetters: () -> Unit,
     onSpace: () -> Unit,
-    onOpenSettings: () -> Unit,
-    onOpenSearch: () -> Unit,
+    onHoldSpace: () -> Unit,
+    spacebarVox: Boolean,
     isAiActive: Boolean,
     onToggleIncognito: () -> Unit,
     onAction: () -> Unit
 ) {
-    EmojiPicker(height = rowHeight * 3 + 8.dp, recent = recent, onPick = onEmojiPicked)
+    EmojiPicker(height = rowHeight * 3, recent = recent, onPick = onEmojiPicked)
     BottomRow(
         rowHeight = rowHeight,
         modeLabel = "ABC",
@@ -662,8 +647,8 @@ private fun EmojiLayout(
         onModeClick = onToggleLetters,
         onEmojiClick = onToggleLetters,
         onSpace = onSpace,
-        onOpenSettings = onOpenSettings,
-        onOpenSearch = onOpenSearch,
+        onHoldSpace = onHoldSpace,
+        spacebarVox = spacebarVox,
         isAiActive = isAiActive,
         onToggleIncognito = onToggleIncognito,
         onAction = onAction,
@@ -680,47 +665,78 @@ private fun BottomRow(
     onModeClick: () -> Unit,
     onEmojiClick: () -> Unit,
     onSpace: () -> Unit,
-    onOpenSettings: () -> Unit,
-    onOpenSearch: () -> Unit,
+    onHoldSpace: () -> Unit,
+    spacebarVox: Boolean,
     isAiActive: Boolean,
     onToggleIncognito: () -> Unit,
     onAction: () -> Unit,
     onCharTyped: (String) -> Unit,
-    onEmojiBackspace: (() -> Unit)? = null
+    onEmojiBackspace: (() -> Unit)? = null,
+    onNumberPad: (() -> Unit)? = null,
+    numberPadOpen: Boolean = false
 ) {
     val context = androidx.compose.ui.platform.LocalContext.current
     val settings = remember(context) { com.notokens.monolog.data.SettingsStore(context.applicationContext) }
     val languageId by settings.keyboardLanguage.collectAsState(initial = "en")
     val language = KeyboardLanguage.of(languageId)
     Row(modifier = Modifier.fillMaxWidth().height(rowHeight + 4.dp)) {
-        KeyButton(Modifier.weight(1.2f), text = modeLabel, fontSize = 16.sp, onClick = onModeClick)
-        KeyButton(Modifier.weight(.7f), text = ",", label = "Comma", subText = "⚙",
-            longClickLabel = "Open Monolog settings", onLongClick = onOpenSettings, onClick = { onCharTyped(",") })
-        KeyButton(Modifier.weight(.8f), glyph = Glyph.SMILE,
-            label = if (onEmojiBackspace == null) "Open emoji picker" else "Return to letters", onClick = onEmojiClick)
+        KeyButton(Modifier.weight(1.4f), text = modeLabel, fontSize = 16.sp, onClick = onModeClick)
         KeyButton(
-            Modifier.weight(if (onEmojiBackspace == null) 4.1f else 3.2f),
+            Modifier.weight(1.15f),
+            label = "Comma",
+            previewText = ",",
+            longClickLabel = if (onEmojiBackspace == null) "Open emoji picker" else "Return to letters",
+            onLongClick = onEmojiClick,
+            onClick = { onCharTyped(",") }
+        ) {
+            Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                MonologIcon(Glyph.SMILE, Modifier.size(15.dp))
+                Text(",", color = PaperKeyText, fontSize = 20.sp, lineHeight = 18.sp)
+            }
+        }
+        if (onNumberPad != null) {
+            KeyButton(
+                Modifier.weight(1f),
+                isActive = numberPadOpen,
+                label = if (numberPadOpen) "Return to symbols" else "Open number pad",
+                onClick = onNumberPad
+            ) {
+                Text("1 2\n3 4", color = PaperKeyText, fontSize = 10.sp,
+                    lineHeight = 10.sp, fontWeight = FontWeight.SemiBold)
+            }
+        }
+        KeyButton(
+            Modifier.weight(when {
+                onNumberPad != null -> 3.9f
+                onEmojiBackspace != null -> 4f
+                else -> 4.9f
+            }),
             isPill = true,
             isActive = isAiActive,
             glow = false,
             tracing = isAiActive,
             label = if (isAiActive) "Space, Monolog AI active" else "Space",
-            longClickLabel = if (isAiActive) "Close Monolog AI" else "Open Monolog AI search",
-            onLongClick = onOpenSearch.takeUnless { editorContext.isIncognito },
+            longClickLabel = when {
+                spacebarVox -> "Open Vox"
+                isAiActive -> "Close Monolog AI"
+                else -> "Open Monolog AI search"
+            },
+            onLongClick = onHoldSpace.takeUnless { editorContext.isRestrictedField || editorContext.isNumber },
             onClick = onSpace
         ) {
             Row(
                 verticalAlignment = androidx.compose.ui.Alignment.CenterVertically,
                 horizontalArrangement = androidx.compose.foundation.layout.Arrangement.spacedBy(12.dp)
             ) {
-                androidx.compose.material3.Text(if (isAiActive) "Monolog AI" else language.label.substringBefore('·').trim(),
+                androidx.compose.material3.Text(if (isAiActive) "AI Ask" else language.label.substringBefore('·').trim(),
                     color = if (isAiActive) androidx.compose.material3.MaterialTheme.colorScheme.primary else PaperKeyText,
                     fontSize = 15.sp, maxLines = 1, overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis)
-                if (!editorContext.isIncognito) MonologIcon(Glyph.BOLT, Modifier.size(17.dp))
+                if (!editorContext.isIncognito) MonologIcon(if (spacebarVox) Glyph.MIC else Glyph.BOLT, Modifier.size(17.dp))
             }
         }
         KeyButton(
-            Modifier.weight(1f),
+            Modifier.weight(1.1f),
+            previewText = ".",
             label = if (editorContext.isIncognito) "Period, incognito on" else "Period, incognito off",
             longClickLabel = when {
                 editorContext.isUserIncognito -> "Turn off incognito"
@@ -740,7 +756,7 @@ private fun BottomRow(
             KeyButton(Modifier.weight(.9f), glyph = Glyph.BACKSPACE, label = "Backspace", onClick = onEmojiBackspace)
         }
         KeyButton(
-            Modifier.weight(1.35f),
+            Modifier.weight(1.4f),
             glyph = if (isAiActive) Glyph.ARROW else when (editorContext.action) {
                 KeyboardAction.SEARCH -> Glyph.SEARCH
                 KeyboardAction.GO, KeyboardAction.SEND, KeyboardAction.NEXT -> Glyph.ARROW

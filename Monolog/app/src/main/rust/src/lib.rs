@@ -1,5 +1,7 @@
 #[cfg(any(target_os = "android", test))]
 mod lexicon;
+#[cfg(any(target_os = "android", test))]
+mod phrases;
 
 const SAMPLE_COUNT: usize = 24;
 const MAX_WORD_LENGTH: usize = 24;
@@ -50,6 +52,23 @@ fn sample(path: &[Point]) -> Option<([Point; SAMPLE_COUNT], f32)> {
     Some((result, length))
 }
 
+#[cfg(any(target_os = "android", test))]
+fn pcm_samples(bytes: &[u8]) -> impl Iterator<Item = f32> + '_ {
+    bytes
+        .chunks_exact(2)
+        .map(|pair| f32::from(i16::from_le_bytes([pair[0], pair[1]])) / 32768.0)
+}
+
+#[cfg(any(target_os = "android", test))]
+fn pcm_rms(bytes: &[u8]) -> f32 {
+    let count = (bytes.len() / 2).max(1) as f32;
+    (pcm_samples(bytes)
+        .map(|sample| sample * sample)
+        .sum::<f32>()
+        / count)
+        .sqrt()
+}
+
 #[cfg(target_os = "android")]
 fn phonetic_key(text: &str) -> String {
     let letters: Vec<_> = text
@@ -84,9 +103,9 @@ fn phonetic_key(text: &str) -> String {
 
 #[cfg(target_os = "android")]
 mod android {
-    use super::{lexicon, phonetic_key, Point};
-    use jni::objects::{JFloatArray, JObject, JString};
-    use jni::sys::{jboolean, jint, jstring};
+    use super::{lexicon, pcm_rms, pcm_samples, phonetic_key, phrases, Point};
+    use jni::objects::{JByteArray, JFloatArray, JObject, JString};
+    use jni::sys::{jboolean, jfloat, jfloatArray, jint, jstring};
     use jni::JNIEnv;
     use std::ptr::null_mut;
 
@@ -105,6 +124,50 @@ mod android {
             .chunks_exact(2)
             .map(|p| Point(p[0], p[1]))
             .collect())
+    }
+
+    #[no_mangle]
+    pub extern "system" fn Java_com_notokens_monolog_ime_NativeTyping_rankNext(
+        mut env: JNIEnv<'_>,
+        _: JObject<'_>,
+        mode: jint,
+        context: JString<'_>,
+    ) -> jstring {
+        let mut compute = || -> jni::errors::Result<jstring> {
+            let text: String = env.get_string(&context)?.into();
+            Ok(env
+                .new_string(phrases::next(mode as usize, &text))?
+                .into_raw())
+        };
+        compute().unwrap_or(null_mut())
+    }
+
+    #[no_mangle]
+    pub extern "system" fn Java_com_notokens_monolog_ime_NativeTyping_decodePcm(
+        env: JNIEnv<'_>,
+        _: JObject<'_>,
+        input: JByteArray<'_>,
+    ) -> jfloatArray {
+        let compute = || -> jni::errors::Result<jfloatArray> {
+            let pcm = env.convert_byte_array(&input)?;
+            let samples: Vec<_> = pcm_samples(&pcm).collect();
+            let array = env.new_float_array(samples.len() as i32)?;
+            env.set_float_array_region(&array, 0, &samples)?;
+            Ok(array.into_raw())
+        };
+        compute().unwrap_or(null_mut())
+    }
+
+    #[no_mangle]
+    pub extern "system" fn Java_com_notokens_monolog_ime_NativeTyping_measurePcm(
+        env: JNIEnv<'_>,
+        _: JObject<'_>,
+        input: JByteArray<'_>,
+        count: jint,
+    ) -> jfloat {
+        env.convert_byte_array(&input).map_or(0.0, |pcm| {
+            pcm_rms(&pcm[..(count.max(0) as usize).min(pcm.len())])
+        })
     }
 
     #[no_mangle]
@@ -151,12 +214,14 @@ mod android {
         path: JFloatArray<'_>,
         layout: JFloatArray<'_>,
         context: JString<'_>,
+        before: JString<'_>,
     ) -> jstring {
         let compute = || -> jni::errors::Result<jstring> {
             let path = points(&env, path, 256)?;
             let layout = points(&env, layout, 27)?;
             let context: String = env.get_string(&context)?.into();
-            let result = lexicon::swipe(mode as usize, &path, &layout, &context);
+            let before: String = env.get_string(&before)?.into();
+            let result = lexicon::swipe(mode as usize, &path, &layout, &context, &before);
             result.map_or(Ok(null_mut()), |text| Ok(env.new_string(text)?.into_raw()))
         };
         compute().unwrap_or(null_mut())
@@ -169,11 +234,13 @@ mod android {
         mode: jint,
         prefix: JString<'_>,
         context: JString<'_>,
+        before: JString<'_>,
     ) -> jstring {
         let mut compute = || -> jni::errors::Result<jstring> {
             let prefix: String = env.get_string(&prefix)?.into();
             let context: String = env.get_string(&context)?.into();
-            let result = lexicon::suggest(mode as usize, &prefix, &context);
+            let before: String = env.get_string(&before)?.into();
+            let result = lexicon::suggest(mode as usize, &prefix, &context, &before);
             result.map_or(Ok(null_mut()), |text| Ok(env.new_string(text)?.into_raw()))
         };
         compute().unwrap_or(null_mut())
@@ -185,6 +252,14 @@ mod tests {
     use super::*;
 
     #[test]
+    fn pcm_uses_signed_little_endian_samples() {
+        let audio = [0, 128, 0, 64, 255];
+        assert_eq!(pcm_samples(&audio).collect::<Vec<_>>(), [-1.0, 0.5]);
+        assert!((pcm_rms(&audio) - 0.79057).abs() < 0.0001);
+        assert_eq!(pcm_rms(&[]), 0.0);
+    }
+
+    #[test]
     fn context_breaks_a_swipe_tie_and_keeps_alternatives() {
         let mut centers = [Point(0.0, 0.0); 27];
         centers[2] = Point(1.0, 1.0);
@@ -192,11 +267,11 @@ mod tests {
         let trace = [centers[0], centers[17], centers[2]];
         assert!(lexicon::install(2, "arcc\t55\narc\t55", "", ""));
         assert_eq!(
-            lexicon::swipe(2, &trace, &centers, "arc").as_deref(),
+            lexicon::swipe(2, &trace, &centers, "arc", "").as_deref(),
             Some("arc\narcc")
         );
         assert_eq!(
-            lexicon::swipe(2, &trace[..1], &centers, "").as_deref(),
+            lexicon::swipe(2, &trace[..1], &centers, "", "").as_deref(),
             Some("")
         );
     }
@@ -205,7 +280,7 @@ mod tests {
     fn suggestions_use_context_and_exclude_invalid_candidates() {
         assert!(lexicon::install(3, "cat\t55\ncar\t55\nCAP\t100", "", ""));
         assert_eq!(
-            lexicon::suggest(3, "ca", "car").as_deref(),
+            lexicon::suggest(3, "ca", "car", "").as_deref(),
             Some("\ncar\ncat")
         );
     }

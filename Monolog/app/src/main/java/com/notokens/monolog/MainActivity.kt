@@ -25,7 +25,11 @@ import com.notokens.monolog.ui.CompanionApp
 import com.notokens.monolog.ui.CompanionDestination
 import com.notokens.monolog.ui.theme.LocalMonologDark
 import com.notokens.monolog.ui.theme.MonologTheme
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.launch
+import androidx.lifecycle.lifecycleScope
+import com.notokens.monolog.ime.vox.OfflineMoonshine
 
 class MainActivity : ComponentActivity() {
     companion object {
@@ -49,6 +53,7 @@ class MainActivity : ComponentActivity() {
         setTheme(R.style.Theme_Monolog)
         super.onCreate(savedInstanceState)
         enableEdgeToEdge()
+        lifecycleScope.launch(Dispatchers.IO) { OfflineMoonshine.removeRetiredModels(applicationContext) }
         if (savedInstanceState == null) handleIncomingIntent(intent)
         var readyToDraw = false
         val decor = window.decorView

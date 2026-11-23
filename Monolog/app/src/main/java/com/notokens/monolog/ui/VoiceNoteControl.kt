@@ -85,7 +85,7 @@ internal fun VoiceNoteControl(
                             else -> ""
                         }
                         voiceCallback(voice)
-                    } else error = "Nothing was recorded. Tap Vox to try again."
+                    } else error = captions.errorMessage ?: "Nothing was recorded. Tap Vox to try again."
                 }
             } catch (cancelled: CancellationException) { throw cancelled }
             catch (_: Exception) { error = "Couldn’t finish the voice note. Try again." }
@@ -97,7 +97,8 @@ internal fun VoiceNoteControl(
         }
     }
     LaunchedEffect(recording, captions.status) {
-        if (recording && captions.usesWhisper && captions.status == VoxStatus.PAUSED) finish()
+        if (recording && (captions.status == VoxStatus.PAUSED || captions.status == VoxStatus.ERROR ||
+                captions.status == VoxStatus.UNAVAILABLE)) finish()
     }
     LaunchedEffect(recording) {
         if (recording) {
@@ -131,9 +132,6 @@ internal fun VoiceNoteControl(
         if ((recording || processing) && caption.isNotBlank()) {
             Text(caption, Modifier.padding(horizontal = 8.dp, vertical = 4.dp),
                 color = PaperKeySubText)
-        }
-        if (recording && captions.usesWhisper) {
-            Text("Whisper Small · Pauses finish the recording.", color = PaperKeySubText)
         }
         if (recording) captions.errorMessage?.let { Text(it, color = PaperKeySubText) }
         if (error.isNotBlank()) Text(error, color = PaperKeySubText)

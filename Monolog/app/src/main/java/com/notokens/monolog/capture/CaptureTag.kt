@@ -25,7 +25,7 @@ object TagMetadataCodec {
     private const val LEGACY_PREFIX = "<!-- MONOLOG_TAGS:"
 
     fun encodeCapture(tags: List<CaptureTag>, bottomIsVoice: Boolean, bottomComment: String, additionalBody: String,
-        bottomAudio: String? = null): String {
+        bottomAudio: String? = null, imageKeywords: List<String> = emptyList()): String {
         val displayBody = buildString {
             if (bottomComment.isNotBlank()) appendLine(bottomComment).appendLine()
             if (tags.isNotEmpty()) {
@@ -38,7 +38,7 @@ object TagMetadataCodec {
             }
             append(visibleBody(additionalBody))
         }
-        return encode(displayBody, tags, bottomIsVoice, bottomComment, additionalBody.trim(), bottomAudio)
+        return encode(displayBody, tags, bottomIsVoice, bottomComment, additionalBody.trim(), bottomAudio, imageKeywords)
     }
 
     private fun encode(
@@ -46,7 +46,7 @@ object TagMetadataCodec {
         tags: List<CaptureTag>,
         bottomIsVoice: Boolean,
         bottomComment: String,
-        additionalBody: String, bottomAudio: String? = null
+        additionalBody: String, bottomAudio: String? = null, imageKeywords: List<String> = emptyList()
     ): String {
         val root = JSONObject()
         val tagsArray = JSONArray()
@@ -64,6 +64,7 @@ object TagMetadataCodec {
         root.put("bottomIsVoice", bottomIsVoice)
         if (bottomAudio != null) root.put("bottomAudio", bottomAudio)
         root.put("additionalBody", additionalBody)
+        if (imageKeywords.isNotEmpty()) root.put("imageKeywords", JSONArray(imageKeywords))
         if (bottomComment.isNotBlank()) {
             root.put("bottomComment", bottomComment)
         }
@@ -78,7 +79,8 @@ object TagMetadataCodec {
         val bottomComment: String,
         val additionalBody: String = "",
         val hasMetadata: Boolean = false,
-        val bottomAudio: String? = null
+        val bottomAudio: String? = null,
+        val imageKeywords: List<String> = emptyList()
     ) {
         val analysis: String
             get() = analysisHeading.find(additionalBody)?.let { heading ->
@@ -93,19 +95,21 @@ object TagMetadataCodec {
         val existing = decode(original)
         if (!existing.hasMetadata && existing.analysis.isBlank()) return com.notokens.monolog.ime.vox.VoiceNoteBody.attach(
             visible, com.notokens.monolog.ime.vox.VoiceNoteBody.audio(original))
-        return encode(visible, existing.tags, existing.bottomIsVoice, existing.bottomComment, existing.additionalBody, existing.bottomAudio)
+        return encode(visible, existing.tags, existing.bottomIsVoice, existing.bottomComment, existing.additionalBody,
+            existing.bottomAudio, existing.imageKeywords)
     }
 
     fun replaceCaptureComment(original: String, comment: String): String {
         val existing = decode(original)
-        return encodeCapture(existing.tags, existing.bottomIsVoice, comment, existing.additionalBody, existing.bottomAudio)
+        return encodeCapture(existing.tags, existing.bottomIsVoice, comment, existing.additionalBody,
+            existing.bottomAudio, existing.imageKeywords)
     }
 
     fun withoutAudio(body: String): String {
         val capture = decode(body)
         if (capture.hasMetadata && (capture.bottomAudio != null || capture.tags.any { it.audio != null })) {
             return encodeCapture(capture.tags.map { it.copy(audio = null) }, capture.bottomIsVoice,
-                capture.bottomComment, capture.additionalBody)
+                capture.bottomComment, capture.additionalBody, imageKeywords = capture.imageKeywords)
         }
         return com.notokens.monolog.ime.vox.VoiceNoteBody.strip(body)
     }
@@ -140,6 +144,7 @@ object TagMetadataCodec {
         var bottomComment = ""
         var additionalBody = ""
         var bottomAudio: String? = null
+        var imageKeywords = emptyList<String>()
         runCatching {
             val obj = JSONObject(jsonStr)
             val array = obj.optJSONArray("tags")
@@ -161,10 +166,13 @@ object TagMetadataCodec {
             bottomComment = obj.optString("bottomComment", "")
             bottomAudio = obj.optString("bottomAudio").takeIf { it.isNotBlank() && it.length <= 225_000 }
             additionalBody = obj.optString("additionalBody", "")
+            imageKeywords = obj.optJSONArray("imageKeywords")?.let { keywords ->
+                List(keywords.length().coerceAtMost(30)) { keywords.optString(it).take(65) }
+            }.orEmpty()
         }
         return DecodedCapture(visibleBody(cleanBody), tags, bottomIsVoice, bottomComment, additionalBody.ifBlank {
             if (analysisHeading.containsMatchIn(cleanBody)) cleanBody else ""
-        }, hasMetadata = true, bottomAudio = bottomAudio)
+        }, hasMetadata = true, bottomAudio = bottomAudio, imageKeywords = imageKeywords)
     }
 
     private fun parseLegacyArray(jsonStr: String): List<CaptureTag> {

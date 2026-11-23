@@ -114,7 +114,8 @@ fun InteractiveCaptureViewer(
 
 
     fun saveAllChanges() {
-        val newBody = TagMetadataCodec.encodeCapture(tags.toList(), isBottomVoice, bottomComment, decoded.additionalBody, bottomAudio)
+        val newBody = TagMetadataCodec.encodeCapture(tags.toList(), isBottomVoice, bottomComment,
+            decoded.additionalBody, bottomAudio, decoded.imageKeywords)
         onSaveUpdated(note.title, newBody)
         hasChanges = false
         Toast.makeText(context, "Memory updated", Toast.LENGTH_SHORT).show()
@@ -181,7 +182,8 @@ fun InteractiveCaptureViewer(
                             focus.clearFocus(force = true)
                             keyboard?.hide()
                             try {
-                                val body = TagMetadataCodec.encodeCapture(tags.toList(), isBottomVoice, bottomComment, decoded.additionalBody, bottomAudio)
+                                val body = TagMetadataCodec.encodeCapture(tags.toList(), isBottomVoice, bottomComment,
+                                    decoded.additionalBody, bottomAudio, decoded.imageKeywords)
                                 CaptureAnnotationActivity.openCrop(context, note.copy(body = body), photoId)
                                 onDismiss()
                             } catch (_: Exception) {

@@ -19,3 +19,5 @@
 # If you keep the line number information, uncomment this to
 # hide the original source file name.
 #-renamesourcefileattribute SourceFile
+# Moonshine JNI looks up these SDK classes and members by their original names.
+-keep class ai.moonshine.voice.** { *; }

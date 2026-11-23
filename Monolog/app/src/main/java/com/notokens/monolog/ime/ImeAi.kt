@@ -39,6 +39,9 @@ internal class ImeAi(
     private val canUse: () -> Boolean,
     private val proactiveAllowed: () -> Boolean = { true },
     private val automaticNetworkAllowed: () -> Boolean = { true },
+    private val personalizationAllowed: () -> Boolean = { true },
+    private val checkDraftPrivacy: (String) -> Unit = {},
+    private val phoneActionsEnabled: () -> Boolean = { true },
     private val activePackage: () -> String = { "" },
     private val onTextApplied: (String?, String) -> Unit = { _, _ -> }
 ) {
@@ -60,6 +63,8 @@ internal class ImeAi(
         private set
     var rewriteOpen by mutableStateOf(false)
         private set
+    val webAllowed get() = automaticNetworkAllowed()
+    val journalAllowed get() = personalizationAllowed()
     var web by mutableStateOf(false)
         private set
     private var pendingDraft: Draft? = null
@@ -67,15 +72,32 @@ internal class ImeAi(
     private var action: Job? = null
     private var actionVersion = 0L
     private var lookup: Job? = null
+    var inlineBusy by mutableStateOf(false)
+        private set
+    var inlineActions by mutableStateOf(emptyList<DeviceAction>())
+        private set
+    var askActions by mutableStateOf(emptyList<DeviceAction>())
+        private set
+
+    private fun cancelLookup() {
+        lookup?.cancel()
+        lookup = null
+        inlineBusy = false
+    }
+
+    fun onPhoneActionsChanged() {
+        if (!phoneActionsEnabled()) {
+            inlineActions = emptyList()
+            askActions = emptyList()
+        } else refreshDraft()
+    }
     private var warmup: Job? = null
     private var expectedCursor: Int? = null
     private var cursor = -1
-    private var lastLookup: Pair<String, AiPreview>? = null
 
     fun reset(initialCursor: Int = -1) {
         closePanel()
         clearDraft()
-        lastLookup = null
         web = false
         cursor = initialCursor
     }
@@ -100,7 +122,8 @@ internal class ImeAi(
         wordSuggestions = emptyList()
         swipeAlternatives = emptyList()
         shortcutSuggestion = null
-        lookup?.cancel()
+        inlineActions = emptyList()
+        cancelLookup()
         toolbar = null
         toolbarDraft = null
     }
@@ -121,7 +144,7 @@ internal class ImeAi(
 
     fun textCommitted(value: String) {
         closePanel()
-        lookup?.cancel()
+        cancelLookup()
         if (!canUse()) {
             clearDraft()
             return
@@ -130,28 +153,48 @@ internal class ImeAi(
         if (value.isNotBlank()) hasDraft = true
         toolbar = null
         toolbarDraft = null
-        wordSuggestions = emptyList()
         swipeAlternatives = emptyList()
-        shortcutSuggestion = null
+        inlineActions = emptyList()
         refreshDraft(typing = true)
     }
 
     fun refreshDraft(typing: Boolean = false) {
         suggestionJob?.cancel()
         suggestionJob = scope.launch {
-            if (typing) delay(70)
+            if (typing) delay(42)
             if (!canUse() || askOpen) return@launch
             val ic = connection() ?: return@launch
             val selected = ic.getSelectedText(0)?.toString().orEmpty()
             val before = ic.getTextBeforeCursor(400, 0)?.toString().orEmpty()
-            hasDraft = selected.isNotBlank() || before.isNotBlank() ||
-                !ic.getTextAfterCursor(400, 0).isNullOrBlank()
-            shortcutSuggestion = ShortcutSuggestions.detect(selected.ifBlank { before })
+            val after = if (selected.isEmpty()) ic.getTextAfterCursor(400, 0)?.toString().orEmpty() else ""
+            val visibleText = selected.ifBlank { before + after }
+            checkDraftPrivacy(visibleText)
+            hasDraft = visibleText.isNotBlank()
+            inlineActions = if (phoneActionsEnabled() && personalizationAllowed()) {
+                DeviceActions.detect(selected.ifBlank { before }, automaticNetworkAllowed())
+            } else emptyList()
+            shortcutSuggestion = ShortcutSuggestions.detect(selected.ifBlank { before })?.let { suggestion ->
+                if (personalizationAllowed()) suggestion
+                else suggestion.takeUnless { it.page == com.notokens.monolog.ime.shortcuts.ShortcutPage.NOTE }
+                    ?.copy(title = "", body = "")
+            }
             if (typing && selected.isEmpty()) suggest(before.substringAfterLast('\n'), replaceTypedDraft = true)
             val language = settings.keyboardLanguage.first()
             wordSuggestions = if (selected.isEmpty()) {
-                dictionary.suggest(before, language)
+                dictionary.suggest(before, language, personalizationAllowed())
             } else emptyList()
+            if (typing && selected.isEmpty() && personalizationAllowed() && settings.systemSpellChecker.first()) {
+                delay(220)
+                if (!personalizationAllowed() || connection() !== ic) return@launch
+                val tag = if (language == "hi-Latn") "en-IN" else KeyboardLanguage.of(language).speechTag
+                val alternatives = SystemSpellChecker.suggest(context, before, java.util.Locale.forLanguageTag(tag))
+                if (alternatives.isNotEmpty() && personalizationAllowed() && connection() === ic &&
+                    ic.getTextBeforeCursor(alternatives.first().typed.length, 0)?.toString() == alternatives.first().typed) {
+                    // Keep Monolog's lead suggestion and expose one additional OS correction.
+                    wordSuggestions = (wordSuggestions.take(1) + alternatives + wordSuggestions.drop(1))
+                        .distinctBy { it.replacement.lowercase() }.take(3)
+                }
+            }
         }
     }
 
@@ -179,26 +222,20 @@ internal class ImeAi(
     }
 
     fun disableWebSuggestions() {
-        lookup?.cancel()
+        cancelLookup()
+        web = false
         toolbar = null
         toolbarDraft = null
-        lastLookup = null
     }
 
     private fun suggest(text: String, replaceTypedDraft: Boolean = false) {
-        lookup?.cancel()
+        cancelLookup()
         toolbar = null
         toolbarDraft = null
         // Journal queries in the companion must remain on its explicit offline path.
         if (!proactiveAllowed()) return
-        AiText.deviceAnswer(text)?.let {
-            toolbar = AiPreview(it, insertable = true)
-            if (replaceTypedDraft) toolbarDraft = Draft(text, false)
-            return
-        }
-        val forecast = AiText.weatherLookup(text)
         val question = AiText.proactiveQuestion(text)
-        if (forecast == null && question == null) {
+        if (question == null) {
             if (replaceTypedDraft) {
                 AiText.inlinePolish(text)?.let {
                     toolbar = AiPreview(it, insertable = true)
@@ -207,17 +244,17 @@ internal class ImeAi(
                 val packageName = activePackage()
                 val style = com.notokens.monolog.ai.SmartTones.style(packageName)
                 if (style != null && text.length in 20..400 && text.count(Char::isWhitespace) >= 3 &&
-                    automaticNetworkAllowed() && !AiText.isBareFragment(text)) {
+                    !AiText.isBareFragment(text)) {
                     lookup = scope.launch {
                         delay(1_100)
-                        if (!settings.smartTone.first() || settings.incognito.first() || !canUse() ||
+                        if (!settings.smartTone.first() || !canUse() ||
                             activePackage() != packageName || busy || rewriteOpen || askOpen) return@launch
                         val target = Draft(text, false)
                         val editor = connection() ?: return@launch
                         if (!matches(editor, target)) return@launch
                         try {
                             val result = RewritePipeline.smartTone(context, text, style) ?: return@launch
-                            if (!canUse() || settings.incognito.first() || connection() !== editor ||
+                            if (!canUse() || connection() !== editor ||
                                 activePackage() != packageName || !matches(editor, target)) return@launch
                             toolbar = result
                             toolbarDraft = target
@@ -233,39 +270,21 @@ internal class ImeAi(
         }
         lookup = scope.launch {
             delay(650)
-            if (!canUse() || settings.incognito.first() || busy || rewriteOpen || askOpen) return@launch
+            if (!canUse() || busy || rewriteOpen || askOpen) return@launch
+            inlineBusy = true
             try {
-                val answer = if (forecast != null) {
-                    val city = settings.weatherCity.first()
-                    if (!automaticNetworkAllowed() || !WebLookup.configured || !web || !settings.webSuggestions.first() || city.isBlank()) {
-                        AiPreview(if (!WebLookup.configured) "Live forecasts need a configured weather service."
-                            else "Turn Web on and set a city under Privacy & data for live forecasts.")
-                    } else {
-                        val key = "$city|${forecast.date}"
-                        lastLookup?.takeIf { it.first == key }?.second ?: WebLookup.weather(forecast, city).let {
-                            webPreview(question ?: "What is the forecast for $city?", it).also { card -> lastLookup = key to card }
-                        }
-                    }
-                } else if (question != null && automaticNetworkAllowed() && web && settings.webQuestionSuggestions.first()) {
-                    webPreview(question, WebLookup.ask(question))
-                } else if (question != null) {
-                    val prompt = AiText.answerPrompt(question) +
-                        "\nUse at most two short sentences. Correct a mistaken premise or ask for clarification rather than inventing facts."
-                    if (automaticNetworkAllowed() && com.notokens.monolog.ai.CloudAi.enabled(context)) {
-                        com.notokens.monolog.ai.withAiFallback(online = {
-                            AiPreview(com.notokens.monolog.ai.CloudAi.answer(context, prompt), insertable = true)
-                        }, offline = { RewritePipeline.askOffline(context, question) })
-                    } else RewritePipeline.askOffline(context, question)
-                } else return@launch
-                if (!canUse() || settings.incognito.first() || busy || rewriteOpen || askOpen) return@launch
-                // A late result must belong to the same draft that launched the request.
+                val answer = RewritePipeline.askOffline(context, question, selectedModelOnly = true)
+                if (!canUse() || busy || rewriteOpen || askOpen) return@launch
                 if (replaceTypedDraft && connection()?.getTextBeforeCursor(text.length, 0)?.toString() != text) return@launch
+                if (!answer.insertable) return@launch
                 toolbar = answer
-                if (replaceTypedDraft && answer.insertable) toolbarDraft = Draft(text, false)
+                if (replaceTypedDraft) toolbarDraft = Draft(text, false)
             } catch (error: CancellationException) {
                 throw error
             } catch (_: Exception) {
-                if (forecast != null && canUse()) toolbar = AiPreview("Forecast unavailable.")
+                // Leave word suggestions available when inference fails.
+            } finally {
+                if (lookup == kotlin.coroutines.coroutineContext[Job]) inlineBusy = false
             }
         }
     }
@@ -280,8 +299,8 @@ internal class ImeAi(
 
     fun toggleWeb() {
         abortAction()
-        lookup?.cancel()
-        web = !web
+        cancelLookup()
+        web = automaticNetworkAllowed() && !web
     }
 
     fun abortAction() {
@@ -289,12 +308,14 @@ internal class ImeAi(
         action?.cancel()
         action = null
         preview = null
+        askActions = emptyList()
         busy = false
         pendingDraft = null
     }
 
     fun searchWeb(query: String) {
-        if (!canUse() || query.isBlank()) return
+        checkDraftPrivacy(query)
+        if (!canUse() || !automaticNetworkAllowed() || query.isBlank()) return
         abortAction()
         if (!WebLookup.openSearchApp(context, query)) {
             preview = AiPreview("No web search app is available.")
@@ -303,16 +324,19 @@ internal class ImeAi(
 
     fun ask(query: String) {
         if (!canUse() || query.isBlank()) return
-        val useWeb = web
+        checkDraftPrivacy(query)
+        if (phoneActionsEnabled() && personalizationAllowed()) {
+            val choices = DeviceActions.detect(query, automaticNetworkAllowed(), explicit = true)
+            if (choices.isNotEmpty()) {
+                abortAction()
+                askActions = choices
+                return
+            }
+        }
+        val useWeb = web && automaticNetworkAllowed()
         launchRequest {
             if (useWeb) {
                 try {
-                    if (com.notokens.monolog.ai.CloudAi.enabled(context)) {
-                        return@launchRequest com.notokens.monolog.ai.withAiFallback(online = {
-                            AiPreview(com.notokens.monolog.ai.CloudAi.answer(context, AiText.answerPrompt(query)),
-                                insertable = true)
-                        }, offline = { offlineAnswer(query) })
-                    }
                     webPreview(query, WebLookup.ask(query))
                 } catch (error: CancellationException) {
                     throw error
@@ -326,7 +350,7 @@ internal class ImeAi(
     }
 
     private suspend fun offlineAnswer(query: String): AiPreview {
-        val evidence = if (query.asksAboutJournalCapture()) {
+        val evidence = if (personalizationAllowed() && query.asksAboutJournalCapture()) {
             MonologData.repository(context).notes.first().captureEvidence(query)
         } else ""
         return RewritePipeline.askOffline(context, query, evidence)
@@ -334,7 +358,7 @@ internal class ImeAi(
 
     fun openRewrite(language: KeyboardLanguage) {
         if (!canUse() || !hasDraft) return
-        lookup?.cancel()
+        cancelLookup()
         closePanel()
         rewriteOpen = true
         if (language.id == "en" && ModelStore.get(context).state.value is ModelState.Ready) {
@@ -383,16 +407,16 @@ internal class ImeAi(
     }
 
     private fun launchRequest(draft: Draft? = null, work: suspend () -> AiPreview) {
-        lookup?.cancel()
+        cancelLookup()
         abortAction()
         val version = actionVersion
         busy = true
         action = scope.launch {
             try {
-                if (!canUse() || settings.incognito.first()) return@launch
+                if (!canUse()) return@launch
                 val result = work()
                 val ic = connection()
-                if (version != actionVersion || !canUse() || settings.incognito.first() ||
+                if (version != actionVersion || !canUse() ||
                     draft != null && (ic == null || !matches(ic, draft))) {
                     return@launch
                 }

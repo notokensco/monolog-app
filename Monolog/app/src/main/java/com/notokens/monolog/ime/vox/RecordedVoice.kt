@@ -21,8 +21,6 @@ internal class VoiceRecorder(private val scope: CoroutineScope) {
     @SuppressLint("MissingPermission")
     fun start(
         onEnd: () -> Unit = {},
-        onSpeechEnd: () -> Unit = {},
-        onPreview: ((ByteArray) -> Unit)? = null,
         onSamples: ((ByteArray, Int) -> Unit)? = null
     ) {
         check(reading == null)
@@ -42,27 +40,13 @@ internal class VoiceRecorder(private val scope: CoroutineScope) {
         reading = scope.async(Dispatchers.IO) {
             val samples = ByteArrayOutputStream()
             val buffer = ByteArray(2048)
-            val endpoint = if (onPreview == null) null else SpeechEndpoint()
             try {
                 while (isActive && samples.size() < LIMIT) {
                     val count = audio.read(buffer, 0, minOf(buffer.size, LIMIT - samples.size()))
                     if (count <= 0) break
                     samples.write(buffer, 0, count)
                     onSamples?.invoke(buffer, count)
-                    if (endpoint != null) {
-                        val event = endpoint.accept(buffer, count)
-                        if (event == SpeechEndpoint.Event.Finished) {
-                            onSpeechEnd()
-                            break
-                        }
-                        if (event == SpeechEndpoint.Event.Preview) {
-                            // Use a short trailing window for provisional captions.
-                            val recorded = samples.toByteArray()
-                            val window = RATE * 2 * 8
-                            onPreview?.invoke(if (recorded.size <= window) recorded
-                                else recorded.copyOfRange(recorded.size - window, recorded.size))
-                        }
-                    }
+
                 }
                 samples.toByteArray()
             } finally {
@@ -77,12 +61,6 @@ internal class VoiceRecorder(private val scope: CoroutineScope) {
         val pcm = finishPcm()
         val aac = withContext(Dispatchers.Default) { encode(pcm) }
         return Base64.encodeToString(aac, Base64.NO_WRAP)
-    }
-
-    suspend fun pcmForRecognition(): ByteArray {
-        val pending = checkNotNull(reading)
-        stop()
-        return pending.await()
     }
 
     private suspend fun finishPcm(): ByteArray {

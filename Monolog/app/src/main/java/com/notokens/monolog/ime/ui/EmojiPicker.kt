@@ -83,6 +83,30 @@ internal fun preloadEmojiCatalog(assets: AssetManager) {
 
 private val EmojiFont = FontFamily(Font(R.font.noto_emoji))
 
+private val ToolbarEmoji = listOf(
+    Emoji("\uD83D\uDE00", "Grinning face"), Emoji("\uD83D\uDE02", "Tears of joy"), Emoji("\u2764\uFE0F", "Red heart"),
+    Emoji("\uD83D\uDC4D", "Thumbs up"), Emoji("\u2728", "Sparkles"), Emoji("\uD83D\uDE4F", "Folded hands"),
+    Emoji("\uD83C\uDF89", "Party popper")
+)
+
+@Composable
+internal fun EmojiShortcutStrip(recent: List<Emoji>, onPick: (Emoji) -> Unit) {
+    val choices = (recent + ToolbarEmoji).distinctBy(Emoji::text).take(7)
+    LazyRow(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.Center) {
+        items(choices, key = Emoji::text) { emoji ->
+            KeyButton(
+                modifier = Modifier.width(34.dp).height(40.dp),
+                label = emoji.label,
+                onClick = { onPick(emoji) }
+            ) {
+                Text(emoji.text, fontFamily = EmojiFont, fontSize = 18.sp)
+            }
+        }
+    }
+}
+
+
 @Composable
 @OptIn(ExperimentalFoundationApi::class)
 internal fun EmojiPicker(height: Dp, recent: List<Emoji>, onPick: (Emoji) -> Unit) {

@@ -31,7 +31,6 @@ internal class DraftMemoryRecorder(context: Context, scope: CoroutineScope) {
         if (!allowed || !preferences.enabled || app == companionPackage) { clear(); return }
         buffer.append(text)
         if (buffer.length > 800) buffer.delete(0, buffer.length - 800)
-        if (text.lastOrNull() in listOf('.', '!', '?', '\n')) boundary()
     }
     fun backspace(selected: Boolean) {
         if (selected) { clear(); return }

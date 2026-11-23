@@ -16,7 +16,7 @@ internal object RewritePipeline {
         val prompt = AiText.rewritePrompt(draft, style) + "\nKeep the draft's original language or mix of languages."
         val reply = gemma(context, prompt, AiText.rewriteTokenLimit(draft)) ?: return null
         val checked = AiText.checkedRewrite(draft, reply) ?: return null
-        if (checked.trim() == draft.trim()) return null
+        if (!AiText.matchesRewriteStyle(draft, checked, style)) return null
         val text = if (draft.endsWith(' ') && !checked.endsWith(' ')) "$checked " else checked
         return edit(text, generated = true, detail = if (style == RewriteStyle.PROFESSIONAL) "Professional tone" else "Casual tone")
     }
@@ -34,25 +34,14 @@ internal object RewritePipeline {
 
     private suspend fun rewriteEnglish(context: Context, draft: String, style: RewriteStyle): AiPreview {
         if (AiText.isBareFragment(draft)) return edit(AiText.simpleRewrite(draft))
-        if (CloudAi.enabled(context) && ModelStore.get(context).active.value?.isGguf != true) {
-            return withAiFallback(online = {
-                val result = CloudAi.answer(context, AiText.rewritePrompt(draft, style))
-                AiText.checkedRewrite(draft, result)?.let { edit(it) }
-                    ?: error("The online rewrite did not preserve the draft.")
-            }, offline = { rewriteEnglishOffline(context, draft, style) })
-        }
-        return rewriteEnglishOffline(context, draft, style)
-    }
-
-    private suspend fun rewriteEnglishOffline(context: Context, draft: String, style: RewriteStyle): AiPreview {
-        val nano = if (ModelStore.get(context).active.value?.isGguf == true) null
-            else NanoAi.rewrite(context, draft, style)
-        if (nano != null) return AiText.checkedRewrite(draft, nano)?.let { edit(it, generated = true) }
-            ?: lightEdit(draft, "The rewrite didn’t preserve the draft.")
         val result = LocalAi.request(context, AiText.rewritePrompt(draft, style), AiText.rewriteTokenLimit(draft))
         if (result is GemmaResult.Answer) {
-            return AiText.checkedRewrite(draft, result.text)?.let { edit(it, generated = true) }
-                ?: lightEdit(draft, "The rewrite didn’t preserve the draft.")
+            val checked = AiText.checkedRewrite(draft, result.text)
+                ?: return lightEdit(draft, "The rewrite didn’t preserve the draft.")
+            if (!AiText.matchesRewriteStyle(draft, checked, style)) {
+                return AiPreview("The offline model couldn’t produce the requested rewrite.")
+            }
+            return edit(checked, generated = true)
         }
         return lightEdit(draft, modelMessage(result))
     }
@@ -65,13 +54,10 @@ internal object RewritePipeline {
     private fun edit(text: String, generated: Boolean = false, detail: String? = null) =
         AiPreview(text, generatedLocally = generated, insertable = true, detail = detail)
 
-    suspend fun askOffline(context: Context, question: String, evidence: String = ""): AiPreview {
-        AiText.deviceAnswer(question)?.let { return AiPreview(it, insertable = true) }
+    suspend fun askOffline(context: Context, question: String, evidence: String = "", selectedModelOnly: Boolean = false): AiPreview {
+        if (!selectedModelOnly) AiText.deviceAnswer(question)?.let { return AiPreview(it, insertable = true) }
         if (evidence.isBlank() && AiText.needsWeb(question)) return AiPreview("Use Search web for current information.")
         val instruction = AiText.answerPrompt(question, evidence)
-        val nano = if (ModelStore.get(context).active.value?.isGguf == true) null
-            else NanoAi.answer(context, instruction)
-        if (nano != null) return verifiedAnswer(question, nano, evidence)
         return when (val result = LocalAi.request(context, instruction, 160)) {
             is GemmaResult.Answer -> verifiedAnswer(question, result.text, evidence)
             else -> AiPreview(modelMessage(result))

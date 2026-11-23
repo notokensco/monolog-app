@@ -37,11 +37,11 @@ import com.notokens.monolog.ai.LanguageResources
 import com.notokens.monolog.ai.LocalAi
 import com.notokens.monolog.ai.ModelState
 import com.notokens.monolog.ai.ModelStore
-import com.notokens.monolog.ai.NanoAi
-import com.notokens.monolog.ai.NanoAvailability
-import com.notokens.monolog.ai.NanoFeature
 import com.notokens.monolog.ai.WebLookup
 import com.notokens.monolog.data.SettingsStore
+import com.notokens.monolog.data.VoiceInputEngine
+import com.notokens.monolog.ime.vox.OfflineMoonshine
+import com.notokens.monolog.ui.theme.PaperAccentBlue
 import com.notokens.monolog.ui.theme.PaperKeyText
 import com.notokens.monolog.ui.theme.PaperKeySubText
 import com.notokens.monolog.ui.theme.PaperPillBorder
@@ -65,66 +65,13 @@ internal fun AiSettings() {
     val store = remember(context) { ModelStore.get(context) }
     val state by store.state.collectAsState()
     val gemmaStatus by LocalAi.lastRunStatus.collectAsState()
-    var nano by remember { mutableStateOf(emptyMap<NanoFeature, NanoAvailability>()) }
-    var downloading by remember { mutableStateOf<NanoFeature?>(null) }
-    var statusMessage by remember { mutableStateOf("") }
-    var checking by remember { mutableStateOf(false) }
     var testing by remember { mutableStateOf(false) }
     var testMessage by remember { mutableStateOf("") }
     val supportsLocal = remember { Build.SUPPORTED_64_BIT_ABIS.any { it == "arm64-v8a" || it == "x86_64" } }
     val lowRam = remember { context.getSystemService(ActivityManager::class.java)?.isLowRamDevice == true }
 
-    suspend fun refreshNano() {
-        checking = true
-        try {
-            nano = NanoFeature.entries.associateWith { NanoAi.status(context, it) }
-        } finally {
-            checking = false
-        }
-    }
-    LaunchedEffect(Unit) { refreshNano() }
-
-    if (remember { com.notokens.monolog.ime.vox.OfflineWhisper.available }) {
-        OfflineVoxSettings()
-    }
-
-    SettingsCard("Gemini Nano") {
-        Text("Used automatically when available. Android manages its model downloads.",
-            color = PaperKeySubText, style = MaterialTheme.typography.bodySmall)
-        NanoFeature.entries.forEachIndexed { index, feature ->
-            if (index > 0) HorizontalDivider(color = PaperPillBorder)
-            val status = nano[feature]
-            Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
-                Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(2.dp)) {
-                    Text(feature.label, color = PaperKeyText, style = MaterialTheme.typography.titleSmall)
-                    Text(status?.label ?: "Checking…", color = PaperKeySubText, style = MaterialTheme.typography.bodySmall)
-                }
-                if (status == NanoAvailability.DOWNLOADABLE) {
-                    TextButton(enabled = downloading == null, onClick = {
-                        downloading = feature
-                        statusMessage = ""
-                        scope.launch {
-                            try {
-                                val result = NanoAi.download(context, feature)
-                                statusMessage = "${feature.label} · ${result.label}"
-                                refreshNano()
-                            } catch (error: CancellationException) {
-                                throw error
-                            } catch (_: Exception) {
-                                statusMessage = "Android could not finish this download."
-                            } finally {
-                                downloading = null
-                            }
-                        }
-                    }) { Text(if (downloading == feature) "Downloading…" else "Download") }
-                }
-            }
-        }
-        TextButton({ scope.launch { refreshNano() } }, enabled = !checking && downloading == null) {
-            Text("Refresh availability")
-        }
-        if (statusMessage.isNotBlank()) Text(statusMessage, color = PaperKeySubText)
-    }
+    if (remember { OfflineMoonshine.available }) OfflineVoxSettings()
+    RegionalVoiceSettings()
 
     if (supportsLocal) {
         TextModelPicker(store)
@@ -133,14 +80,6 @@ internal fun AiSettings() {
 
     if (BuildConfig.DEBUG || state is ModelState.Ready) {
         SettingsCard("Diagnostics") {
-            if (BuildConfig.DEBUG) TextButton(enabled = !testing, onClick = {
-                testing = true
-                testMessage = ""
-                scope.launch {
-                    try { testMessage = "Nano foreground · ${NanoAi.probe(context)}" }
-                    finally { testing = false }
-                }
-            }) { Text("Run Nano foreground test") }
             if (state is ModelState.Ready) TextButton(enabled = !testing, onClick = {
                 testing = true
                 testMessage = ""
@@ -265,36 +204,73 @@ internal fun LanguageSettings(settings: SettingsStore) {
 internal fun OfflineVoxSettings(onReady: (Boolean) -> Unit = {}) {
     val context = LocalContext.current.applicationContext
     val scope = rememberCoroutineScope()
-    val whisper = com.notokens.monolog.ime.vox.OfflineWhisper
-    var ready by remember { mutableStateOf(whisper.ready(context)) }
-    var working by remember { mutableStateOf(false) }
+    val browser = LocalUriHandler.current
+    val settings = remember(context) { SettingsStore(context) }
+    val engine by settings.voiceInputEngine.collectAsState(initial = VoiceInputEngine.NATIVE)
+    var installed by remember { mutableStateOf(OfflineMoonshine.ready(context)) }
+    var downloading by remember { mutableStateOf(false) }
     var progress by remember { mutableStateOf(0) }
     var message by remember { mutableStateOf<String?>(null) }
-    LaunchedEffect(ready) { onReady(ready) }
-    SettingsCard("Offline Vox") {
+
+    fun refresh() {
+        installed = OfflineMoonshine.ready(context)
+        onReady(installed)
+    }
+
+    LaunchedEffect(Unit) { refresh() }
+
+    SettingsCard("Offline voice model") {
+        Text("VOX AI", color = PaperKeyText, style = MaterialTheme.typography.titleSmall)
         Text(
-            if (ready) "Whisper Small is ready. Stop dictation or a voice note to transcribe it on this device."
-            else "Download Whisper Small (190 MB) for offline dictation and voice notes.",
-            color = PaperKeySubText
+            if (!installed) "English · Live captions for keyboard and notes"
+            else if (engine == VoiceInputEngine.MOONSHINE) "Installed · Active in Vox"
+            else "Installed · Available in Vox and notes",
+            color = if (installed) PaperAccentBlue else PaperKeySubText,
+            style = MaterialTheme.typography.bodySmall
         )
-        TextButton(enabled = !working, onClick = {
-            working = true
-            progress = 0
-            message = null
-            scope.launch {
-                try {
-                    if (ready) whisper.remove(context) else whisper.download(context) { progress = it }
-                    ready = whisper.ready(context)
-                } catch (cancelled: CancellationException) {
-                    throw cancelled
-                } catch (_: Exception) {
-                    message = if (ready) "Could not remove the model." else "Could not download and verify the model."
-                } finally {
-                    working = false
+        Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+            if (!installed) {
+                TextButton(enabled = !downloading, onClick = {
+                    downloading = true
+                    progress = 0
+                    message = null
+                    scope.launch {
+                        try {
+                            OfflineMoonshine.download(context) { progress = it }
+                            settings.setVoiceInputEngine(VoiceInputEngine.MOONSHINE)
+                        } catch (cancelled: CancellationException) {
+                            throw cancelled
+                        } catch (error: Exception) {
+                            android.util.Log.w("MonologVox", "Voice model download failed", error)
+                            message = "Couldn’t install VOX AI. Check your connection and free storage."
+                        } catch (error: LinkageError) {
+                            android.util.Log.w("MonologVox", "Voice model runtime unavailable", error)
+                            message = "VOX AI is unavailable on this device."
+                        } finally {
+                            downloading = false
+                            refresh()
+                        }
+                    }
+                }) { Text(if (downloading) "Downloading…" else "Download") }
+            } else {
+                if (engine != VoiceInputEngine.MOONSHINE) {
+                    TextButton(onClick = {
+                        scope.launch { settings.setVoiceInputEngine(VoiceInputEngine.MOONSHINE) }
+                    }) { Text("Use for Vox") }
                 }
+                TextButton(onClick = {
+                    scope.launch {
+                        OfflineMoonshine.remove(context)
+                        if (engine == VoiceInputEngine.MOONSHINE) settings.setVoiceInputEngine(VoiceInputEngine.NATIVE)
+                        refresh()
+                    }
+                }) { Text("Remove") }
             }
-        }) { Text(if (working) "Working…" else if (ready) "Remove model" else "Download model") }
-        if (working && !ready) {
+            TextButton(onClick = { browser.openUri("https://github.com/moonshine-ai/moonshine/blob/v0.1.5/LICENSE") }) {
+                Text("Terms")
+            }
+        }
+        if (downloading) {
             LinearProgressIndicator(progress = { progress / 100f }, modifier = Modifier.fillMaxWidth())
         }
         message?.let { Text(it, color = MaterialTheme.colorScheme.error) }

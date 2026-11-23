@@ -10,4 +10,4 @@ Keep at most the newest two locally built Monolog APKs. When delivering another 
 
 # Voice features
 
-Apply speech backend and transcript cleanup upgrades through the shared Vox controller for keyboard dictation, spoken notes, journal notes, Quick Shortcuts, and capture notes. Use Whisper Small on every microphone entry point. Preserve voice-note audio when recognition fails.
+Apply speech backend and transcript cleanup upgrades through the shared Vox controller for keyboard dictation, spoken notes, journal notes, Quick Shortcuts, and capture notes. Use the selected offline model for keyboard and note recording when the model supports the chosen language. Moonshine Small Streaming supports English. Keep Android on-device speech available for keyboard dictation. Preserve voice-note audio when recognition fails.

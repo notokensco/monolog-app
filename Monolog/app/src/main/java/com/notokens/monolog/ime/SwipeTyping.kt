@@ -33,11 +33,13 @@ internal object QwertyLayout {
 
     fun center(letter: Char): SwipePoint = centers.getValue(letter)
 
-    fun startsOnLetter(point: SwipePoint, rows: List<String> = this.rows): Boolean {
+    fun letterAt(point: SwipePoint, rows: List<String> = this.rows): Char? {
         val row = (point.y / rowSpacing).toInt()
-        if (point.y < 0f || row !in rows.indices) return false
+        if (point.y < 0f || row !in rows.indices) return null
         val inset = rowInset(row, rows)
-        return point.x in inset..(width - inset)
+        if (point.x !in inset..(width - inset)) return null
+        val column = ((point.x - inset) * rows[row].length / (width - 2 * inset)).toInt()
+        return rows[row].getOrNull(column)
     }
 
     private fun rowInset(row: Int, rows: List<String>): Float = when (row) {

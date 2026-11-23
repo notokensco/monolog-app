@@ -1,7 +1,31 @@
 package com.notokens.monolog.ime.vox
 
-import androidx.compose.animation.core.animateDpAsState
+import androidx.compose.animation.AnimatedContent
+import androidx.compose.animation.core.LinearEasing
+import androidx.compose.animation.core.animateFloat
+import androidx.compose.animation.core.animateFloatAsState
+import androidx.compose.animation.core.infiniteRepeatable
+import androidx.compose.animation.core.rememberInfiniteTransition
 import androidx.compose.animation.core.tween
+import androidx.compose.animation.fadeIn
+import androidx.compose.animation.fadeOut
+import androidx.compose.animation.togetherWith
+import androidx.compose.animation.slideInHorizontally
+import androidx.compose.animation.slideOutHorizontally
+import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.setValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.rememberUpdatedState
+import androidx.compose.runtime.snapshotFlow
+import androidx.compose.ui.platform.LocalView
+import androidx.compose.ui.text.font.Font
+import androidx.compose.ui.text.font.FontFamily
+import com.notokens.monolog.R
+import com.notokens.monolog.ime.ui.ContextKey
+import com.notokens.monolog.ime.ui.triggerHapticFeedback
+import kotlinx.coroutines.delay
+import kotlinx.coroutines.flow.collectLatest
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
@@ -26,17 +50,21 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
-import androidx.compose.runtime.getValue
+import androidx.compose.runtime.remember
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.draw.clipToBounds
 import androidx.compose.ui.draw.shadow
+import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.notokens.monolog.ui.GlassAccent
@@ -59,12 +87,22 @@ fun VoxPanel(
     onStartListening: () -> Unit,
     onPauseListening: () -> Unit,
     onClearTranscript: () -> Unit,
-    onCommitTranscript: (String) -> Unit,
+    smartFilter: Boolean,
+    onToggleSmartFilter: () -> Unit,
+    contextEnabled: Boolean,
+    contextActive: Boolean,
+    onContext: () -> Unit,
+    onContextHold: () -> Unit,
     onCancel: () -> Unit,
     onRequestPermission: () -> Unit,
     onOpenModels: () -> Unit = {},
     modifier: Modifier = Modifier
 ) {
+    val fullTranscript = listOf(voxState.transcript, voxState.partialTranscript)
+        .filter(String::isNotBlank).joinToString(" ")
+    val isListening = voxState.status == VoxStatus.LISTENING
+    val view = LocalView.current
+
     Column(
         modifier = modifier
             .fillMaxWidth()
@@ -75,38 +113,15 @@ fun VoxPanel(
             .padding(horizontal = 12.dp, vertical = 8.dp),
         horizontalAlignment = Alignment.CenterHorizontally
     ) {
-        // Top Toolbar
-        Row(
-            modifier = Modifier.fillMaxWidth(),
-            verticalAlignment = Alignment.CenterVertically,
-            horizontalArrangement = Arrangement.SpaceBetween
-        ) {
-            Row(verticalAlignment = Alignment.CenterVertically) {
+        Box(Modifier.fillMaxWidth().height(48.dp)) {
+            Box(Modifier.align(Alignment.CenterStart)) {
                 IconControl(Glyph.BACK, "Return to keyboard", onCancel, frosted = true)
-                Text(
-                    text = "Vox mode",
-                    fontSize = 14.sp,
-                    fontWeight = FontWeight.SemiBold,
-                    color = PaperKeyText
-                )
             }
-
-            Row(verticalAlignment = Alignment.CenterVertically) {
-                // Active glowing mic pill
-                Box(
-                    modifier = Modifier
-                        .size(34.dp)
-                        .clip(CircleShape)
-                        .background(PaperAccentLavender)
-                        .border(1.dp, PaperAccentLavenderBorder, CircleShape),
-                    contentAlignment = Alignment.Center
-                ) {
-                    MonologIcon(Glyph.MIC, Modifier.size(16.dp), MaterialTheme.colorScheme.onSecondaryContainer)
-                }
-
-                Spacer(modifier = Modifier.width(8.dp))
-
-                MonologLogo(Modifier.size(40.dp))
+            Text("VOX", Modifier.align(Alignment.Center), color = PaperKeyText, fontSize = 22.sp,
+                fontFamily = FontFamily(Font(R.font.science_gothic_vox, FontWeight.SemiBold)),
+                fontWeight = FontWeight.SemiBold)
+            Box(Modifier.align(Alignment.CenterEnd)) {
+                ContextKey(contextEnabled, contextActive, onContext, onContextHold)
             }
         }
 
@@ -133,7 +148,7 @@ fun VoxPanel(
             }
             VoxStatus.PAUSED -> {
                 Text(
-                    text = "• Paused (Tap mic to continue)",
+                    text = "Paused",
                     fontSize = 12.sp,
                     fontWeight = FontWeight.Medium,
                     color = PaperKeySubText
@@ -168,7 +183,7 @@ fun VoxPanel(
             }
             VoxStatus.ERROR, VoxStatus.UNAVAILABLE -> {
                 Text(
-                    text = voxState.errorMessage ?: "Speech error. Tap mic to retry.",
+                    text = voxState.errorMessage ?: "Speech error. Tap play to retry.",
                     fontSize = 12.sp,
                     fontWeight = FontWeight.Medium,
                     color = MaterialTheme.colorScheme.error,
@@ -180,7 +195,7 @@ fun VoxPanel(
             }
             else -> {
                 Text(
-                    text = "Tap microphone below to start speaking",
+                    text = "Tap play to start speaking",
                     fontSize = 12.sp,
                     color = PaperKeySubText
                 )
@@ -189,158 +204,206 @@ fun VoxPanel(
 
         Spacer(modifier = Modifier.height(6.dp))
 
-        // Real-time audio waveform driven by actual rmsLevel
-        AudioWaveformView(
-            isListening = voxState.status == VoxStatus.LISTENING,
-            rmsLevel = voxState.rmsLevel
+        VoxTranscriptStage(
+            transcript = fullTranscript,
+            isListening = isListening,
+            rmsLevel = voxState.rmsLevel,
+            onClear = onClearTranscript
         )
 
-        Spacer(modifier = Modifier.height(6.dp))
-
-        // Live Transcript Review Card
-        Box(
-            modifier = Modifier
-                .fillMaxWidth()
-                .glassSurface(16, GlassAccent.BLUE)
-                .padding(horizontal = 12.dp, vertical = 10.dp)
-        ) {
-            Row(
-                modifier = Modifier.fillMaxWidth(),
-                verticalAlignment = Alignment.Top,
-                horizontalArrangement = Arrangement.SpaceBetween
-            ) {
-                Text(
-                    text = if (voxState.transcript.isNotBlank() || voxState.partialTranscript.isNotBlank()) {
-                        listOf(voxState.transcript, voxState.partialTranscript)
-                            .filter(String::isNotBlank).joinToString(" ")
-                    } else {
-                        "Speak naturally. Words appear here for review before inserting."
-                    },
-                    fontSize = 13.sp,
-                    color = if (voxState.transcript.isNotBlank() || voxState.partialTranscript.isNotBlank())
-                        PaperKeyText else PaperKeySubText,
-                    lineHeight = 18.sp,
-                    modifier = Modifier.weight(1f)
-                )
-
-                if (voxState.transcript.isNotBlank()) {
-                    Spacer(modifier = Modifier.width(8.dp))
-                    Text(
-                        text = "Clear",
-                        fontSize = 12.sp,
-                        fontWeight = FontWeight.SemiBold,
-                        color = PaperAccentBlue,
-                        modifier = Modifier
-                            .clickable { onClearTranscript() }
-                            .padding(horizontal = 4.dp, vertical = 2.dp)
-                    )
-                }
+        if (voxState.status == VoxStatus.PAUSED) {
+            voxState.errorMessage?.let {
+                Text(it, color = MaterialTheme.colorScheme.error, fontSize = 12.sp)
             }
         }
 
         Spacer(modifier = Modifier.height(10.dp))
 
-        // Bottom Controls
-        Row(
-            modifier = Modifier.fillMaxWidth(),
-            verticalAlignment = Alignment.CenterVertically,
-            horizontalArrangement = Arrangement.SpaceBetween
-        ) {
+        Box(Modifier.fillMaxWidth().height(56.dp)) {
             Box(
-                modifier = Modifier
-                    .glassSurface(16)
-                    .padding(horizontal = 12.dp, vertical = 6.dp)
-            ) {
-                Text(
-                    text = if (voxState.usesWhisper) "Whisper Small · " + voxState.language else voxState.language,
-                    fontSize = 12.sp,
-                    color = PaperKeyText
-                )
-            }
-
-            // Central Mic / Pause Action Button
-            val isListening = voxState.status == VoxStatus.LISTENING
-            Box(
-                modifier = Modifier
+                modifier = Modifier.align(Alignment.Center)
                     .size(52.dp)
                     .shadow(4.dp, CircleShape)
                     .clip(CircleShape)
                     .background(if (isListening) PaperPillBackground else PaperAccentBlue)
-                    .border(
-                        1.dp,
-                        if (isListening) PaperAccentLavenderBorder else Color.Transparent,
-                        CircleShape
-                    )
                     .clickable(enabled = voxState.status != VoxStatus.PROCESSING) {
+                        triggerHapticFeedback(view)
                         if (isListening) onPauseListening() else onStartListening()
                     }
                     .semantics { contentDescription = if (isListening) "Pause listening" else "Start listening" },
                 contentAlignment = Alignment.Center
             ) {
-                if (isListening) {
-                    Text(text = "❚❚", fontSize = 18.sp, color = PaperKeyText)
-                } else {
-                    MonologIcon(Glyph.MIC, color = MaterialTheme.colorScheme.onPrimary)
-                }
+                Text(if (isListening) "❚❚" else "▶", fontSize = 18.sp,
+                    color = if (isListening) PaperKeyText else MaterialTheme.colorScheme.onPrimary)
             }
-
-            Button(
-                enabled = voxState.transcript.isNotBlank() && voxState.status != VoxStatus.PROCESSING &&
-                    !(voxState.usesWhisper && isListening),
-                onClick = { onCommitTranscript(voxState.transcript) }
-            ) {
-                Text("Done")
-            }
+            TextButton(modifier = Modifier.align(Alignment.CenterEnd), onClick = {
+                triggerHapticFeedback(view)
+                onToggleSmartFilter()
+            }) { Text(if (smartFilter) "Smart Filter on" else "Smart Filter off", fontSize = 11.sp) }
         }
     }
 }
 
+
 @Composable
-private fun AudioWaveformView(
+private fun VoxTranscriptStage(
+    transcript: String,
     isListening: Boolean,
     rmsLevel: Float,
-    modifier: Modifier = Modifier
+    onClear: () -> Unit
 ) {
-    // 28 waveform bars dynamically modulated by real RMS volume
+    val colors = MaterialTheme.colorScheme
+    val surface = colors.surface
+    val target by rememberUpdatedState(remember(transcript) {
+        transcript.split(Regex("\\s+")).filter(String::isNotBlank)
+    })
+    var visible by remember { mutableStateOf(emptyList<String>()) }
+    LaunchedEffect(Unit) {
+        snapshotFlow { target }.collectLatest { incoming ->
+            var shared = 0
+            while (shared < visible.size && shared < incoming.size && visible[shared] == incoming[shared]) shared++
+            visible = incoming.take(shared)
+            while (shared < incoming.size) {
+                visible = incoming.take(++shared)
+                if (shared < incoming.size) delay(if (incoming.size - shared > 6) 36 else 95)
+            }
+        }
+    }
+    val words = visible.takeLast(4)
+
+    Box(
+        Modifier.fillMaxWidth().height(142.dp)
+            .glassSurface(18, GlassAccent.BLUE)
+            .clip(RoundedCornerShape(18.dp))
+    ) {
+        AudioWaveformView(isListening, rmsLevel, Modifier.matchParentSize())
+
+        Column(
+            Modifier.align(Alignment.Center).fillMaxWidth()
+                .background(
+                    Brush.verticalGradient(
+                        listOf(surface.copy(alpha = .14f), surface.copy(alpha = .78f), surface.copy(alpha = .14f))
+                    )
+                )
+                .padding(horizontal = 10.dp, vertical = 8.dp)
+        ) {
+            if (transcript.isBlank()) {
+                Text(
+                    if (isListening) "Speak naturally…" else "Tap play to start",
+                    modifier = Modifier.fillMaxWidth(),
+                    color = PaperKeySubText,
+                    fontSize = 13.sp,
+                    textAlign = TextAlign.Center
+                )
+            } else {
+                Box(Modifier.fillMaxWidth().height(67.dp).semantics { contentDescription = transcript }) {
+                    Row(
+                        Modifier.align(Alignment.CenterStart).fillMaxWidth(.28f).clipToBounds(),
+                        horizontalArrangement = Arrangement.Start,
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        words.dropLast(1).forEachIndexed { index, word ->
+                            val distance = words.lastIndex - index
+                            Text(
+                                word,
+                                modifier = Modifier.weight(1f, fill = false).padding(end = 3.dp),
+                                fontSize = (15 - distance).sp,
+                                color = PaperKeySubText.copy(alpha = 1f - distance * .15f),
+                                maxLines = 1,
+                                overflow = TextOverflow.Ellipsis
+                            )
+                        }
+                    }
+                    AnimatedContent(
+                        targetState = visible.size to words.lastOrNull().orEmpty(),
+                        modifier = Modifier.align(Alignment.Center).fillMaxWidth(.44f),
+                        contentAlignment = Alignment.Center,
+                        transitionSpec = {
+                            (slideInHorizontally(tween(105)) { it / 4 } + fadeIn(tween(105))) togetherWith
+                                (slideOutHorizontally(tween(105)) { -it / 2 } + fadeOut(tween(105)))
+                        },
+                        label = "Live transcript"
+                    ) { (_, word) ->
+                        Text(
+                            word,
+                            color = PaperKeyText,
+                            fontSize = 32.sp,
+                            lineHeight = 34.sp,
+                            fontWeight = FontWeight.Bold,
+                            textAlign = TextAlign.Center,
+                            maxLines = 2,
+                            overflow = TextOverflow.Ellipsis
+                        )
+                    }
+                }
+                if (!isListening) {
+                    Text(
+                        transcript, Modifier.fillMaxWidth().heightIn(max = 38.dp)
+                            .verticalScroll(rememberScrollState()),
+                        fontSize = 12.sp, color = PaperKeySubText
+                    )
+                }
+            }
+        }
+
+        if (transcript.isNotBlank()) {
+            Text(
+                "Clear", Modifier.align(Alignment.TopEnd).clickable(onClick = onClear).padding(8.dp),
+                fontSize = 12.sp, color = PaperAccentBlue
+            )
+        }
+    }
+}
+
+
+@Composable
+private fun AudioWaveformView(isListening: Boolean, rmsLevel: Float, modifier: Modifier = Modifier) {
+    val level = animateFloatAsState(
+        targetValue = if (isListening) rmsLevel.coerceIn(0f, 1f) else 0f,
+        animationSpec = tween(80),
+        label = "Voice level"
+    )
+    val phase = if (isListening) {
+        rememberInfiniteTransition(label = "Waveform flow").animateFloat(
+            initialValue = 0f,
+            targetValue = 1f,
+            animationSpec = infiniteRepeatable(tween(1200, easing = LinearEasing)),
+            label = "Right-to-left phase"
+        )
+    } else null
+    val centerColor = PaperAccentBlue.copy(alpha = .68f)
+    val edgeColor = MaterialTheme.colorScheme.secondary.copy(alpha = .44f)
+    val idleColor = MaterialTheme.colorScheme.outline.copy(alpha = .43f)
     val barCount = 28
-    val centerIndex = barCount / 2
+    val center = (barCount - 1) / 2f
 
     Row(
-        modifier = modifier
-            .fillMaxWidth()
-            .height(34.dp),
-        horizontalArrangement = Arrangement.Center,
+        modifier = modifier.padding(horizontal = 6.dp),
         verticalAlignment = Alignment.CenterVertically
     ) {
-        for (i in 0 until barCount) {
-            val distFromCenter = Math.abs(i - centerIndex).toFloat() / centerIndex
-            val bellFactor = (1f - distFromCenter * 0.7f).coerceIn(0.2f, 1f)
-
-            val targetHeight = if (isListening) {
-                val variableHeight = 4f + (rmsLevel * 28f * bellFactor)
-                variableHeight.dp
-            } else {
-                3.dp
+        repeat(barCount) { index ->
+            val distance = kotlin.math.abs(index - center) / center
+            val taper = 1f - distance * .78f
+            val color = when {
+                !isListening -> idleColor
+                distance < .4f -> centerColor
+                else -> edgeColor
             }
-
-            val animatedHeight by animateDpAsState(
-                targetValue = targetHeight,
-                animationSpec = tween(durationMillis = 80),
-                label = "barHeight$i"
-            )
-
-            val barColor = if (!isListening) MaterialTheme.colorScheme.outline
-                else if (distFromCenter < 0.4f) PaperAccentBlue
-                else MaterialTheme.colorScheme.secondary
-
-            Box(
-                modifier = Modifier
-                    .padding(horizontal = 1.5.dp)
-                    .width(3.dp)
-                    .height(animatedHeight)
-                    .clip(RoundedCornerShape(2.dp))
-                    .background(barColor)
-            )
+            Box(Modifier.weight(1f), contentAlignment = Alignment.Center) {
+                Box(
+                    Modifier.width(3.dp).height(122.dp)
+                        .graphicsLayer {
+                            val travel = phase?.value
+                            scaleY = if (travel == null) {
+                                .035f
+                            } else {
+                                val crest = kotlin.math.sin((travel + index / 14f) * 2.0 * kotlin.math.PI).toFloat()
+                                (.055f + level.value * .94f) * taper * (.84f + crest * .16f)
+                            }
+                        }
+                        .background(color, CircleShape)
+                )
+            }
         }
     }
 }

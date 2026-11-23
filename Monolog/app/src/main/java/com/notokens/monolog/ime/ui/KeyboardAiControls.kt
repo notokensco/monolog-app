@@ -10,6 +10,8 @@ import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.fillMaxHeight
+import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.sizeIn
 import androidx.compose.foundation.layout.padding
@@ -17,6 +19,7 @@ import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.widthIn
 import androidx.compose.material3.IconButton
+import androidx.compose.material3.VerticalDivider
 import androidx.compose.material3.DropdownMenu
 import androidx.compose.runtime.*
 import androidx.compose.ui.semantics.contentDescription
@@ -31,6 +34,8 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalUriHandler
 import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.ui.text.style.TextAlign
+import androidx.compose.ui.unit.sp
 import androidx.compose.ui.unit.dp
 import com.notokens.monolog.ai.AiPreview
 import com.notokens.monolog.ai.KeyboardLanguage
@@ -45,42 +50,74 @@ import com.notokens.monolog.ui.theme.PaperKeyText
 internal fun KeyboardSuggestionStrip(
     ai: ImeAi,
     language: KeyboardLanguage,
-    onShortcut: (com.notokens.monolog.ime.shortcuts.ShortcutSuggestion) -> Unit
+    onShortcut: (com.notokens.monolog.ime.shortcuts.ShortcutSuggestion) -> Unit,
+    clipboardActions: List<com.notokens.monolog.ime.DeviceAction> = emptyList()
 ) {
     Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
-        Row(Modifier.weight(1f).horizontalScroll(rememberScrollState()),
-            verticalAlignment = Alignment.CenterVertically) {
-            if (!ai.rewriteOpen) ai.shortcutSuggestion?.let { suggestion ->
-                ToolbarAction(suggestion.label) { onShortcut(suggestion) }
+        val actions = ai.inlineActions.ifEmpty { clipboardActions }
+        if (!ai.rewriteOpen && ai.inlineBusy) {
+            Box(Modifier.weight(1f), contentAlignment = Alignment.Center) { com.notokens.monolog.ui.ProcessingDots() }
+        } else if (!ai.rewriteOpen && ai.toolbar == null && actions.isNotEmpty()) {
+            Row(Modifier.weight(1f), horizontalArrangement = androidx.compose.foundation.layout.Arrangement.Center) {
+                DeviceActionButtons(actions)
             }
-            if (ai.rewriteOpen) {
-                val styles = if (language.id == "en" || language.translationCode != null) RewriteStyle.entries
-                    else listOf(RewriteStyle.POLISH)
-                styles.forEach { style ->
-                    ToolbarAction(style.label, enabled = !ai.busy) { ai.rewrite(style, language) }
+        } else if (!ai.rewriteOpen && ai.toolbar == null) {
+            Row(Modifier.weight(1f).height(40.dp), verticalAlignment = Alignment.CenterVertically) {
+                ai.shortcutSuggestion?.let { shortcut ->
+                    Text(shortcut.label, Modifier.widthIn(max = 98.dp)
+                        .clickable { onShortcut(shortcut) }.padding(horizontal = 5.dp),
+                        color = PaperKeyText, style = MaterialTheme.typography.labelMedium,
+                        maxLines = 1, overflow = TextOverflow.Ellipsis)
                 }
-                if (language.translationCode != null) ToolbarAction("To English", enabled = !ai.busy) {
-                    ai.rewrite(RewriteStyle.POLISH, language, translate = true)
+                ai.suggestions.take(3).forEachIndexed { index, suggestion ->
+                    if (index > 0) VerticalDivider(Modifier.height(24.dp))
+                    Box(
+                        Modifier.weight(1f).fillMaxHeight()
+                            .clickable { ai.applyWord(suggestion) }.padding(horizontal = 3.dp),
+                        contentAlignment = Alignment.Center
+                    ) {
+                        Text(
+                            suggestion.replacement.trimEnd(),
+                            color = PaperKeyText,
+                            fontSize = 16.sp,
+                            textAlign = TextAlign.Center,
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis
+                        )
+                    }
                 }
-            } else if (ai.toolbar != null) {
-                AnimatedContent(targetState = ai.toolbar,
-                    transitionSpec = { (slideInHorizontally { it / 3 } + fadeIn()) togetherWith fadeOut() },
-                    label = "Inline question answer") { answer ->
-                    answer?.let { card ->
-                        var expanded by remember(card) { mutableStateOf(false) }
-                        Box {
-                            Text(card.text, Modifier.widthIn(max = 224.dp).clickable { expanded = true }.padding(horizontal = 8.dp),
-                                color = PaperKeyText, style = MaterialTheme.typography.labelMedium,
-                                maxLines = 2, overflow = TextOverflow.Ellipsis)
-                            DropdownMenu(expanded, { expanded = false }) {
-                                AiResultCard(card) { expanded = false; ai.apply(it) }
+            }
+        } else {
+            Row(Modifier.weight(1f).horizontalScroll(rememberScrollState()),
+                verticalAlignment = Alignment.CenterVertically) {
+                if (!ai.rewriteOpen) ai.shortcutSuggestion?.let { suggestion ->
+                    ToolbarAction(suggestion.label) { onShortcut(suggestion) }
+                }
+                if (ai.rewriteOpen) {
+                    val styles = if (language.id == "en" || language.translationCode != null) RewriteStyle.entries
+                        else listOf(RewriteStyle.POLISH)
+                    styles.forEach { style ->
+                        ToolbarAction(style.label, enabled = !ai.busy) { ai.rewrite(style, language) }
+                    }
+                    if (language.translationCode != null) ToolbarAction("To English", enabled = !ai.busy) {
+                        ai.rewrite(RewriteStyle.POLISH, language, translate = true)
+                    }
+                } else if (ai.toolbar != null) {
+                    AnimatedContent(targetState = ai.toolbar,
+                        transitionSpec = { (slideInHorizontally { it / 3 } + fadeIn()) togetherWith fadeOut() },
+                        label = "Inline question answer") { answer ->
+                        answer?.let { card ->
+                            var expanded by remember(card) { mutableStateOf(false) }
+                            Box {
+                                Text(card.text, Modifier.widthIn(max = 224.dp).clickable { expanded = true }.padding(horizontal = 8.dp),
+                                    color = PaperKeyText, style = MaterialTheme.typography.labelMedium,
+                                    maxLines = 2, overflow = TextOverflow.Ellipsis)
+                                DropdownMenu(expanded, { expanded = false }) {
+                                    AiResultCard(card) { expanded = false; ai.apply(it) }
+                                }
                             }
                         }
                     }
-                }
-            } else {
-                ai.suggestions.forEach { suggestion ->
-                    ToolbarAction(suggestion.replacement.trimEnd()) { ai.applyWord(suggestion) }
                 }
             }
         }
@@ -94,7 +131,12 @@ internal fun KeyboardSuggestionStrip(
 
 @Composable
 internal fun KeyboardAiControls(ai: ImeAi, language: KeyboardLanguage) {
-    if (ai.busy) Text("Working…", Modifier.padding(horizontal = 12.dp), color = PaperKeyText)
+    if (ai.rewriteOpen && !ai.busy && ai.preview == null) {
+        Text("Professional for work, Friendly for a warmer tone, Shorten for fewer words, or Polish for grammar.",
+            Modifier.padding(horizontal = 12.dp, vertical = 3.dp), color = PaperKeyText,
+            style = MaterialTheme.typography.bodySmall)
+    }
+    if (ai.busy) com.notokens.monolog.ui.ProcessingDots(Modifier.padding(horizontal = 12.dp))
     ai.preview?.let { AiResultCard(it, ai::apply) }
 }
 
@@ -128,5 +170,14 @@ internal fun AiResultCard(preview: AiPreview, onApply: (AiPreview) -> Unit) {
                 }
             }
         }
+    }
+}
+
+
+@Composable
+internal fun DeviceActionButtons(actions: List<com.notokens.monolog.ime.DeviceAction>) {
+    val context = androidx.compose.ui.platform.LocalContext.current
+    actions.forEach { action ->
+        TextButton(onClick = { action.open(context) }) { Text(action.label) }
     }
 }

@@ -3,7 +3,7 @@ package com.notokens.monolog.ime.vox
 import com.notokens.monolog.ime.NativeTyping
 import java.util.Locale
 
-/** Conservative transcript cleanup and pronunciation hints for Whisper. */
+/** Conservative cleanup of recognized speech. */
 internal object PronunciationAlternatives {
     private data class Term(val word: String, val soundAlikes: Regex)
 
@@ -13,17 +13,28 @@ internal object PronunciationAlternatives {
         Term("LiteRT", Regex("\\blight[ -]+r[ -]*t\\b|\\blite[ -]+r[ -]*t\\b", RegexOption.IGNORE_CASE))
     )
 
-    val terms = vocabulary.map { it.word }
-    fun supports(languageTag: String): Boolean =
+    private fun supports(languageTag: String): Boolean =
         languageTag.substringBefore('-').lowercase(Locale.ROOT) in setOf("en", "hi")
 
-    fun cleanFinal(text: String, languageTag: String): String {
-        var result = pauseMarkers.replace(text, " ").trim().replace(Regex("""[ \t\u00A0]+"""), " ")
-        if (!supports(languageTag)) return result
-        result = filler.replace(result, " ")
+    private val fillerPhonemes = Regex(
+        """(?<![\p{L}\p{N}-])(?:u+m+|u+h+|u+h+m*|a+h+|a{2,}|e+r+|e+r+m+|h+m+|o{2,}m+s?|o+h+)(?![\p{L}\p{N}-])(?:[ \t]*(?:,…|…|\.{3,}|,))?""",
+        RegexOption.IGNORE_CASE
+    )
+
+    fun cleanFillerPhonemes(text: String): String {
+        if (text.isBlank()) return ""
+        return fillerPhonemes.replace(text, " ")
             .replace(Regex("""[ \t]{2,}"""), " ")
             .replace(Regex("""\s+([,.!?;:])"""), "$1")
-            .trim().trimStart(',', ';', ':').trimStart()
+            .trim()
+            .trimStart(',', ';', ':')
+            .trim()
+    }
+
+    fun cleanFinal(text: String, languageTag: String, smartFilter: Boolean = true): String {
+        var result = text.trim().replace(Regex("""[ \t\u00A0]+"""), " ")
+        if (smartFilter) result = cleanFillerPhonemes(pauseMarkers.replace(result, " "))
+        if (!supports(languageTag)) return result
         if (result.none(Char::isLetterOrDigit)) return ""
         for (term in vocabulary.drop(1)) result = term.soundAlikes.replace(result, term.word)
         val monolog = vocabulary.first()
@@ -37,10 +48,6 @@ internal object PronunciationAlternatives {
     }
 
     private val pauseMarkers = Regex("""\[(?:pause|silence)\]|\((?:pause|silence)\)""", RegexOption.IGNORE_CASE)
-    private val filler = Regex(
-        """(?<![\p{L}\p{N}-])(?:u+h+m*|u+m+|o{2,}m+s?|e+r+m+|a+h+m*|a+m{2,}|h+m{2,})(?![\p{L}\p{N}-])(?:[ \t]*(?:,…|…|\.{3,}|,))?""",
-        RegexOption.IGNORE_CASE
-    )
 
     private val monologInContext = Regex(
         """\b((?:open|launch|in|the)\s+(?:the\s+)?)([a-z-]+(?:\s+[a-z-]+){0,2}?)(?=\s+(?:app|keyboard)\b)""",

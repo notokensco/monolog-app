@@ -101,7 +101,7 @@ pub(crate) fn install(mode: usize, corpus: &str, preferred: &str, secondary: &st
     };
     let lexicon = slot.get_or_init(|| {
         let mut words = Vec::new();
-        if mode == 0 {
+        if mode <= 1 {
             corpus
                 .lines()
                 .skip(1)
@@ -111,6 +111,11 @@ pub(crate) fn install(mode: usize, corpus: &str, preferred: &str, secondary: &st
                 let (word, weight) = line.split_once('\t').unwrap_or((line, "55"));
                 let weight = weight.parse::<u8>().unwrap_or(55) as f32 / 1000.0;
                 add(&mut words, word, weight, true);
+            }
+        }
+        if mode <= 1 {
+            for word in include_str!("hinglish_phrases.txt").split_whitespace() {
+                add(&mut words, word, if mode == 1 { 0.09 } else { 0.035 }, true);
             }
         }
         for word in preferred.split_whitespace() {
@@ -187,49 +192,68 @@ impl Dictionary {
             .map(|id| &self.words[id])
     }
 
-    fn edits<'a>(&'a self, word: &str, mut accept: impl FnMut(&'a Word)) {
+    fn edits<'a>(&'a self, word: &str, mut accept: impl FnMut(&'a Word, f32)) {
         let mut buffer = [0; MAX_WORD_LENGTH + 1];
         let bytes = word.as_bytes();
         let len = bytes.len();
-        let mut check = |trial: &[u8]| {
+        let mut check = |trial: &[u8], penalty: f32| {
             if let Some(candidate) = std::str::from_utf8(trial)
                 .ok()
                 .and_then(|trial| self.exact(trial))
             {
                 if candidate.text.as_ref() != word {
-                    accept(candidate);
+                    accept(candidate, penalty);
                 }
             }
         };
         buffer[..len].copy_from_slice(bytes);
         for i in 0..len - 1 {
             buffer.swap(i, i + 1);
-            check(&buffer[..len]);
+            check(&buffer[..len], 0.0);
             buffer.swap(i, i + 1);
         }
         for i in 0..=len {
             buffer[..i].copy_from_slice(&bytes[..i]);
             if i < len {
                 buffer[i..len - 1].copy_from_slice(&bytes[i + 1..]);
-                check(&buffer[..len - 1]);
+                check(&buffer[..len - 1], 0.025);
                 buffer[i + 1..len].copy_from_slice(&bytes[i + 1..]);
                 for letter in b'a'..=b'z' {
                     buffer[i] = letter;
-                    check(&buffer[..len]);
+                    let penalty = if adjacent(bytes[i], letter) { 0.015 } else { 0.095 };
+                    check(&buffer[..len], penalty);
                 }
             }
             buffer[i + 1..len + 1].copy_from_slice(&bytes[i..]);
             for letter in b'a'..=b'z' {
                 buffer[i] = letter;
-                check(&buffer[..=len]);
+                let repeated = i.checked_sub(1).and_then(|index| bytes.get(index)) == Some(&letter)
+                    || bytes.get(i) == Some(&letter);
+                check(&buffer[..=len], if repeated { 0.018 } else { 0.045 });
             }
         }
     }
 }
 
-pub(crate) fn suggest(mode: usize, prefix: &str, context: &str) -> Option<String> {
+fn adjacent(a: u8, b: u8) -> bool {
+    fn position(key: u8) -> Option<(i32, i32)> {
+        [b"qwertyuiop".as_slice(), b"asdfghjkl", b"zxcvbnm"]
+            .iter()
+            .enumerate()
+            .find_map(|(row, keys)| {
+                keys.iter().position(|&letter| letter == key)
+                    .map(|column| (column as i32 * 2 + row as i32, row as i32))
+            })
+    }
+    position(a).zip(position(b)).is_some_and(|((x1, y1), (x2, y2))| {
+        y1.abs_diff(y2) <= 1 && x1.abs_diff(x2) <= if y1 == y2 { 2 } else { 1 }
+    })
+}
+
+pub(crate) fn suggest(mode: usize, prefix: &str, context: &str, before: &str) -> Option<String> {
     let dict = get(mode)?;
     let next: Vec<_> = context.split_whitespace().take(3).collect();
+    let weight = crate::phrases::ranker(mode, before);
     let mut best = Best::default();
     let mut unique = None;
     let mut ambiguous = false;
@@ -238,13 +262,16 @@ pub(crate) fn suggest(mode: usize, prefix: &str, context: &str) -> Option<String
         && prefix.bytes().all(|c| c.is_ascii_lowercase() || c == b'\'')
         && dict.exact(prefix).is_none()
     {
-        dict.edits(prefix, |entry| {
+        dict.edits(prefix, |entry, penalty| {
             let word = entry.text.as_ref();
             if unique.is_some_and(|first| first != word) {
                 ambiguous = true;
             }
             unique = Some(word);
-            best.push(0.12 - entry.weight - context_weight(word, &next), word);
+            best.push(
+                0.12 + penalty - entry.weight - context_weight(word, &next).max(weight(word)),
+                word,
+            );
         });
     }
     let start = dict
@@ -260,7 +287,7 @@ pub(crate) fn suggest(mode: usize, prefix: &str, context: &str) -> Option<String
         }
         let length_cost = (word.chars().count() - prefix.chars().count()) as f32 * 0.016;
         best.push(
-            0.19 + length_cost - entry.weight - context_weight(word, &next),
+            0.19 + length_cost - entry.weight - context_weight(word, &next).max(weight(word)),
             word,
         );
     }
@@ -276,6 +303,7 @@ pub(crate) fn swipe(
     trace: &[Point],
     centers: &[Point],
     context: &str,
+    before: &str,
 ) -> Option<String> {
     let dict = get(mode)?;
     let Some((observed, trace_length)) = sample(trace) else {
@@ -287,15 +315,16 @@ pub(crate) fn swipe(
     let next: Vec<_> = context.split_whitespace().take(3).collect();
     let first = observed[0];
     let last = observed[SAMPLE_COUNT - 1];
+    let weight = crate::phrases::ranker(mode, before);
     let mut best = Best::default();
     for (from, center) in centers.iter().enumerate() {
         let start_error = first.squared_distance(*center);
-        if start_error > 1.65 {
+        if start_error > 2.0 {
             continue;
         }
         for (to, center) in centers.iter().enumerate() {
             let end_error = last.squared_distance(*center);
-            if end_error > 1.65 {
+            if end_error > 2.0 {
                 continue;
             }
             for id in &dict.endpoints[from * KEYS + to] {
@@ -329,10 +358,15 @@ pub(crate) fn swipe(
                     .sum::<f32>()
                     / SAMPLE_COUNT as f32;
                 let score = shape_error
+                    + 0.12 * keys[..count].iter().map(|key| {
+                        observed.iter().map(|point| key.squared_distance(*point))
+                            .fold(f32::INFINITY, f32::min).min(1.5)
+                    }).sum::<f32>() / count as f32
                     + 0.48 * (start_error + end_error)
                     + 0.40 * length_error
                     + 0.005 * count as f32
-                    - (word.weight + context_weight(&word.text, &next)).min(0.24);
+                    - (word.weight + context_weight(&word.text, &next).max(weight(&word.text)))
+                        .min(0.34);
                 if score < 1.05 {
                     best.push(score, &word.text);
                 }

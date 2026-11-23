@@ -9,7 +9,22 @@ plugins {
     alias(libs.plugins.ksp)
 }
 
-val whisperSource = providers.gradleProperty("monologWhisperSource").map { rootProject.file(it) }.orNull
+// Moonshine ships a reduced ONNX Runtime. Share the full runtime used by the journal encoder.
+val moonshineSdk by configurations.creating {
+    isCanBeResolved = true
+    isCanBeConsumed = false
+    isTransitive = false
+}
+val moonshineRuntimeAar = tasks.register<Zip>("prepareMoonshineRuntime") {
+    archiveFileName.set("moonshine-voice.aar")
+    destinationDirectory.set(layout.buildDirectory.dir("generated/moonshine"))
+    isPreserveFileTimestamps = false
+    isReproducibleFileOrder = true
+    from(moonshineSdk.elements.map { zipTree(it.single().asFile) }) {
+        exclude("jni/**/libonnxruntime.so")
+    }
+}
+
 val llamaSource = providers.gradleProperty("monologLlamaSource").map { rootProject.file(it) }.orNull
 val rustTypingEnabled = providers.gradleProperty("monologRustTyping").map(String::toBoolean).orElse(true)
 val rustTypingProject = layout.projectDirectory.dir("src/main/rust")
@@ -120,13 +135,6 @@ android {
     ndkVersion = rustTypingNdk.get()
     if (rustTypingEnabled.get()) sourceSets.getByName("main").jniLibs.srcDir(rustTypingOutput)
     if (llamaSource != null) sourceSets.getByName("main").jniLibs.srcDir(ggufOutput)
-    if (whisperSource != null) {
-        require(whisperSource.resolve("include/whisper.h").isFile) { "Set monologWhisperSource to the whisper.cpp checkout." }
-        externalNativeBuild.cmake {
-            path = file("src/main/cpp/CMakeLists.txt")
-            version = "3.22.1"
-        }
-    }
     namespace = "com.notokens.monolog"
     compileSdk = 35
 
@@ -134,14 +142,9 @@ android {
         applicationId = "com.notokens.monolog"
         minSdk = 35
         targetSdk = 35
-        versionCode = 2
-        versionName = "0.1.0-prototype.2"
-        buildConfigField("boolean", "MONOLOG_HAS_WHISPER", (whisperSource != null).toString())
+        versionCode = 3
+        versionName = "0.1.0-prototype.3"
         buildConfigField("boolean", "MONOLOG_HAS_GGUF", (llamaSource != null).toString())
-        if (whisperSource != null) {
-            externalNativeBuild.cmake.arguments += "-DMONOLOG_WHISPER_SOURCE=$whisperSource"
-        }
-
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
         val webEndpoint = providers.gradleProperty("monologWebEndpoint").orElse("").get()
         require(webEndpoint.isEmpty() || webEndpoint.matches(Regex("https://[A-Za-z0-9.-]+(?::[0-9]{1,5})?(?:/[A-Za-z0-9._/-]*)?"))) {
@@ -222,7 +225,13 @@ monologTestingKeystore?.let { keystore ->
 
 dependencies {
     implementation("com.google.mediapipe:tasks-text:1.2.3")
-    implementation("com.microsoft.onnxruntime:onnxruntime-android:1.24.3")
+    implementation("com.microsoft.onnxruntime:onnxruntime-android:1.23.2") // Matches the Moonshine JNI symbol version.
+    moonshineSdk("ai.moonshine:moonshine-voice:0.1.5@aar")
+    implementation(files(moonshineRuntimeAar))
+    // A local AAR has no Maven metadata. WorkManager is already declared below.
+    implementation("androidx.appcompat:appcompat:1.6.1")
+    implementation("com.google.android.material:material:1.10.0")
+    implementation("com.squareup.okhttp3:okhttp:4.12.0")
     implementation("androidx.credentials:credentials:1.5.0")
     implementation("androidx.credentials:credentials-play-services-auth:1.5.0")
     implementation("com.google.android.libraries.identity.googleid:googleid:1.1.1")
@@ -249,9 +258,6 @@ dependencies {
     implementation(libs.mlkit.image.labeling)
     implementation(libs.mlkit.objectDetection)
     implementation(libs.mlkit.translation)
-    implementation(libs.mlkit.genai.prompt)
-    implementation(libs.mlkit.genai.rewriting)
-    implementation(libs.mlkit.genai.image.description)
     implementation(libs.kotlinx.coroutines.tasks)
     implementation(libs.kotlinx.coroutines.guava)
     testImplementation(libs.junit)
