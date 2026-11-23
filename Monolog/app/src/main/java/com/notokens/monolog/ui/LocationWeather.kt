@@ -17,6 +17,8 @@ import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.DropdownMenu
+import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.Text
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
@@ -187,6 +189,7 @@ internal fun WeatherChip() {
     var result by remember { mutableStateOf<LocalForecast.Forecast?>(null) }
     var loading by remember { mutableStateOf(false) }
     var failed by remember { mutableStateOf(false) }
+    var showAttribution by remember { mutableStateOf(false) }
     suspend fun refresh(force: Boolean) {
         if (loading || settings.incognito.first()) return
         loading = true
@@ -230,8 +233,15 @@ internal fun WeatherChip() {
                     color = PaperKeySubText, style = MaterialTheme.typography.labelSmall, maxLines = 2,
                     overflow = TextOverflow.Ellipsis)
             }
-            Text("MET Norway", Modifier.clickable { browser.openUri("https://www.met.no/en") },
-                style = MaterialTheme.typography.labelSmall, color = PaperKeySubText)
+            Box {
+                IconControl(Glyph.INFO, "Weather source", { showAttribution = true })
+                DropdownMenu(showAttribution, { showAttribution = false }) {
+                    DropdownMenuItem(text = { Text("Weather data by MET Norway") }, onClick = {
+                        showAttribution = false
+                        browser.openUri("https://www.met.no/en")
+                    })
+                }
+            }
         }
     }
 }

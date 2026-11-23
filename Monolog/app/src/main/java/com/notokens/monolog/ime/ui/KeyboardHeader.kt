@@ -73,6 +73,7 @@ internal fun ContextKey(
     val view = LocalView.current
     val context = LocalContext.current
     val settings = remember { SettingsStore(context.applicationContext) }
+    val tapOpensShortcuts by settings.tapOpensShortcuts.collectAsState(false)
     val holdMs by settings.shortcutHoldMs.collectAsState(initial = 500)
     val haptics by settings.shortcutHaptics.collectAsState(initial = true)
     val defaultConfiguration = LocalViewConfiguration.current
@@ -89,14 +90,15 @@ internal fun ContextKey(
                 .combinedClickable(
                     enabled = enabled,
                     role = Role.Button,
-                    onLongClickLabel = "Open quick shortcuts",
+                    onClickLabel = if (tapOpensShortcuts) "Open quick shortcuts" else "Capture context",
+                    onLongClickLabel = if (tapOpensShortcuts) "Capture context" else "Open quick shortcuts",
                     onLongClick = {
                         if (haptics) triggerHapticFeedback(view, isLong = true)
-                        onLongClick()
+                        if (tapOpensShortcuts) onClick() else onLongClick()
                     },
                     onClick = {
                         if (haptics) triggerHapticFeedback(view)
-                        onClick()
+                        if (tapOpensShortcuts) onLongClick() else onClick()
                     }
                 )
                 .semantics { contentDescription = "Monolog context key" },

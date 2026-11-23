@@ -55,6 +55,7 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.collectLatest
 import kotlinx.coroutines.flow.distinctUntilChanged
+import kotlinx.coroutines.flow.dropWhile
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.launch
@@ -224,6 +225,18 @@ class MonologInputMethodService : LifecycleInputMethodService() {
     }
 
     private fun observeModelWarmup() {
+        settingsScope.launch {
+            keyboardModelsVisible.dropWhile { !it }.collectLatest { visible ->
+                if (!visible) {
+                    // App switches often close the IME briefly. Reopening cancels eviction.
+                    delay(15_000)
+                    val stillHidden = { !keyboardModelsVisible.value }
+                    LocalAi.release(stillHidden)
+                    RegionalVox.release(stillHidden)
+                    OfflineMoonshine.release(stillHidden)
+                }
+            }
+        }
         val installedPack = RegionalVox.installation.map { (it as? RegionalVox.Install.Ready)?.pack }
             .distinctUntilChanged()
         settingsScope.launch {
@@ -245,6 +258,7 @@ class MonologInputMethodService : LifecycleInputMethodService() {
                 else engine
                 selected to mode
             }.distinctUntilChanged().collectLatest { (engine, mode) ->
+                if (!keyboardModelsVisible.value) return@collectLatest
                 if (engine != VoiceInputEngine.REGIONAL) RegionalVox.release()
                 if (engine != VoiceInputEngine.MOONSHINE) OfflineMoonshine.release()
                 warmModel {
@@ -259,8 +273,9 @@ class MonologInputMethodService : LifecycleInputMethodService() {
         settingsScope.launch {
             val models = ModelStore.get(applicationContext)
             combine(keyboardModelsVisible, models.state, models.active) { visible, state, model ->
-                model.takeIf { visible && state is ModelState.Ready }
-            }.distinctUntilChanged().collectLatest { model ->
+                visible to model.takeIf { visible && state is ModelState.Ready }
+            }.distinctUntilChanged().collectLatest { (visible, model) ->
+                if (!visible) return@collectLatest
                 if (model != null) {
                     delay(550)
                     while (android.os.SystemClock.uptimeMillis() - lastKeyEdit < 400) delay(160)

@@ -94,9 +94,10 @@ internal object RegionalVox {
     suspend fun <T> use(context: Context, mode: VoxLanguage, block: suspend (RegionalRecognizer) -> T): T =
         recognizerAccess.withLock { block(recognizer(context, mode)) }
 
-    fun release() {
+    fun release(shouldRelease: () -> Boolean = { true }) {
         scope.launch {
             recognizerAccess.withLock {
+                if (!shouldRelease()) return@withLock
                 cached?.second?.close()
                 cached = null
             }

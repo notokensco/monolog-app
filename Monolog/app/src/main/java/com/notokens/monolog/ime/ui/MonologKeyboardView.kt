@@ -33,6 +33,9 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.mutableStateListOf
 import androidx.compose.runtime.remember
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
+import androidx.compose.ui.semantics.clearAndSetSemantics
+import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.TextFieldValue
@@ -342,6 +345,7 @@ internal fun MonologKeyboardView(
                             rowHeight = rowHeight,
                             numberPadOpen = numberPadOpen,
                             onNumberPad = { numberPadOpen = !numberPadOpen },
+                            longPressCharacters = longPressCharacters,
                             editorContext = editorContext,
                             onCharTyped = onCharTyped,
                             onToggleMoreSymbols = onToggleMoreSymbols,
@@ -496,6 +500,34 @@ private fun LettersLayout(
 }
 
 @Composable
+internal fun KeyboardThemePreview(settings: SettingsStore, borders: Boolean) {
+    val languageId by settings.keyboardLanguage.collectAsState("en")
+    val allowHold by settings.longPressCharacters.collectAsState(true)
+    val cursor by settings.cursorOnSpace.collectAsState(false)
+    val swapped by settings.swapVoxAndAi.collectAsState(false)
+    val height by settings.keyHeightPercent.collectAsState(100)
+    val rowHeight = (43.dp * (height / 100f)).coerceIn(30.dp, 53.dp)
+    val previewCursor = remember { CursorDrag({}, {}, {}) }
+    androidx.compose.runtime.CompositionLocalProvider(
+        LocalPreviewOnly provides true,
+        LocalKeyAppearance provides KeyAppearance(borders = borders),
+        LocalCursorKeys provides CursorKeys(previewCursor.takeIf { cursor })
+    ) {
+        Column(Modifier.fillMaxWidth()
+            .clip(androidx.compose.foundation.shape.RoundedCornerShape(18.dp))
+            .monologBackdrop(keyboard = true).padding(3.dp)
+            .clearAndSetSemantics { contentDescription = "Read-only keyboard theme preview" }) {
+            LettersLayout(rowHeight = rowHeight, shiftState = ShiftState.OFF,
+                editorContext = EditorContext.default(), language = KeyboardLanguage.of(languageId),
+                onCharTyped = {}, onLetterTyped = {}, swipeEnabled = false, longPressCharacters = allowHold,
+                onSwipe = {}, onShiftClick = {}, onCapsLock = {}, onBackspace = {}, onToggleSymbols = {},
+                onToggleEmoji = {}, onSpace = {}, onHoldSpace = {}, spacebarVox = swapped,
+                isAiActive = false, onToggleIncognito = {}, onAction = {})
+        }
+    }
+}
+
+@Composable
 private fun LetterKey(
     modifier: Modifier,
     letter: Char,
@@ -541,6 +573,7 @@ private fun SymbolsLayout(
     moreSymbols: Boolean,
     numberPadOpen: Boolean,
     onNumberPad: () -> Unit,
+    longPressCharacters: Boolean,
     editorContext: EditorContext,
     onCharTyped: (String) -> Unit,
     onToggleMoreSymbols: () -> Unit,
@@ -561,28 +594,21 @@ private fun SymbolsLayout(
     val row3 = if (moreSymbols) listOf("%", "_", "[", "]", "©", "®", "™")
         else listOf("*", "\"", "'", ":", ";", "!", "?")
 
+    val canHold = longPressCharacters && !editorContext.isRestrictedField
     if (numberPadOpen) {
-        DigitsGrid(rowHeight, onCharTyped, onBackspace)
+        DigitsGrid(rowHeight, canHold, onCharTyped, onBackspace)
     } else {
         // Row 1
         Row(modifier = Modifier.fillMaxWidth().height(rowHeight)) {
             row1.forEach { char ->
-                KeyButton(
-                    modifier = Modifier.weight(1f),
-                    text = char,
-                    onClick = { onCharTyped(char) }
-                )
+                SymbolKey(Modifier.weight(1f), char, canHold, onCharTyped)
             }
         }
 
         // Row 2
         Row(modifier = Modifier.fillMaxWidth().height(rowHeight)) {
             row2.forEach { char ->
-                KeyButton(
-                    modifier = Modifier.weight(1f),
-                    text = char,
-                    onClick = { onCharTyped(char) }
-                )
+                SymbolKey(Modifier.weight(1f), char, canHold, onCharTyped)
             }
         }
 
@@ -598,11 +624,7 @@ private fun SymbolsLayout(
             )
 
             row3.forEach { char ->
-                KeyButton(
-                    modifier = Modifier.weight(1f),
-                    text = char,
-                    onClick = { onCharTyped(char) }
-                )
+                SymbolKey(Modifier.weight(1f), char, canHold, onCharTyped)
             }
 
             KeyButton(
@@ -639,6 +661,7 @@ private fun SymbolsLayout(
 @Composable
 private fun DigitsGrid(
     rowHeight: Dp,
+    canHold: Boolean,
     onCharTyped: (String) -> Unit,
     onBackspace: () -> Unit
 ) {
@@ -646,12 +669,61 @@ private fun DigitsGrid(
     rows.forEachIndexed { index, row ->
         Row(Modifier.fillMaxWidth().height(rowHeight)) {
             row.forEach { digit ->
-                KeyButton(Modifier.weight(1f), text = digit, onClick = { onCharTyped(digit) })
+                SymbolKey(Modifier.weight(1f), digit, canHold, onCharTyped)
             }
             when (index) {
-                0 -> KeyButton(Modifier.weight(1f), text = "/", onClick = { onCharTyped("/") })
+                0 -> SymbolKey(Modifier.weight(1f), "/", canHold, onCharTyped)
                 1 -> KeyButton(Modifier.weight(1f), glyph = Glyph.BACKSPACE, isSpecial = true, onClick = onBackspace)
-                else -> KeyButton(Modifier.weight(1f), text = "=", onClick = { onCharTyped("=") })
+                else -> SymbolKey(Modifier.weight(1f), "=", canHold, onCharTyped)
+            }
+        }
+    }
+}
+
+private val symbolAlternates = mapOf(
+    "1" to listOf("¹", "½", "⅓", "¼"), "2" to listOf("²", "⅔"), "3" to listOf("³", "¾"),
+    "4" to listOf("⁴"), "5" to listOf("⁵"), "6" to listOf("⁶"), "7" to listOf("⁷"),
+    "8" to listOf("⁸"), "9" to listOf("⁹"), "0" to listOf("+", "⁰", "°"),
+    "+" to listOf("±", "⊕"), "-" to listOf("−", "–", "—", "±"),
+    "/" to listOf("÷", "\\"), "*" to listOf("×", "·", "★"), "=" to listOf("≠", "≈", "≡"),
+    "÷" to listOf("/", "⁄"), "×" to listOf("*", "·"), "√" to listOf("∛", "∜"),
+    "%" to listOf("‰", "‱"), "<" to listOf("≤", "«"), ">" to listOf("≥", "»"),
+    "(" to listOf("[", "{", "<"), ")" to listOf("]", "}", ">"),
+    "[" to listOf("(", "{", "«"), "]" to listOf(")", "}", "»"),
+    "{" to listOf("[", "("), "}" to listOf("]", ")"),
+    "?" to listOf("¿", "‽"), "!" to listOf("¡", "‽"), ":" to listOf(";", "∶"),
+    "'" to listOf("’", "‘", "′"), "\"" to listOf("“", "”", "″", "«", "»"),
+    "$" to listOf("₹", "€", "£", "¥", "¢"), "£" to listOf("₹", "€", "$"),
+    "€" to listOf("₹", "£", "$"), "¥" to listOf("₹", "₩", "$"), "¢" to listOf("₹", "$"),
+    "@" to listOf("©", "®", "™"), "#" to listOf("№", "♪"), "&" to listOf("§", "¶"),
+    "." to listOf("…", "·"), "_" to listOf("-", "‒"), "~" to listOf("≈", "≃"),
+    "°" to listOf("℃", "℉"), "|" to listOf("¦", "‖"), "^" to listOf("↑", "↓"),
+    "π" to listOf("τ", "φ"), "∆" to listOf("∇", "δ"), "¶" to listOf("§", "†"),
+    "•" to listOf("◦", "·"), "©" to listOf("®", "℗"), "®" to listOf("©", "™"),
+    "™" to listOf("℠", "®"), ";" to listOf(":", ";")
+)
+
+@Composable
+private fun SymbolKey(modifier: Modifier, symbol: String, canHold: Boolean, onType: (String) -> Unit) {
+    val options = if (canHold) symbolAlternates[symbol].orEmpty() else emptyList()
+    if (options.size < 2) {
+        val alternate = options.firstOrNull()
+        KeyButton(modifier, text = symbol, subText = alternate,
+            longClickLabel = alternate?.let { "Type $it" },
+            onLongClick = alternate?.let { { onType(it) } }, onClick = { onType(symbol) })
+        return
+    }
+    var expanded by remember(symbol) { mutableStateOf(false) }
+    Box(modifier.fillMaxSize()) {
+        KeyButton(Modifier.fillMaxSize(), text = symbol, subText = options.first(),
+            longClickLabel = "Choose alternate symbol", onLongClick = { expanded = true },
+            onClick = { onType(symbol) })
+        DropdownMenu(expanded, onDismissRequest = { expanded = false }) {
+            options.forEach { alternate ->
+                DropdownMenuItem(text = { Text(alternate) }, onClick = {
+                    expanded = false
+                    onType(alternate)
+                })
             }
         }
     }
@@ -800,7 +872,10 @@ private fun BottomRow(
                 KeyboardAction.GO, KeyboardAction.SEND, KeyboardAction.NEXT -> Glyph.ARROW
                 else -> Glyph.ENTER
             },
-            longClickLabel = smartLabel.takeIf { cursorDrag != null },
+            secondaryGlyph = if (cursorDrag != null && smartHold != null) {
+                if (spacebarVox) Glyph.MIC else Glyph.BOLT
+            } else null,
+            longClickLabel = smartLabel.takeIf { cursorDrag != null && smartHold != null },
             onLongClick = smartHold.takeIf { cursorDrag != null },
             onClick = onAction
         )

@@ -54,6 +54,8 @@ import androidx.navigation.NavType
 import androidx.navigation.compose.*
 import androidx.navigation.navArgument
 import com.notokens.monolog.R
+import com.notokens.monolog.ai.RewritePipeline
+import com.notokens.monolog.ime.ui.KeyboardThemePreview
 import androidx.compose.ui.layout.ContentScale
 import com.notokens.monolog.capture.captureToJournal
 import com.notokens.monolog.capture.TagMetadataCodec
@@ -80,6 +82,10 @@ import kotlinx.coroutines.withTimeoutOrNull
 
 private val ink: Color @Composable get() = PaperKeyText
 private val muted: Color @Composable get() = PaperKeySubText
+private val todayMemoryRequest = Regex(
+    """\b(?:my (?:journal|notes?|memories|photos?|screenshots?|day)|(?:what|when|where) did (?:i|we)|saved (?:notes?|memories|photos?))\b""",
+    RegexOption.IGNORE_CASE
+)
 private val LocalSettingsAction = compositionLocalOf<() -> Unit> { error("Settings navigation is missing") }
 
 fun formatTime(millis: Long): String = DateFormat.getDateTimeInstance(DateFormat.MEDIUM, DateFormat.SHORT).format(Date(millis))
@@ -210,7 +216,52 @@ fun CompanionApp(
                             onMemory = { finishSetup(SettingsPage.MEMORY.route) })
                     }
                     composable("today") {
-                        Screen("Your day, remembered.", showDate = true) {
+                        var query by rememberSaveable { mutableStateOf("") }
+                        var answer by remember { mutableStateOf<String?>(null) }
+                        var answering by remember { mutableStateOf(false) }
+                        var request by remember { mutableStateOf<kotlinx.coroutines.Job?>(null) }
+                        val searchField = remember { FocusRequester() }
+                        val todayScope = rememberCoroutineScope()
+                        val todayScroll = rememberScrollState()
+                        val journal = remember(context) { MemorySearch(context.applicationContext) }
+                        Screen("Your day, remembered.", showDate = true, scrollState = todayScroll, footer = {
+                            JournalAskBar(query, {
+                                request?.cancel()
+                                query = it
+                                answer = null
+                            }, "Ask about your days\u2026", searchField, answering,
+                                { nav.navigate("note/new") }, {
+                                    if (query.isNotBlank() && !answering) {
+                                        val asked = query
+                                        focusManager.clearFocus(force = true)
+                                        keyboard?.hide()
+                                        request = todayScope.launch {
+                                            answering = true
+                                            answer = null
+                                            try {
+                                                val reply = if (todayMemoryRequest.containsMatchIn(asked)) {
+                                                    journal.ask(asked).text
+                                                } else RewritePipeline.respondOffline(context.applicationContext, asked).text
+                                                if (query == asked) {
+                                                    answer = reply
+                                                    todayScroll.scrollTo(0)
+                                                }
+                                            } catch (cancelled: CancellationException) { throw cancelled }
+                                            catch (_: Exception) {
+                                                if (query == asked) answer = "The on-device answer is unavailable. Try again."
+                                            } finally { answering = false }
+                                        }
+                                    }
+                                })
+                        }) {
+                            answer?.let { reply ->
+                                Column(Modifier.fillMaxWidth().glassSurface(24).padding(16.dp),
+                                    verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                                    Text("On-device answer", color = muted, style = MaterialTheme.typography.labelMedium)
+                                    Text(reply, color = ink, style = MaterialTheme.typography.bodyMedium)
+                                }
+                                Spacer(Modifier.height(10.dp))
+                            }
                             val tileHeight = ((LocalConfiguration.current.screenHeightDp - 512) / 2).coerceIn(124, 152).dp
                             val zone = ZoneId.systemDefault()
                             val today = LocalDate.now(zone)
@@ -611,6 +662,9 @@ fun CompanionApp(
                                         val selectPhoto = {
                                             wallpaperPicker.launch(androidx.activity.result.PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.ImageOnly))
                                         }
+                                        SettingsCard("Keyboard preview") {
+                                            KeyboardThemePreview(settings, borders)
+                                        }
                                         SettingsCard("Theme") {
                                             Column(Modifier.selectableGroup(), verticalArrangement = Arrangement.spacedBy(4.dp)) {
                                                 ThemeChoice("Ink mode", "Muted charcoal", Glyph.INK, appearance.theme == ThemeMode.INK) {
@@ -698,10 +752,22 @@ fun CompanionApp(
                                         }
                                         KeyboardBehaviorSettings(settings)
                                         PersonalDictionarySettings(settings)
+                                        val tapOpensShortcuts by settings.tapOpensShortcuts.collectAsState(false)
                                         val holdMs by settings.shortcutHoldMs.collectAsState(initial = 500)
                                         val shortcutHaptics by settings.shortcutHaptics.collectAsState(initial = true)
                                         SettingsCard("Quick shortcuts") {
-                                            Text("Hold M to open: $holdMs ms", color = muted)
+                                            Row(verticalAlignment = Alignment.CenterVertically) {
+                                                Column(Modifier.weight(1f)) {
+                                                    Text("Tap M for shortcuts", color = ink)
+                                                    Text(if (tapOpensShortcuts) "Hold M to capture context."
+                                                        else "Tap M to capture context. Hold for shortcuts.",
+                                                        color = muted, style = MaterialTheme.typography.bodySmall)
+                                                }
+                                                Switch(tapOpensShortcuts, { checked ->
+                                                    scope.launch { settings.setTapOpensShortcuts(checked) }
+                                                }, modifier = Modifier.semantics { contentDescription = "Tap M for shortcuts" })
+                                            }
+                                            Text("Hold duration · $holdMs ms", color = muted)
                                             Slider(value = holdMs.toFloat(), onValueChange = { value -> scope.launch { settings.setShortcutHoldMs(value.toInt()) } },
                                                 valueRange = 250f..1500f, steps = 4,
                                                 modifier = Modifier.semantics { contentDescription = "Quick shortcuts hold duration" })
@@ -825,6 +891,7 @@ private fun Screen(
     showDate: Boolean = false,
     onBack: (() -> Unit)? = null,
     scrollState: ScrollState = rememberScrollState(),
+    footer: (@Composable () -> Unit)? = null,
     content: @Composable () -> Unit
 ) {
     ScreenFrame(onBack) {
@@ -834,6 +901,7 @@ private fun Screen(
             Spacer(Modifier.height(12.dp))
             content()
         }
+        footer?.invoke()
     }
 }
 

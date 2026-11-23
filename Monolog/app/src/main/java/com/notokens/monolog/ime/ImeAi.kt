@@ -261,8 +261,8 @@ internal class ImeAi(
         toolbarDraft = null
         // Journal queries in the companion must remain on its explicit offline path.
         if (!proactiveAllowed()) return
-        val question = AiText.proactiveQuestion(text)
-        if (question == null) {
+        val request = AiText.proactiveRequest(text)
+        if (request == null) {
             if (replaceTypedDraft) {
                 AiText.inlinePolish(text)?.let {
                     toolbar = AiPreview(it, insertable = true)
@@ -296,11 +296,11 @@ internal class ImeAi(
             return
         }
         lookup = scope.launch {
-            delay(650)
+            delay(if (request.endsWith('?')) 650 else 1_050)
             if (!canUse() || busy || rewriteOpen || askOpen) return@launch
             inlineBusy = true
             try {
-                val answer = RewritePipeline.askOffline(context, question, selectedModelOnly = true)
+                val answer = RewritePipeline.respondOffline(context, request)
                 if (!canUse() || busy || rewriteOpen || askOpen) return@launch
                 if (replaceTypedDraft && connection()?.getTextBeforeCursor(text.length, 0)?.toString() != text) return@launch
                 if (!answer.insertable) return@launch

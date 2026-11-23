@@ -89,8 +89,8 @@ internal object OfflineMoonshine {
         }
     }
 
-    fun release() {
-        scope.launch { modelAccess.withLock { closeCached() } }
+    fun release(shouldRelease: () -> Boolean = { true }) {
+        scope.launch { modelAccess.withLock { if (shouldRelease()) closeCached() } }
     }
 
     private fun closeCached() {

@@ -54,6 +54,18 @@ internal object RewritePipeline {
     private fun edit(text: String, generated: Boolean = false, detail: String? = null) =
         AiPreview(text, generatedLocally = generated, insertable = true, detail = detail)
 
+    suspend fun respondOffline(context: Context, request: String): AiPreview {
+        if (!AiText.isWritingRequest(request)) return askOffline(context, request, selectedModelOnly = true)
+        val prompt = "Follow the writing or editing request below. Keep the requested language and tone. " +
+            "For edits, preserve the source meaning, names, dates, and numbers. " +
+            "Return only the finished draft, without commentary.\n\nRequest: $request"
+        return when (val result = LocalAi.request(context, prompt, 160)) {
+            is GemmaResult.Answer -> AiText.checkedWriting(request, result.text)?.let { edit(it, generated = true) }
+                ?: AiPreview("The offline model did not return a finished draft.")
+            else -> AiPreview(modelMessage(result))
+        }
+    }
+
     suspend fun askOffline(context: Context, question: String, evidence: String = "", selectedModelOnly: Boolean = false): AiPreview {
         if (!selectedModelOnly) AiText.deviceAnswer(question)?.let { return AiPreview(it, insertable = true) }
         if (evidence.isBlank() && AiText.needsWeb(question)) return AiPreview("Use Search web for current information.")

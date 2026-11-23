@@ -70,6 +70,7 @@ internal data class CursorKeys(
     val character: String? = null
 )
 internal val LocalCursorKeys = staticCompositionLocalOf { CursorKeys() }
+internal val LocalPreviewOnly = staticCompositionLocalOf { false }
 internal val LocalKeyAppearance = staticCompositionLocalOf { KeyAppearance() }
 
 internal fun triggerHapticFeedback(view: View, isLong: Boolean = false) {
@@ -89,6 +90,7 @@ fun KeyButton(
     isPill: Boolean = false,
     contentColor: Color? = null,
     glyph: Glyph? = null,
+    secondaryGlyph: Glyph? = null,
     label: String? = null,
     previewText: String? = null,
     longClickLabel: String? = null,
@@ -101,6 +103,7 @@ fun KeyButton(
     content: (@Composable () -> Unit)? = null
 ) {
     val view = LocalView.current
+    val previewOnly = LocalPreviewOnly.current
     val appearance = LocalKeyAppearance.current
     val cursor = LocalCursorKeys.current
     val keyCharacter = (previewText ?: text)?.takeIf { it.length == 1 }
@@ -153,6 +156,7 @@ fun KeyButton(
         modifier = modifier
             .fillMaxHeight()
             .then(if (LocalKeyPreview.current != null) Modifier.onGloballyPositioned { bounds = it.boundsInRoot() } else Modifier)
+            .then(if (previewOnly) Modifier else Modifier
             .semantics {
                 val description = label ?: glyph?.name?.lowercase()
                 if (description != null) contentDescription = description
@@ -233,6 +237,7 @@ fun KeyButton(
                     }
                 }
             }
+            )
             .padding(horizontal = if (appearance.borders) 2.dp else 1.dp,
                 vertical = if (appearance.borders) 2.dp else if (isPill) 7.dp else 2.dp)
             .activeKeyGlow(glow, circular = true)
@@ -252,6 +257,9 @@ fun KeyButton(
     ) {
         if (glyph != null) {
             MonologIcon(glyph, Modifier.size(23.dp), textColor)
+            if (secondaryGlyph != null) {
+                MonologIcon(secondaryGlyph, Modifier.align(Alignment.TopEnd).padding(3.dp).size(13.dp), PaperKeySubText)
+            }
         } else if (content != null) {
             content()
         } else if (text != null) {

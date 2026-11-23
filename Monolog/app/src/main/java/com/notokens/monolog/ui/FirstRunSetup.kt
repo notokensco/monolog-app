@@ -14,6 +14,7 @@ import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.runtime.saveable.rememberSaveable
+import androidx.compose.runtime.saveable.rememberSaveableStateHolder
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
@@ -41,6 +42,7 @@ internal fun FirstRunSetup(settings: SettingsStore, onRequestMic: () -> Unit,
     val lifecycle = LocalLifecycleOwner.current
     val memory = remember { MemoryPreferences(context) }
     var page by rememberSaveable { mutableIntStateOf(0) }
+    val setupState = rememberSaveableStateHolder()
     var offlineReady by remember { mutableStateOf(false) }
     var rememberMoments by remember { mutableStateOf(memory.enabled) }
     var enabled by remember { mutableStateOf(checkImeEnabled(context)) }
@@ -122,7 +124,7 @@ internal fun FirstRunSetup(settings: SettingsStore, onRequestMic: () -> Unit,
                         requestNotifications.launch(Manifest.permission.POST_NOTIFICATIONS)
                     }
                 }
-                3 -> OnboardingModels { offlineReady = it }
+                3 -> setupState.SaveableStateProvider("offline-packs") { OnboardingModels { offlineReady = it } }
                 4 -> {
                     Text("You can start as a guest. Google sign-in and encrypted Drive backup are optional.",
                         color = PaperKeyText)
@@ -132,7 +134,7 @@ internal fun FirstRunSetup(settings: SettingsStore, onRequestMic: () -> Unit,
                         OutlinedButton({ finish(onAccount) }) { Text("Set up Google Drive backup") }
                     }
                     SettingsCard("Offline intelligence") {
-                        Text("Download Gemma and the offline search encoder from Settings when you want local AI and semantic search.",
+                        Text("Manage text model downloads in Settings. Semantic search is optional and can be added from Journal memory.",
                             color = PaperKeySubText)
                         TextButton({ finish(onModels) }) { Text("Set up offline AI") }
                         TextButton({ finish(onMemory) }) { Text("Set up journal memory & search") }
@@ -144,7 +146,11 @@ internal fun FirstRunSetup(settings: SettingsStore, onRequestMic: () -> Unit,
             if (page > 0) OutlinedButton({ page-- }) { Text("Back") }
             Button(onClick = { if (page < 4) page++ else finish(onFinish) },
                 enabled = page != 3 || offlineReady, modifier = Modifier.weight(1f)) {
-                Text(if (page == 4) "Start using Monolog" else "Continue")
+                Text(when {
+                    page == 4 -> "Start using Monolog"
+                    page == 3 && !offlineReady -> "Finish selected downloads"
+                    else -> "Continue"
+                })
             }
         }
     }

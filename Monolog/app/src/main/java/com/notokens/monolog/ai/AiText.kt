@@ -63,21 +63,48 @@ internal object AiText {
         """^(?:how (?:is|will) (?:the )?weather(?: be)?|what(?:'s| is| will be) (?:the )?(?:weather|forecast)(?: like)?) (today|tomorrow)[?.!]*$""",
         RegexOption.IGNORE_CASE
     )
-    private val directQuestion = Regex(
-        """^(?:who|what|when|where|why|how)\s+(?:is|are|was|were|did|does|do|can|could|will|many|much)\b.{2,}\?$""",
+    private val questionStart = Regex(
+        """^(?:what['’]?s|who['’]?s|where['’]?s|how['’]?s|who|what|when|where|why|how|which|whose|can|could|would|should|is|are|do|does|did|kya|कौन|क्या|कब|कैसे|कहाँ)(?=\s)""",
         RegexOption.IGNORE_CASE
     )
+    private val writingStart = Regex(
+        """^(?:(?:please|(?:could|can|would) you)\s+)*(?:write|draft|compose|generate|rewrite|rephrase|polish|shorten|summarize|translate)\s+(.+)$""",
+        setOf(RegexOption.IGNORE_CASE, RegexOption.DOT_MATCHES_ALL)
+    )
+    private val explanatoryStart = Regex("""^(?:please\s+)?(?:explain|define|tell me about)\s+\S""", RegexOption.IGNORE_CASE)
+    private val requestBoundary = Regex("""[.?!]\s+|\n+""")
+    private val emptyRequestWords = setOf("me", "a", "an", "the", "this", "that", "it", "to", "in", "as", "for", "about", "please")
+    private val unfinishedQuestionTail = setOf("a", "an", "the", "is", "are", "was", "were", "of", "to", "for", "in", "about")
 
-    fun proactiveQuestion(draft: String): String? {
+    fun isWritingRequest(text: String): Boolean {
+        val request = greeting.replaceFirst(text.trim(), "")
+        val target = writingStart.matchEntire(request)?.groupValues?.get(1) ?: return false
+        return word.findAll(target).any { it.value.lowercase(Locale.ROOT) !in emptyRequestWords }
+    }
+
+    fun proactiveRequest(draft: String): String? {
         val trimmed = draft.trim()
-        if (!trimmed.endsWith('?')) return null
-        val last = trimmed.dropLast(1).substringAfterLast('?').substringAfterLast('\n')
-            .split(Regex("[.!]\\s+")).last().trim() + "?"
-        if (arithmetic.matches(last)) return last
-        if (last.length !in 8..240) return null
-        val question = greeting.replaceFirst(last, "")
-        val conversational = Regex("^(?:who|what|when|where|why|how|which|whose|can|could|would|should|is|are|do|does|did|kya|कौन|क्या|कब|कैसे|कहाँ)\\b.+\\?$", RegexOption.IGNORE_CASE)
-        return question.takeIf { directQuestion.matches(it) || conversational.matches(it) }
+        if (trimmed.length !in 4..400) return null
+        if (isWritingRequest(trimmed)) return trimmed
+        val request = greeting.replaceFirst(requestBoundary.split(trimmed).last().trim(), "")
+        if (arithmetic.matches(request)) return request.takeIf { request.endsWith('?') || request.startsWith("calculate ", true) }
+        if (isWritingRequest(request)) return request
+        if (explanatoryStart.containsMatchIn(request)) return request
+        val prefix = questionStart.find(request) ?: return null
+        val words = word.findAll(request).map { it.value.lowercase(Locale.ROOT) }.toList()
+        if (!request.endsWith('?') && words.lastOrNull() in unfinishedQuestionTail) return null
+        val terms = words.size
+        return request.takeIf {
+            terms >= 3 || terms == 2 && (request.endsWith('?') || prefix.value.endsWith('s', true))
+        }
+    }
+
+    fun checkedWriting(request: String, text: String): String? {
+        val output = text.trim().removeSurrounding("\"").trim()
+        return output.takeIf {
+            it.isNotBlank() && !it.equals(request.trim(), ignoreCase = true) &&
+                !assistantPreface.containsMatchIn(it) && !it.contains("\u0060\u0060\u0060")
+        }
     }
 
     fun needsWeb(text: String): Boolean {

@@ -4,4 +4,4 @@ Preserve the approved Quick Shortcuts design unless the user explicitly asks to 
 
 Keep shortcut hold duration and haptics user-configurable in Settings. Outside taps dismiss the menu; tapping M while it is open only dismisses it and must never also capture.
 
-Holding M is the only way to open Quick Shortcuts from the keyboard.
+By default, hold M to open Quick Shortcuts and tap M to capture context. The keyboard gesture setting can swap these actions.

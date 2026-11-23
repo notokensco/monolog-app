@@ -51,6 +51,12 @@ class SettingsStore(private val context: Context) {
     private val shortcutHoldKey = intPreferencesKey("shortcut_hold_ms")
     private val shortcutHapticsKey = booleanPreferencesKey("shortcut_haptics")
     private val captureBorderColorKey = stringPreferencesKey("capture_border_color")
+    private val tapOpensShortcutsKey = booleanPreferencesKey("tap_opens_shortcuts")
+    val tapOpensShortcuts = context.monologSettings.data.map { it[tapOpensShortcutsKey] ?: false }.distinctUntilChanged()
+    suspend fun setTapOpensShortcuts(value: Boolean) {
+        context.monologSettings.edit { it[tapOpensShortcutsKey] = value }
+    }
+
     val shortcutHoldMs: Flow<Int> = context.monologSettings.data.map { (it[shortcutHoldKey] ?: 500).coerceIn(250, 1500) }.distinctUntilChanged()
     val shortcutHaptics: Flow<Boolean> = context.monologSettings.data.map { it[shortcutHapticsKey] ?: true }.distinctUntilChanged()
     val captureBorderColor: Flow<String> = context.monologSettings.data.map { it[captureBorderColorKey] ?: "#FFB800" }.distinctUntilChanged()

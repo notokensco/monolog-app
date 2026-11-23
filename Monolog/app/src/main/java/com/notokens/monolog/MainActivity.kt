@@ -23,6 +23,7 @@ import com.notokens.monolog.data.Appearance
 import com.notokens.monolog.data.SettingsStore
 import com.notokens.monolog.ui.CompanionApp
 import com.notokens.monolog.ui.CompanionDestination
+import com.notokens.monolog.ui.MonologLaunchScreen
 import com.notokens.monolog.ui.theme.LocalMonologDark
 import com.notokens.monolog.ui.theme.MonologTheme
 import kotlinx.coroutines.Dispatchers
@@ -51,9 +52,12 @@ class MainActivity : ComponentActivity() {
     }
 
     override fun onCreate(savedInstanceState: Bundle?) {
+        val launchFromHome = savedInstanceState == null &&
+            (intent?.action == Intent.ACTION_MAIN || intent?.action == null)
         setTheme(R.style.Theme_Monolog)
         super.onCreate(savedInstanceState)
         enableEdgeToEdge()
+        splashScreen.setOnExitAnimationListener { view -> view.remove() }
         lifecycleScope.launch(Dispatchers.IO) { OfflineMoonshine.removeRetiredModels(applicationContext) }
         if (savedInstanceState == null) handleIncomingIntent(intent)
         var readyToDraw = false
@@ -77,8 +81,10 @@ class MainActivity : ComponentActivity() {
                 return@setContent
             }
             val current = appearance ?: Appearance()
+            var showLaunch by remember { mutableStateOf(launchFromHome) }
+            val launchVisible = showLaunch && destination == null
             MonologTheme(appearance = current) {
-                val lightBars = !LocalMonologDark.current
+                val lightBars = !launchVisible && !LocalMonologDark.current
                 SideEffect {
                     readyToDraw = true
                     WindowCompat.getInsetsController(window, window.decorView).apply {
@@ -86,7 +92,8 @@ class MainActivity : ComponentActivity() {
                         isAppearanceLightNavigationBars = lightBars
                     }
                 }
-                CompanionApp(
+                if (launchVisible) MonologLaunchScreen { showLaunch = false }
+                else CompanionApp(
                     settings = settings,
                     appearance = current,
                     destination = destination,

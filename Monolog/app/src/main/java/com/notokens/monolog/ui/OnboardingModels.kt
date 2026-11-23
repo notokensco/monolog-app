@@ -5,7 +5,16 @@ import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.*
+import androidx.compose.runtime.saveable.rememberSaveable
+import androidx.compose.foundation.layout.Row
+import androidx.compose.material3.Switch
+import androidx.compose.ui.Alignment
+import com.notokens.monolog.data.SettingsStore
+import com.notokens.monolog.data.VoiceInputEngine
+import com.notokens.monolog.ime.vox.VoxLanguage
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.semantics
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.ui.platform.LocalContext
 import com.notokens.monolog.ai.ModelState
@@ -22,25 +31,52 @@ internal fun OnboardingModels(onReady: (Boolean) -> Unit) {
     val brief = remember(context) { BriefModelStore.get(context) }
     val gemmaState by gemma.state.collectAsState()
     val briefState by brief.state.collectAsState()
-    val supportsGemma = Process.is64Bit()
+    val settings = remember(context) { SettingsStore(context) }
+    val engine by settings.voiceInputEngine.collectAsState(VoiceInputEngine.NATIVE)
+    val language by settings.voxLanguage.collectAsState(null)
+    val layout by settings.keyboardLanguage.collectAsState("en")
+    val supportsText = Process.is64Bit()
     val supportsBrief = BriefModelStore.supported
     val supportsVox = OfflineMoonshine.available
-    var voiceReady by remember(context) {
-        mutableStateOf(OfflineMoonshine.ready(context))
+    var wantsVoice by rememberSaveable { mutableStateOf(true) }
+    var wantsText by rememberSaveable { mutableStateOf(supportsText) }
+    var wantsBrief by rememberSaveable { mutableStateOf(false) }
+    var moonshineReady by remember { mutableStateOf(OfflineMoonshine.ready(context)) }
+    val regionalInstall by RegionalVox.installation.collectAsState()
+    val regionalReady = remember(regionalInstall, language, layout) {
+        RegionalVox.ready(context, VoxLanguage.resolve(language, com.notokens.monolog.ai.KeyboardLanguage.of(layout).speechTag))
     }
-
-    var regionalReady by remember(context) { mutableStateOf(RegionalVox.anyReady(context)) }
-    val ready = (regionalReady || voiceReady) &&
-        (!supportsGemma || gemmaState == ModelState.Ready) &&
-        (!supportsBrief || briefState == ModelState.Ready)
+    val voiceReady = when (engine) {
+        VoiceInputEngine.REGIONAL -> regionalReady
+        VoiceInputEngine.MOONSHINE -> moonshineReady
+        VoiceInputEngine.NATIVE -> false
+    }
+    val ready = (!wantsVoice || voiceReady) &&
+        (!wantsText || !supportsText || gemmaState == ModelState.Ready) &&
+        (!wantsBrief || !supportsBrief || briefState == ModelState.Ready)
     LaunchedEffect(ready) { onReady(ready) }
 
-    Text("Set up local voice, rewrites, journal search and daily briefs. The downloads stay on this device.",
-        color = PaperKeySubText)
-    RegionalVoiceSettings { regionalReady = it }
-    if (supportsVox) OfflineVoxSettings { voiceReady = it }
-    if (supportsGemma) TextModelPicker(gemma)
-    if (supportsBrief) OnboardingModel("Daily brief summarizer · 118 MB", briefState, brief::download)
+    SettingsCard("Choose what to set up") {
+        Text("Choose the features you want. Finish their downloads before continuing.", color = PaperKeySubText)
+        FeatureDownloadToggle("Voice typing and voice notes", wantsVoice, { wantsVoice = it })
+        if (supportsText) FeatureDownloadToggle("On-device Ask and rewrites", wantsText, { wantsText = it })
+        if (supportsBrief) FeatureDownloadToggle("AI daily briefs", wantsBrief, { wantsBrief = it })
+    }
+    if (wantsVoice) {
+        if (!voiceReady) Text("Choose and activate one voice pack to continue.", color = PaperKeySubText)
+        if (supportsVox) OfflineVoxSettings { moonshineReady = it }
+        RegionalVoiceSettings()
+    }
+    if (wantsText && supportsText) TextModelPicker(gemma)
+    if (wantsBrief && supportsBrief) OnboardingModel("Daily brief summarizer \u00b7 118 MB", briefState, brief::download)
+}
+
+@Composable
+private fun FeatureDownloadToggle(label: String, enabled: Boolean, onChange: (Boolean) -> Unit) {
+    Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+        Text(label, Modifier.weight(1f))
+        Switch(enabled, onChange, modifier = Modifier.semantics { contentDescription = label })
+    }
 }
 
 @Composable

@@ -183,9 +183,10 @@ internal object LocalAi {
         }
     }
 
-    fun release() {
+    fun release(shouldRelease: () -> Boolean = { true }) {
         scope.launch {
             engineLock.withLock {
+                if (!shouldRelease()) return@withLock
                 keepWarm = false
                 idleClose?.cancel()
                 closeEngine()

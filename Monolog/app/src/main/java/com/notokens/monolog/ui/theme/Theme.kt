@@ -2,6 +2,7 @@ package com.notokens.monolog.ui.theme
 
 import androidx.compose.foundation.isSystemInDarkTheme
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.LocalContentColor
 import androidx.compose.material3.darkColorScheme
 import androidx.compose.material3.lightColorScheme
 import androidx.compose.runtime.Composable
@@ -93,6 +94,8 @@ fun MonologTheme(appearance: Appearance = Appearance(), content: @Composable () 
         LocalThemeMode provides appearance.theme,
         LocalThemePhoto provides photo.takeIf { appearance.theme == ThemeMode.PHOTO }
     ) {
-        MaterialTheme(colorScheme = colors, typography = Typography, content = content)
+        MaterialTheme(colorScheme = colors, typography = Typography) {
+            CompositionLocalProvider(LocalContentColor provides colors.onSurface, content = content)
+        }
     }
 }
