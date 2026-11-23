@@ -3,6 +3,7 @@ package com.notokens.monolog.ime.ui
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.BoxWithConstraints
+import androidx.compose.foundation.layout.BoxScope
 import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.sizeIn
@@ -63,21 +64,27 @@ internal fun KeyPreviewHost(enabled: Boolean, content: @Composable () -> Unit) {
     var root by remember { mutableStateOf(Rect.Zero) }
     Box(Modifier.onGloballyPositioned { root = it.boundsInRoot() }) {
         CompositionLocalProvider(LocalKeyPreview provides controller.takeIf { enabled }) { content() }
-        val preview = controller.current.takeIf { enabled }
-        if (preview != null) BoxWithConstraints(Modifier.matchParentSize()) {
-            val density = LocalDensity.current
-            val width = if (preview.text.length <= 2) 43.dp else 78.dp
-            val x = with(density) { (preview.bounds.center.x - root.left).toDp() }
-            val y = with(density) { (preview.bounds.top - root.top).toDp() }
-            val shape = RoundedCornerShape(11.dp)
-            Box(Modifier.offset(x = (x - width / 2).coerceIn(0.dp, (maxWidth - width).coerceAtLeast(0.dp)),
-                y = (y - 44.dp).coerceAtLeast(0.dp))
-                .sizeIn(minWidth = width, maxWidth = width, minHeight = 41.dp)
-                .shadow(6.dp, shape).background(MaterialTheme.colorScheme.surfaceContainerHigh, shape)
-                .padding(horizontal = 3.dp), contentAlignment = Alignment.Center) {
-                Text(preview.text, color = MaterialTheme.colorScheme.onSurface,
-                    fontSize = if (preview.text.length <= 2) 23.sp else 12.sp, maxLines = 1)
-            }
+        if (enabled) KeyPreviewOverlay(controller) { root }
+    }
+}
+
+@Composable
+private fun BoxScope.KeyPreviewOverlay(controller: KeyPreview, rootBounds: () -> Rect) {
+    val preview = controller.current ?: return
+    BoxWithConstraints(Modifier.matchParentSize()) {
+        val density = LocalDensity.current
+        val root = rootBounds()
+        val width = if (preview.text.length <= 2) 43.dp else 78.dp
+        val x = with(density) { (preview.bounds.center.x - root.left).toDp() }
+        val y = with(density) { (preview.bounds.top - root.top).toDp() }
+        val shape = RoundedCornerShape(11.dp)
+        Box(Modifier.offset(x = (x - width / 2).coerceIn(0.dp, (maxWidth - width).coerceAtLeast(0.dp)),
+            y = (y - 44.dp).coerceAtLeast(0.dp))
+            .sizeIn(minWidth = width, maxWidth = width, minHeight = 41.dp)
+            .shadow(6.dp, shape).background(MaterialTheme.colorScheme.surfaceContainerHigh, shape)
+            .padding(horizontal = 3.dp), contentAlignment = Alignment.Center) {
+            Text(preview.text, color = MaterialTheme.colorScheme.onSurface,
+                fontSize = if (preview.text.length <= 2) 23.sp else 12.sp, maxLines = 1)
         }
     }
 }

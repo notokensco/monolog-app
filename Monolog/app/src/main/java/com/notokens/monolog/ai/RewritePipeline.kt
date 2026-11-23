@@ -54,8 +54,9 @@ internal object RewritePipeline {
     private fun edit(text: String, generated: Boolean = false, detail: String? = null) =
         AiPreview(text, generatedLocally = generated, insertable = true, detail = detail)
 
-    suspend fun respondOffline(context: Context, request: String): AiPreview {
-        if (!AiText.isWritingRequest(request)) return askOffline(context, request, selectedModelOnly = true)
+    suspend fun respondOffline(context: Context, request: String, inline: Boolean = false): AiPreview {
+        if (!AiText.isWritingRequest(request)) return askOffline(context, request,
+            selectedModelOnly = true, retryLanguageMismatch = !inline)
         val prompt = "Follow the writing or editing request below. Keep the requested language and tone. " +
             "For edits, preserve the source meaning, names, dates, and numbers. " +
             "Return only the finished draft, without commentary.\n\nRequest: $request"
@@ -66,11 +67,18 @@ internal object RewritePipeline {
         }
     }
 
-    suspend fun askOffline(context: Context, question: String, evidence: String = "", selectedModelOnly: Boolean = false): AiPreview {
+    suspend fun askOffline(context: Context, question: String, evidence: String = "", selectedModelOnly: Boolean = false,
+        retryLanguageMismatch: Boolean = true): AiPreview {
         if (!selectedModelOnly) AiText.deviceAnswer(question)?.let { return AiPreview(it, insertable = true) }
         if (evidence.isBlank() && AiText.needsWeb(question)) return AiPreview("Use Search web for current information.")
         val instruction = AiText.answerPrompt(question, evidence)
-        return when (val result = LocalAi.request(context, instruction, 160)) {
+        val first = LocalAi.request(context, instruction, if (retryLanguageMismatch) 160 else 96)
+        val result = if (retryLanguageMismatch && first is GemmaResult.Answer &&
+            !AiText.usesReplyScript(question, first.text)) {
+            LocalAi.request(context,
+                "Reply in the original language and script of the question. Never translate it to English.\n$instruction", 128)
+        } else first
+        return when (result) {
             is GemmaResult.Answer -> verifiedAnswer(question, result.text, evidence)
             else -> AiPreview(modelMessage(result))
         }

@@ -68,11 +68,25 @@ class AiTextTest {
     }
     @Test
     fun proactiveAnswersRecognizeCompleteQuestionsAndWeather() {
-        assertEquals("who was Napoleon?", AiText.proactiveQuestion("Hey, who was Napoleon?"))
-        assertNull(AiText.proactiveQuestion("Who was"))
-        assertNull(AiText.proactiveQuestion("I sent a note. Who was Napoleon?"))
+        assertEquals("who was Napoleon?", AiText.proactiveRequest("Hey, who was Napoleon?"))
+        assertNull(AiText.proactiveRequest("Who was"))
+        assertEquals("Who was Napoleon?", AiText.proactiveRequest("I sent a note. Who was Napoleon?"))
         val today = LocalDate.of(2026, 11, 21)
         assertEquals(today.plusDays(1), AiText.weatherLookup("Hey, how is the weather tomorrow?", today)?.date)
+    }
+
+    @Test
+    fun multilingualAsksUseOneShotPromptsAndKeepTheReplyScript() {
+        val hindi = "भारत की राजधानी क्या है"
+        val hindiReply = "नई दिल्ली भारत की राजधानी है।"
+        assertEquals(hindi, AiText.proactiveRequest(hindi))
+        assertEquals("India ki capital kya hai", AiText.proactiveRequest("India ki capital kya hai"))
+        assertEquals("Quelle est la capitale de l’Inde", AiText.proactiveRequest("Quelle est la capitale de l’Inde"))
+        assertTrue(AiText.answerPrompt(hindi).contains("single standalone question"))
+        assertTrue(AiText.answerPrompt(hindi).contains("Devanagari"))
+        assertEquals(hindiReply, AiText.checkedAnswer(hindi, "$hindiReply\nUser: Another question"))
+        assertNull(AiText.checkedAnswer(hindi, "The capital of India is New Delhi."))
+        assertTrue(AiText.usesReplyScript("कितने लोग थे?", "42"))
     }
 
     @Test

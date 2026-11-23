@@ -97,7 +97,9 @@ class MonologInputMethodService : LifecycleInputMethodService() {
     private val sensitiveDraft = SensitiveDraft()
     private var voxComposition: android.view.inputmethod.InputConnection? = null
     private var voxPrefix = ""
+    private var voxResumeAfterDelete: Job? = null
     private var suppressDraftMemory = false
+    private var memoryPrivacyReady = false
     private var language by mutableStateOf(KeyboardLanguage.of("en"))
     private val dictionary by lazy { EnglishSuggestions(applicationContext) }
     private var swipeJob: Job? = null
@@ -139,7 +141,8 @@ class MonologInputMethodService : LifecycleInputMethodService() {
 
     private fun aiAllowed(): Boolean = privacyReady && editorActive && !editorContext.isRestrictedField &&
         !editorContext.isNumber && !editorContext.isEmail
-    private fun memoryAllowed(): Boolean = aiAllowed() && !editorContext.isIncognito && !suppressDraftMemory
+    private fun privacyCheckAllowed(): Boolean = aiAllowed() && !editorContext.isIncognito && !suppressDraftMemory
+    private fun memoryAllowed(): Boolean = memoryPrivacyReady && privacyCheckAllowed()
 
     private fun markTyped(text: String) {
         if (!aiAllowed() || suppressDraftMemory) return
@@ -189,6 +192,7 @@ class MonologInputMethodService : LifecycleInputMethodService() {
                     isShortcutsOpen = false
                     shortcutDraft = ShortcutDraft()
                 } else if (editorActive) {
+                    inspectEditorPrivacy()
                     ai.refreshDraft()
                 }
             }
@@ -261,6 +265,10 @@ class MonologInputMethodService : LifecycleInputMethodService() {
                 if (!keyboardModelsVisible.value) return@collectLatest
                 if (engine != VoiceInputEngine.REGIONAL) RegionalVox.release()
                 if (engine != VoiceInputEngine.MOONSHINE) OfflineMoonshine.release()
+                if (engine == VoiceInputEngine.MOONSHINE || engine == VoiceInputEngine.REGIONAL) {
+                    delay(400)
+                    while (android.os.SystemClock.uptimeMillis() - lastKeyEdit < 450) delay(120)
+                }
                 warmModel {
                     when (engine) {
                         VoiceInputEngine.MOONSHINE -> OfflineMoonshine.warm(applicationContext)
@@ -277,8 +285,8 @@ class MonologInputMethodService : LifecycleInputMethodService() {
             }.distinctUntilChanged().collectLatest { (visible, model) ->
                 if (!visible) return@collectLatest
                 if (model != null) {
-                    delay(550)
-                    while (android.os.SystemClock.uptimeMillis() - lastKeyEdit < 400) delay(160)
+                    delay(1_600)
+                    while (android.os.SystemClock.uptimeMillis() - lastKeyEdit < 900) delay(200)
                     if (!canPrewarmTextModel()) return@collectLatest
                     warmModel { LocalAi.warm(applicationContext, whileVisible = true) }
                 } else LocalAi.release()
@@ -367,7 +375,7 @@ class MonologInputMethodService : LifecycleInputMethodService() {
                         onExitVox = ::handleExitVox,
                         onStartListening = ::startVoxListening,
                         onPauseListening = { voxController.pauseOrStopListening() },
-                        onClearTranscript = { voxController.clearTranscript(); ai.clearDraft() },
+                        onDeleteVoxWord = ::deleteVoxWord,
                         onRequestPermission = ::handleRequestMicPermission,
                         onCharTyped = ::handleCharTyped,
                         onEmojiSuggestion = ::replaceWithEmoji,
@@ -404,6 +412,7 @@ class MonologInputMethodService : LifecycleInputMethodService() {
         visibleEditor = identity
         sensitiveDraft.clear()
         suppressDraftMemory = false
+        memoryPrivacyReady = false
         val resolved = EditorContext.fromEditorInfo(info)
         memoryRecorder.start(info?.packageName.orEmpty())
         editorContext = resolved.copy(isUserIncognito = userIncognito)
@@ -411,7 +420,7 @@ class MonologInputMethodService : LifecycleInputMethodService() {
         if (isInputViewShown) keyboardModelsVisible.value = editorActive && !resolved.isRestrictedField
         stopCursorDrag()
         ai.reset(info?.takeIf { it.initialSelStart == it.initialSelEnd }?.initialSelEnd ?: -1)
-        verifyEditorPrivacy()
+        inspectEditorPrivacy()
         ai.refreshDraft()
 
         // Always close any active private panels when switching editors
@@ -445,8 +454,10 @@ class MonologInputMethodService : LifecycleInputMethodService() {
 
     override fun onFinishInputView(finishingInput: Boolean) {
         afterGlide.clear()
-        verifyEditorPrivacy()
+        if (memoryAllowed() && memoryRecorder.hasPendingText) verifyEditorPrivacy()
         if (memoryAllowed()) memoryRecorder.boundary() else memoryRecorder.clear()
+        voxResumeAfterDelete?.cancel()
+        voxResumeAfterDelete = null
         clearVoxComposition()
         editorActive = false
         stopCursorDrag()
@@ -618,12 +629,16 @@ class MonologInputMethodService : LifecycleInputMethodService() {
     }
 
     private fun startVoxListening() {
+        voxResumeAfterDelete?.cancel()
+        voxResumeAfterDelete = null
         voxController.startListening(language.speechTag, language.label, voxLanguage().takeIf {
             voiceEngine == VoiceInputEngine.REGIONAL
         })
     }
 
     private fun changeVoxLanguage(mode: VoxLanguage) {
+        voxResumeAfterDelete?.cancel()
+        voxResumeAfterDelete = null
         voxLanguageChange?.cancel()
         voxLanguageChange = settingsScope.launch {
             val resume = voxState.status == VoxStatus.LISTENING || voxState.status == VoxStatus.PREPARING
@@ -637,12 +652,71 @@ class MonologInputMethodService : LifecycleInputMethodService() {
     }
 
     private fun handleExitVox() {
+        voxResumeAfterDelete?.cancel()
+        voxResumeAfterDelete = null
         voxLanguageChange?.cancel()
         clearVoxComposition()
         voxController.cleanup()
         isVoxOpen = false
         voxController.clearTranscript()
         ai.clearDraft()
+    }
+
+    private fun deleteVoxWord() {
+        val connection = currentInputConnection ?: return
+        if (!isVoxOpen || !editorActive) return
+        val listening = voxState.status == VoxStatus.LISTENING || voxState.status == VoxStatus.PREPARING
+        val resume = listening || voxResumeAfterDelete?.isActive == true
+        voxResumeAfterDelete?.cancel()
+        voxResumeAfterDelete = null
+        voxLanguageChange?.cancel()
+
+        if (listening || voxState.status == VoxStatus.PROCESSING || voxComposition === connection) {
+            val partial = voxState.partialTranscript
+            if (voxComposition === connection) {
+                if (connection.finishComposingText()) {
+                    voxComposition = null
+                    markTyped(partial)
+                    memoryRecorder.committed(voxPrefix + partial, memoryAllowed())
+                } else clearVoxComposition()
+            }
+            voxController.cleanup()
+            voxController.clearTranscript()
+            voxState = voxState.copy(status = VoxStatus.PAUSED)
+        }
+        val selected = connection.getSelectedText(0)
+        if (!selected.isNullOrEmpty()) {
+            if (connection.commitText("", 1)) memoryRecorder.clear()
+        } else {
+            val text = connection.getTextBeforeCursor(512, 0)?.toString().orEmpty()
+            val wordEnd = text.trimEnd().length
+            if (wordEnd > 0) {
+                val words = BreakIterator.getWordInstance().apply { setText(text) }
+                var end = wordEnd
+                var start = words.preceding(end)
+                while (start != BreakIterator.DONE && text.substring(start, end).none(Char::isLetterOrDigit)) {
+                    end = start
+                    if (end == 0) break
+                    start = words.preceding(end)
+                }
+                val deleteFrom = if (end == 0 || start == BreakIterator.DONE) {
+                    BreakIterator.getCharacterInstance().apply { setText(text) }.preceding(wordEnd).coerceAtLeast(0)
+                } else start
+                val removed = text.substring(deleteFrom)
+                if (connection.deleteSurroundingText(removed.length, 0)) {
+                    memoryRecorder.replace(removed, "", memoryAllowed())
+                }
+            }
+        }
+        ai.backspaceStarted()
+        ai.refreshDraft(typing = true)
+        if (resume) {
+            voxResumeAfterDelete = settingsScope.launch {
+                delay(420)
+                voxResumeAfterDelete = null
+                if (isVoxOpen && editorActive && connection === currentInputConnection) startVoxListening()
+            }
+        }
     }
 
     private fun updateVoxComposition(partial: String) {
@@ -678,7 +752,6 @@ class MonologInputMethodService : LifecycleInputMethodService() {
                 if (connection.commitText(inserted, 1)) {
                     voxComposition = null
                     ai.textCommitted(inserted)
-                    ai.stableSpeech(transcript)
                     memoryRecorder.committed(inserted, memoryAllowed())
                 }
             }
@@ -1003,23 +1076,37 @@ class MonologInputMethodService : LifecycleInputMethodService() {
             return
         }
         ai.reset()
-        verifyEditorPrivacy()
+        if (memoryAllowed() && memoryRecorder.hasPendingText) verifyEditorPrivacy()
         if (memoryAllowed()) memoryRecorder.boundary() else memoryRecorder.clear()
         editorContext.performAction(currentInputConnection)
     }
 
-    private fun verifyEditorPrivacy() {
-        if (!memoryAllowed()) return
+    private fun inspectEditorPrivacy() {
+        if (!privacyCheckAllowed()) return
         val connection = currentInputConnection ?: return
-        val extracted = connection.getExtractedText(android.view.inputmethod.ExtractedTextRequest(), 0)?.text
-        if (extracted != null) {
-            checkDraftPrivacy(extracted.toString())
-            return
+        val editor = keyboardSession
+        settingsScope.launch {
+            val text = withContext(editorReadDispatcher) { readEditorForPrivacy(connection) }
+            if (editor == keyboardSession && connection === currentInputConnection && privacyCheckAllowed()) {
+                checkDraftPrivacy(text)
+                memoryPrivacyReady = true
+            }
         }
-        val selection = connection.getSelectedText(0)?.toString().orEmpty()
-        val whole = connection.getTextBeforeCursor(1600, 0)?.toString().orEmpty() + selection +
+    }
+
+    private fun verifyEditorPrivacy() {
+        if (!privacyCheckAllowed()) return
+        currentInputConnection?.let { checkDraftPrivacy(readEditorForPrivacy(it)) }
+    }
+
+    private fun readEditorForPrivacy(connection: InputConnection): String {
+        val extracted = connection.getExtractedText(android.view.inputmethod.ExtractedTextRequest(), 0)?.text
+        if (extracted != null) return extracted.toString()
+        val surrounding = connection.getSurroundingText(1600, 1600, 0)?.text
+        if (surrounding != null) return surrounding.toString()
+        return connection.getTextBeforeCursor(1600, 0)?.toString().orEmpty() +
+            connection.getSelectedText(0)?.toString().orEmpty() +
             connection.getTextAfterCursor(1600, 0)?.toString().orEmpty()
-        checkDraftPrivacy(whole)
     }
 
     private fun cursorEnd(ic: android.view.inputmethod.InputConnection): Int? =

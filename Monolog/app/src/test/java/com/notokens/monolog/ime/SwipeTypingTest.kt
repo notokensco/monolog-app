@@ -1,9 +1,7 @@
 package com.notokens.monolog.ime
 
 import org.junit.Assert.assertEquals
-import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNull
-import org.junit.Assert.assertTrue
 import org.junit.Test
 
 class SwipeTypingTest {
@@ -35,9 +33,9 @@ class SwipeTypingTest {
     fun tapsAndNonletterKeysDoNotBecomeSwipes() {
         assertNull(decoder.decode(trace("h")))
         assertNull(decoder.decode(trace("hh")))
-        assertFalse(QwertyLayout.startsOnLetter(SwipePoint(.5f, 3f)))
-        assertFalse(QwertyLayout.startsOnLetter(SwipePoint(9.5f, 3f)))
-        assertTrue(QwertyLayout.startsOnLetter(QwertyLayout.center('z')))
+        assertNull(QwertyLayout.letterAt(SwipePoint(.5f, 3f)))
+        assertNull(QwertyLayout.letterAt(SwipePoint(9.5f, 3f)))
+        assertEquals('z', QwertyLayout.letterAt(QwertyLayout.center('z')))
     }
 
     @Test

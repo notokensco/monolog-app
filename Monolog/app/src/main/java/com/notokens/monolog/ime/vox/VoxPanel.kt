@@ -23,6 +23,7 @@ import androidx.compose.ui.text.font.Font
 import androidx.compose.ui.text.font.FontFamily
 import com.notokens.monolog.R
 import com.notokens.monolog.ime.ui.ContextKey
+import com.notokens.monolog.ime.ui.KeyButton
 import com.notokens.monolog.ime.ui.triggerHapticFeedback
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.collectLatest
@@ -94,7 +95,7 @@ fun VoxPanel(
     onLanguage: (VoxLanguage) -> Unit,
     onStartListening: () -> Unit,
     onPauseListening: () -> Unit,
-    onClearTranscript: () -> Unit,
+    onDeleteWord: () -> Unit,
     smartFilter: Boolean,
     onToggleSmartFilter: () -> Unit,
     contextEnabled: Boolean,
@@ -220,8 +221,7 @@ fun VoxPanel(
         VoxTranscriptStage(
             transcript = fullTranscript,
             isListening = isListening,
-            rmsLevel = voxState.rmsLevel,
-            onClear = onClearTranscript
+            rmsLevel = voxState.rmsLevel
         )
 
         if (voxState.status == VoxStatus.PAUSED) {
@@ -282,10 +282,17 @@ fun VoxPanel(
                 ) else Text(if (isListening) "❚❚" else "▶", fontSize = 18.sp,
                     color = if (isListening) PaperKeyText else MaterialTheme.colorScheme.onPrimary)
             }
-            TextButton(modifier = Modifier.align(Alignment.CenterEnd), onClick = {
-                triggerHapticFeedback(view)
-                onToggleSmartFilter()
-            }) { Text(if (smartFilter) "Smart Filter on" else "Smart Filter off", fontSize = 11.sp) }
+            Row(Modifier.align(Alignment.CenterEnd).widthIn(max = (maxWidth - 58.dp) / 2),
+                verticalAlignment = Alignment.CenterVertically) {
+                Text(if (smartFilter) "Smart Filter on" else "Smart Filter off",
+                    modifier = Modifier.weight(1f, fill = false).clip(RoundedCornerShape(10.dp)).clickable {
+                        triggerHapticFeedback(view)
+                        onToggleSmartFilter()
+                    }.padding(vertical = 10.dp, horizontal = 3.dp),
+                    fontSize = 11.sp, color = PaperAccentBlue)
+                KeyButton(Modifier.size(36.dp), glyph = Glyph.BACKSPACE,
+                    label = "Delete previous word", repeatIntervalMs = 220, onClick = onDeleteWord)
+            }
         }
     }
 }
@@ -295,8 +302,7 @@ fun VoxPanel(
 private fun VoxTranscriptStage(
     transcript: String,
     isListening: Boolean,
-    rmsLevel: Float,
-    onClear: () -> Unit
+    rmsLevel: Float
 ) {
     val colors = MaterialTheme.colorScheme
     val surface = colors.surface
@@ -382,21 +388,7 @@ private fun VoxTranscriptStage(
                         )
                     }
                 }
-                if (!isListening) {
-                    Text(
-                        transcript, Modifier.fillMaxWidth().heightIn(max = 38.dp)
-                            .verticalScroll(rememberScrollState()),
-                        fontSize = 12.sp, color = PaperKeySubText
-                    )
-                }
             }
-        }
-
-        if (transcript.isNotBlank()) {
-            Text(
-                "Clear", Modifier.align(Alignment.TopEnd).clickable(onClick = onClear).padding(8.dp),
-                fontSize = 12.sp, color = PaperAccentBlue
-            )
         }
     }
 }

@@ -2,6 +2,7 @@
 #include <llama.h>
 
 #include <algorithm>
+#include <atomic>
 #include <chrono>
 #include <memory>
 #include <mutex>
@@ -14,6 +15,7 @@ using Clock = std::chrono::steady_clock;
 constexpr int context_length = 1024;
 
 std::mutex model_mutex;
+std::atomic<jlong> cancelled_through(0);
 std::unique_ptr<llama_model, decltype(&llama_model_free)> cached_model(nullptr, llama_model_free);
 std::string cached_path;
 
@@ -36,8 +38,14 @@ llama_model* load_model(JNIEnv* env, jstring path) {
     return cached_model.get();
 }
 
-bool expired(void* deadline) {
-    return Clock::now() >= *static_cast<Clock::time_point*>(deadline);
+struct Generation {
+    jlong request;
+    Clock::time_point deadline;
+};
+
+bool expired(void* generation) {
+    const auto& run = *static_cast<Generation*>(generation);
+    return run.request <= cancelled_through.load(std::memory_order_relaxed) || Clock::now() >= run.deadline;
 }
 }
 
@@ -54,9 +62,16 @@ Java_com_notokens_monolog_ai_GgufRuntime_unload(JNIEnv*, jobject) {
     cached_path.clear();
 }
 
+extern "C" JNIEXPORT void JNICALL
+Java_com_notokens_monolog_ai_GgufRuntime_cancel(JNIEnv*, jobject, jlong request) {
+    auto previous = cancelled_through.load(std::memory_order_relaxed);
+    while (previous < request &&
+           !cancelled_through.compare_exchange_weak(previous, request, std::memory_order_relaxed)) {}
+}
+
 extern "C" JNIEXPORT jbyteArray JNICALL
 Java_com_notokens_monolog_ai_GgufRuntime_generate(
-    JNIEnv* env, jobject, jstring path, jbyteArray prompt, jint count) {
+    JNIEnv* env, jobject, jstring path, jbyteArray prompt, jint count, jlong request) {
     const auto size = env->GetArrayLength(prompt);
     if (size <= 0 || size > 16000 || count < 1 || count > 192) return nullptr;
     std::vector<jbyte> input(size);
@@ -64,6 +79,7 @@ Java_com_notokens_monolog_ai_GgufRuntime_generate(
     if (env->ExceptionCheck()) return nullptr;
 
     std::lock_guard lock(model_mutex);
+    if (request <= cancelled_through.load(std::memory_order_relaxed)) return nullptr;
     auto* model = load_model(env, path);
     if (model == nullptr) return nullptr;
     const auto* vocabulary = llama_model_get_vocab(model);
@@ -75,11 +91,11 @@ Java_com_notokens_monolog_ai_GgufRuntime_generate(
     auto config = llama_context_default_params();
     config.n_ctx = context_length;
     config.n_batch = context_length;
-    config.n_threads = static_cast<int>(std::clamp(std::thread::hardware_concurrency(), 1u, 4u));
+    config.n_threads = static_cast<int>(std::clamp(std::thread::hardware_concurrency(), 1u, 2u));
     config.n_threads_batch = config.n_threads;
-    auto deadline = Clock::now() + std::chrono::seconds(28);
+    auto generation = Generation{request, Clock::now() + std::chrono::seconds(28)};
     config.abort_callback = expired;
-    config.abort_callback_data = &deadline;
+    config.abort_callback_data = &generation;
     std::unique_ptr<llama_context, decltype(&llama_free)> session(
         llama_init_from_model(model, config), llama_free);
     std::unique_ptr<llama_sampler, decltype(&llama_sampler_free)> sampler(
@@ -90,7 +106,7 @@ Java_com_notokens_monolog_ai_GgufRuntime_generate(
 
     std::string output;
     std::vector<char> piece(256);
-    for (int i = 0; i < count && !expired(&deadline); i++) {
+    for (int i = 0; i < count && !expired(&generation); i++) {
         auto token = llama_sampler_sample(sampler.get(), session.get(), -1);
         if (llama_vocab_is_eog(vocabulary, token)) break;
         int length = llama_token_to_piece(vocabulary, token, piece.data(), piece.size(), 0, false);
@@ -101,7 +117,7 @@ Java_com_notokens_monolog_ai_GgufRuntime_generate(
         if (length > 0) output.append(piece.data(), length);
         if (llama_decode(session.get(), llama_batch_get_one(&token, 1)) != 0) return nullptr;
     }
-    if (expired(&deadline) || output.empty()) return nullptr;
+    if (expired(&generation) || output.empty()) return nullptr;
     auto result = env->NewByteArray(static_cast<jsize>(output.size()));
     if (result) env->SetByteArrayRegion(result, 0, static_cast<jsize>(output.size()),
                                       reinterpret_cast<const jbyte*>(output.data()));

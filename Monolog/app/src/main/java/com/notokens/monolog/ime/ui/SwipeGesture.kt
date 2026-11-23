@@ -70,7 +70,7 @@ internal fun swipeTypingModifier(
                 val firstLetter = QwertyLayout.letterAt(normalize(down.position), rows) ?: return@awaitEachGesture
 
                 var swiping = false
-                val slop = maxOf(viewConfiguration.touchSlop, width / QwertyLayout.width * .55f)
+                val slop = maxOf(viewConfiguration.touchSlop, width / QwertyLayout.width * .68f)
                 fun record(point: Offset) {
                     if ((point - points.last()).getDistance() < 1.5.dp.toPx()) return
                     if (points.size >= 192) {
@@ -83,14 +83,18 @@ internal fun swipeTypingModifier(
                 try {
                     while (true) {
                         val event = awaitPointerEvent(PointerEventPass.Initial)
-                        val change = event.changes.singleOrNull() ?: break
-                        if (change.id != down.id || change.isConsumed) break
+                        val change = event.changes.firstOrNull { it.id == down.id } ?: break
+                        if (change.isConsumed) break
+                        if (!swiping && event.changes.any { it.id != down.id && (it.pressed || it.previousPressed) }) break
                         if (!swiping) {
                             if (change.uptimeMillis - down.uptimeMillis >=
                                 viewConfiguration.longPressTimeoutMillis) break
-                            // Fast glides may arrive as a down and displaced up with no move frame.
-                            val letter = QwertyLayout.letterAt(normalize(change.position), rows)
-                            if ((change.position - down.position).getDistance() < slop || letter == firstLetter || letter == null) {
+                            // A quick tap can land near a key edge and lift over the next key.
+                            // Require a move sample before taking ownership from the letter key.
+                            val point = if (change.pressed) change.position else change.historical.lastOrNull()?.position
+                            if (point == null) break
+                            val letter = QwertyLayout.letterAt(normalize(point), rows)
+                            if ((point - down.position).getDistance() < slop || letter == firstLetter || letter == null) {
                                 if (!change.pressed) break
                                 continue
                             }

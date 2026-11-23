@@ -107,7 +107,7 @@ internal fun MonologKeyboardView(
     onExitVox: () -> Unit,
     onStartListening: () -> Unit,
     onPauseListening: () -> Unit,
-    onClearTranscript: () -> Unit,
+    onDeleteVoxWord: () -> Unit,
     onRequestPermission: () -> Unit,
     onCharTyped: (String) -> Unit,
     onEmojiSuggestion: (String, String) -> Boolean,
@@ -202,7 +202,7 @@ internal fun MonologKeyboardView(
                 onLanguage = onVoxLanguage,
                 onStartListening = onStartListening,
                 onPauseListening = onPauseListening,
-                onClearTranscript = onClearTranscript,
+                onDeleteWord = onDeleteVoxWord,
                 smartFilter = smartFilter,
                 onToggleSmartFilter = { keyboardScope.launch { settings.setSmartVoxFilter(!smartFilter) } },
                 contextEnabled = !privateMode,
@@ -213,7 +213,6 @@ internal fun MonologKeyboardView(
                 onRequestPermission = onRequestPermission,
                 onOpenModels = onOpenVoiceSettings
             )
-            if (aiAllowed) ai.toolbar?.let { AiResultCard(it, ai::apply) }
         } else {
             if (privateMode) IncognitoStrip(editorContext.isUserIncognito, settings)
             if (searchQuery == null && isShortcutsOpen && shortcutDraft.isEditing) {

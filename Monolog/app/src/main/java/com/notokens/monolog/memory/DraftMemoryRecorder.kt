@@ -44,6 +44,8 @@ internal class DraftMemoryRecorder(context: Context, scope: CoroutineScope) {
         buffer.delete(buffer.length - typed.length, buffer.length)
         committed(replacement, allowed)
     }
+    val hasPendingText get() = buffer.isNotBlank()
+
     fun boundary() {
         if (preferences.enabled && buffer.isNotBlank()) pending.trySend(Draft(buffer.toString(), app, System.currentTimeMillis()))
         buffer.clear()

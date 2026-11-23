@@ -97,6 +97,7 @@ fun KeyButton(
     onLongClick: (() -> Unit)? = null,
     cursorDrag: CursorDrag? = null,
     repeatOnHold: Boolean = glyph == Glyph.BACKSPACE,
+    repeatIntervalMs: Long = 55,
     glow: Boolean = false,
     tracing: Boolean = false,
     onClick: () -> Unit,
@@ -163,7 +164,7 @@ fun KeyButton(
                 semanticsClick { onClick(); true }
                 if (onLongClick != null) semanticsLongClick(longClickLabel) { onLongClick(); true }
             }
-            .pointerInput(onLongClick != null, cursorDrag != null, repeatOnHold) {
+            .pointerInput(onLongClick != null, cursorDrag != null, repeatOnHold, repeatIntervalMs) {
                 coroutineScope {
                     class Press(val preview: KeyPreview.Preview?, var action: Job? = null, var handled: Boolean = false) {
                         var drag: CursorDrag? = null
@@ -185,7 +186,6 @@ fun KeyButton(
                                         controller?.up(active, active.preview.takeIf { completed && (!active.handled || repeatOnHold) })
                                         if (completed && !active.handled) {
                                             change.consume()
-                                            triggerHapticFeedback(view)
                                             tap()
                                         }
                                     } else if (active?.drag != null) {
@@ -201,14 +201,14 @@ fun KeyButton(
                                         val press = Press(legend?.let { KeyPreview.Preview(it, bounds) }, handled = repeatOnHold)
                                         press.preview?.let { controller?.down(press, it, popupDelay) }
                                         presses[change.id] = press
+                                        triggerHapticFeedback(view)
                                         if (repeatOnHold) {
-                                            triggerHapticFeedback(view)
                                             tap()
                                             press.action = launch {
                                                 delay(350)
                                                 while (true) {
                                                     tap()
-                                                    delay(55)
+                                                    delay(repeatIntervalMs)
                                                 }
                                             }
                                         } else if (hold != null || currentDrag != null) {

@@ -25,10 +25,14 @@ import com.notokens.monolog.ime.shortcuts.ShortcutSuggestion
 import com.notokens.monolog.ime.shortcuts.ShortcutSuggestions
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.withContext
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
+
+internal val editorReadDispatcher = Dispatchers.IO.limitedParallelism(1)
 
 internal class ImeAi(
     private val context: Context,
@@ -47,6 +51,7 @@ internal class ImeAi(
     private val activePackage: () -> String = { "" },
     private val onTextApplied: (String?, String) -> Unit = { _, _ -> }
 ) {
+    private data class EditorSample(val before: String, val selected: String, val after: String)
     private data class Draft(val text: String, val selected: Boolean, val afterCursor: Int = 0)
     var toolbarInput by mutableStateOf("")
         private set
@@ -177,21 +182,25 @@ internal class ImeAi(
     fun refreshDraft(typing: Boolean = false) {
         suggestionJob?.cancel()
         suggestionJob = scope.launch {
-            val wait = maxOf(if (typing) 42L else 0L, deleteUntil - android.os.SystemClock.uptimeMillis())
+            val wait = maxOf(if (typing) 75L else 0L, deleteUntil - android.os.SystemClock.uptimeMillis())
             if (wait > 0) delay(wait)
             if (!canShowLocalToolbar() || askOpen) return@launch
             val ic = connection() ?: return@launch
-            val surrounding = ic.getSurroundingText(400, 400, 0)?.takeIf { state ->
-                state.selectionStart in 0..state.text.length && state.selectionEnd in state.selectionStart..state.text.length
+            val (before, selected, after) = withContext(editorReadDispatcher) {
+                val surrounding = ic.getSurroundingText(400, 400, 0)?.takeIf { state ->
+                    state.selectionStart in 0..state.text.length && state.selectionEnd in state.selectionStart..state.text.length
+                }
+                val text = surrounding?.text
+                val selected = if (surrounding == null || text == null) ic.getSelectedText(0)?.toString().orEmpty()
+                    else text.substring(surrounding.selectionStart, surrounding.selectionEnd)
+                val before = if (surrounding == null || text == null) ic.getTextBeforeCursor(400, 0)?.toString().orEmpty()
+                    else text.substring(0, surrounding.selectionStart)
+                val after = if (selected.isNotEmpty()) ""
+                    else if (surrounding == null || text == null) ic.getTextAfterCursor(400, 0)?.toString().orEmpty()
+                    else text.substring(surrounding.selectionEnd)
+                EditorSample(before, selected, after)
             }
-            val text = surrounding?.text
-            val selected = if (surrounding == null || text == null) ic.getSelectedText(0)?.toString().orEmpty()
-                else text.substring(surrounding.selectionStart, surrounding.selectionEnd)
-            val before = if (surrounding == null || text == null) ic.getTextBeforeCursor(400, 0)?.toString().orEmpty()
-                else text.substring(0, surrounding.selectionStart)
-            val after = if (selected.isNotEmpty()) ""
-                else if (surrounding == null || text == null) ic.getTextAfterCursor(400, 0)?.toString().orEmpty()
-                else text.substring(surrounding.selectionEnd)
+            if (ic !== connection() || !canShowLocalToolbar() || askOpen) return@launch
             val visibleText = selected.ifBlank { before + after }
             checkDraftPrivacy(visibleText)
             toolbarInput = if (selected.isEmpty()) before.takeLast(96) else " "
@@ -244,10 +253,6 @@ internal class ImeAi(
         }
     }
 
-    fun stableSpeech(transcript: String) {
-        if (canUse()) suggest(transcript)
-    }
-
     fun disableWebSuggestions() {
         cancelLookup()
         web = false
@@ -296,11 +301,11 @@ internal class ImeAi(
             return
         }
         lookup = scope.launch {
-            delay(if (request.endsWith('?')) 650 else 1_050)
+            delay(if (request.endsWith('?')) 750 else 1_400)
             if (!canUse() || busy || rewriteOpen || askOpen) return@launch
             inlineBusy = true
             try {
-                val answer = RewritePipeline.respondOffline(context, request)
+                val answer = RewritePipeline.respondOffline(context, request, inline = true)
                 if (!canUse() || busy || rewriteOpen || askOpen) return@launch
                 if (replaceTypedDraft && connection()?.getTextBeforeCursor(text.length, 0)?.toString() != text) return@launch
                 if (!answer.insertable) return@launch
@@ -319,8 +324,9 @@ internal class ImeAi(
     private suspend fun webPreview(question: String, result: WebAnswer): AiPreview {
         val prompt = AiText.answerPrompt(question, result.text)
         val summary = RewritePipeline.gemma(context, prompt, 96)?.let { AiText.checkedAnswer(question, it, result.text) }
-        return AiPreview(summary ?: result.text, generatedLocally = summary != null,
-            sources = result.sources, insertable = true,
+        val answer = summary ?: result.text.takeIf { AiText.usesReplyScript(question, it) }
+        return AiPreview(answer ?: "The selected model couldn’t answer from these sources in the question’s language.",
+            generatedLocally = summary != null, sources = result.sources, insertable = answer != null,
             detail = if (!WebLookup.configured) "Wikipedia · CC BY-SA" else null)
     }
 
@@ -380,7 +386,8 @@ internal class ImeAi(
         val evidence = if (personalizationAllowed() && query.asksAboutJournalCapture()) {
             MonologData.repository(context).notes.first().captureEvidence(query)
         } else ""
-        return RewritePipeline.askOffline(context, query, evidence)
+        return if (evidence.isBlank()) RewritePipeline.respondOffline(context, query)
+        else RewritePipeline.askOffline(context, query, evidence)
     }
 
     fun openRewrite(language: KeyboardLanguage) {
