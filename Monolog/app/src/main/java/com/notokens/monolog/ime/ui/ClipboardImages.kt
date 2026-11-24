@@ -17,6 +17,7 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.dp
 import androidx.core.content.FileProvider
 import java.io.File
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.ensureActive
@@ -60,18 +61,27 @@ internal class ClipboardImages(private val context: Context) {
         }
     }
 
-    suspend fun receive(uri: Uri, announcedMime: String?, timestamp: Long) {
-        if (timestamp <= privateUntil || timestamp == deletedTimestamp || System.currentTimeMillis() - timestamp >= IMAGE_LIFETIME) return
+    suspend fun receive(uri: Uri, announcedMime: String?, timestamp: Long): Boolean {
+        if (timestamp <= privateUntil || timestamp == deletedTimestamp || System.currentTimeMillis() - timestamp >= IMAGE_LIFETIME) return false
         val image = withContext(Dispatchers.IO) {
             runCatching {
-                val mime = context.contentResolver.getType(uri) ?: announcedMime ?: return@runCatching
-                val extension = imageTypes.entries.firstOrNull { it.value == mime }?.key ?: return@runCatching
+                val resolver = context.contentResolver
+                val types = listOfNotNull(runCatching { resolver.getType(uri) }.getOrNull(), announcedMime) +
+                    runCatching { resolver.getStreamTypes(uri, "image/*").orEmpty().toList() }.getOrDefault(emptyList())
+                val match = types.firstNotNullOfOrNull { raw ->
+                    val mime = raw.substringBefore(';').lowercase().let { if (it == "image/jpg") "image/jpeg" else it }
+                    imageTypes.entries.firstOrNull { it.value == mime }
+                } ?: return@runCatching false
+                val (extension, mime) = match
                 folder.mkdirs()
                 val destination = File(folder, "$timestamp.$extension")
                 if (!destination.isFile) {
                     val partial = File.createTempFile("clipboard-", ".part", folder)
                     try {
-                        context.contentResolver.openInputStream(uri)?.use { input ->
+                        val stream = runCatching { resolver.openInputStream(uri) }.getOrNull()
+                            ?: resolver.openTypedAssetFileDescriptor(uri, mime, null)?.createInputStream()
+                            ?: return@runCatching false
+                        stream.use { input ->
                             partial.outputStream().use { output ->
                                 val buffer = ByteArray(64 * 1024)
                                 var bytes = 0L
@@ -91,9 +101,14 @@ internal class ClipboardImages(private val context: Context) {
                         }
                     } finally { partial.delete() }
                 }
+                true
+            }.getOrElse { error ->
+                if (error is CancellationException) throw error
+                false
             }
         }
-        if (image.isSuccess) refresh()
+        if (image) refresh()
+        return image
     }
 
     suspend fun setPinned(clip: ClipboardImage, pinned: Boolean) {
@@ -122,10 +137,13 @@ internal fun rememberClipboardImages(enabled: Boolean, privateMode: Boolean, vis
             val clip = runCatching { manager?.primaryClip }.getOrNull() ?: return
             val description = clip.description
             if (description.extras?.getBoolean(ClipDescription.EXTRA_IS_SENSITIVE) == true || clip.itemCount == 0) return
-            val uri = clip.getItemAt(0).uri?.takeIf { it.scheme == "content" } ?: return
+            val uris = (0 until clip.itemCount).mapNotNull { clip.getItemAt(it).uri?.takeIf { uri -> uri.scheme == "content" && uri.authority != "${context.packageName}.imemedia" } }
+            if (uris.isEmpty()) return
             val mime = description.filterMimeTypes("image/*")?.firstOrNull()
             importJob?.cancel()
-            importJob = scope.launch { store.receive(uri, mime, description.timestamp) }
+            importJob = scope.launch {
+                for (uri in uris) if (store.receive(uri, mime, description.timestamp)) break
+            }
         }
         if (privateMode) privateUntil = System.currentTimeMillis()
         val permitted = enabled && visible && !privateMode

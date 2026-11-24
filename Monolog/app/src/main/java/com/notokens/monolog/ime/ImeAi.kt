@@ -19,8 +19,11 @@ import com.notokens.monolog.ai.WebAnswer
 import com.notokens.monolog.ai.WebLookup
 import com.notokens.monolog.data.MonologData
 import com.notokens.monolog.data.SettingsStore
+import com.notokens.monolog.data.dictionaryWord
 import com.notokens.monolog.data.asksAboutJournalCapture
-import com.notokens.monolog.data.captureEvidence
+import com.notokens.monolog.data.matchingJournalEntries
+import com.notokens.monolog.capture.TagMetadataCodec
+import com.notokens.monolog.memory.MemorySearch
 import com.notokens.monolog.ime.shortcuts.ShortcutSuggestion
 import com.notokens.monolog.ime.shortcuts.ShortcutSuggestions
 import kotlinx.coroutines.CancellationException
@@ -34,6 +37,11 @@ import kotlinx.coroutines.launch
 
 internal val editorReadDispatcher = Dispatchers.IO.limitedParallelism(1)
 
+internal data class PersonalMatch(
+    val title: String, val excerpt: String,
+    val noteId: Long? = null, val reminderId: Long? = null, val day: String? = null
+)
+
 internal class ImeAi(
     private val context: Context,
     private val scope: CoroutineScope,
@@ -46,6 +54,9 @@ internal class ImeAi(
     private val proactiveAllowed: () -> Boolean = { true },
     private val automaticNetworkAllowed: () -> Boolean = { true },
     private val personalizationAllowed: () -> Boolean = { true },
+    private val typingProfileAllowed: () -> Boolean = personalizationAllowed,
+    private val onSuggestionAccepted: () -> Unit = {},
+    private val personalSearchAllowed: () -> Boolean = personalizationAllowed,
     private val checkDraftPrivacy: (String) -> Unit = {},
     private val phoneActionsEnabled: () -> Boolean = { true },
     private val activePackage: () -> String = { "" },
@@ -59,7 +70,44 @@ internal class ImeAi(
         private set
     private var wordSuggestions by mutableStateOf(emptyList<WordSuggestion>())
     private var swipeAlternatives by mutableStateOf(emptyList<WordSuggestion>())
-    val suggestions get() = swipeAlternatives.ifEmpty { wordSuggestions }
+    private var hiddenWords by mutableStateOf(emptySet<String>())
+    val suggestions get() = swipeAlternatives.ifEmpty { wordSuggestions }.filterNot {
+        typingProfileAllowed() && (it.label.lowercase(java.util.Locale.ROOT) in hiddenWords || dictionary.hidesSuggestion(it.label))
+    }
+    var selectedDictionaryWord by mutableStateOf<String?>(null)
+        private set
+    var suggestionToRemove by mutableStateOf<WordSuggestion?>(null)
+        private set
+    val dictionaryActionsAllowed get() = typingProfileAllowed()
+
+    fun requestSuggestionRemoval(word: WordSuggestion?) {
+        suggestionToRemove = word?.takeIf { dictionaryActionsAllowed && it in suggestions && dictionaryWord(it.label) != null }
+    }
+
+    fun removeCurrentSuggestion() {
+        val suggestion = suggestionToRemove ?: return
+        suggestionToRemove = null
+        val word = dictionaryWord(suggestion.label)?.takeIf { dictionaryActionsAllowed } ?: return
+        hiddenWords = hiddenWords + word.lowercase(java.util.Locale.ROOT)
+        wordSuggestions = wordSuggestions.filterNot { it.label.equals(word, ignoreCase = true) }
+        swipeAlternatives = swipeAlternatives.filterNot { it.label.equals(word, ignoreCase = true) }
+        scope.launch {
+            try { settings.removePersonalWord(word) }
+            finally { hiddenWords = hiddenWords - word.lowercase(java.util.Locale.ROOT) }
+            refreshDraft()
+        }
+    }
+
+    fun addSelectedDictionaryWord() {
+        val word = selectedDictionaryWord?.takeIf { dictionaryActionsAllowed } ?: return
+        val ic = connection() ?: return
+        scope.launch {
+            val current = withContext(editorReadDispatcher) { ic.getSelectedText(0)?.toString() }
+            if (current == word && connection() === ic && dictionaryActionsAllowed && settings.addPersonalWord(word)) {
+                selectedDictionaryWord = null
+            }
+        }
+    }
     var shortcutSuggestion by mutableStateOf<ShortcutSuggestion?>(null)
         private set
     private var suggestionJob: Job? = null
@@ -73,9 +121,24 @@ internal class ImeAi(
     var rewriteOpen by mutableStateOf(false)
         private set
     val webAllowed get() = automaticNetworkAllowed()
+    val personalAllowed get() = personalSearchAllowed()
     val journalAllowed get() = personalizationAllowed()
     var web by mutableStateOf(false)
         private set
+    var safeSearch by mutableStateOf(true)
+        private set
+    var personal by mutableStateOf(false)
+        private set
+    var personalMatches by mutableStateOf(emptyList<PersonalMatch>())
+        private set
+
+    fun togglePersonal() {
+        abortAction()
+        val next = personalAllowed && !personal
+        if (next) web = false
+        personal = next
+    }
+
     private var pendingDraft: Draft? = null
     private var toolbarDraft: Draft? = null
     private var action: Job? = null
@@ -118,6 +181,7 @@ internal class ImeAi(
         warmup?.cancel()
         rewriteOpen = false
         askOpen = false
+        personal = false
     }
 
     fun beginSearch() {
@@ -135,6 +199,8 @@ internal class ImeAi(
         }
         wordSuggestions = emptyList()
         swipeAlternatives = emptyList()
+        selectedDictionaryWord = null
+        suggestionToRemove = null
         shortcutSuggestion = null
         inlineActions = emptyList()
         cancelLookup()
@@ -195,14 +261,19 @@ internal class ImeAi(
                     else text.substring(surrounding.selectionStart, surrounding.selectionEnd)
                 val before = if (surrounding == null || text == null) ic.getTextBeforeCursor(400, 0)?.toString().orEmpty()
                     else text.substring(0, surrounding.selectionStart)
-                val after = if (selected.isNotEmpty()) ""
-                    else if (surrounding == null || text == null) ic.getTextAfterCursor(400, 0)?.toString().orEmpty()
+                val after = if (surrounding == null || text == null) ic.getTextAfterCursor(400, 0)?.toString().orEmpty()
                     else text.substring(surrounding.selectionEnd)
                 EditorSample(before, selected, after)
             }
             if (ic !== connection() || !canShowLocalToolbar() || askOpen) return@launch
             val visibleText = selected.ifBlank { before + after }
-            checkDraftPrivacy(visibleText)
+            checkDraftPrivacy(if (selected.isEmpty()) visibleText else before + selected + after)
+            fun wordEdge(char: Char?) = char != null && (char.isLetterOrDigit() || char in "'’-_")
+            selectedDictionaryWord = dictionaryWord(selected)?.takeIf {
+                it == selected && dictionaryActionsAllowed && !wordEdge(before.lastOrNull()) && !wordEdge(after.firstOrNull()) &&
+                    !dictionary.inPersonalDictionary(it)
+            }
+            if (typing) suggestionToRemove = null
             toolbarInput = if (selected.isEmpty()) before.takeLast(96) else " "
             hasDraft = visibleText.isNotBlank()
             inlineActions = if (phoneActionsEnabled() && typedActionsAllowed()) {
@@ -217,7 +288,7 @@ internal class ImeAi(
             if (typing && selected.isEmpty()) suggest(before.substringAfterLast('\n'), replaceTypedDraft = true)
             val language = settings.keyboardLanguage.first()
             wordSuggestions = if (selected.isEmpty()) {
-                dictionary.suggest(before, language, personalizationAllowed())
+                dictionary.suggest(before, language, typingProfileAllowed())
             } else emptyList()
             if (typing && selected.isEmpty() && personalizationAllowed() && settings.systemSpellChecker.first()) {
                 delay(220)
@@ -234,9 +305,13 @@ internal class ImeAi(
         }
     }
 
-    fun offerSwipeAlternatives(typed: String, alternatives: List<String>) {
-        if (!canUse() || alternatives.isEmpty()) return
-        swipeAlternatives = alternatives.map { WordSuggestion(typed, "$it ") }
+    fun offerSwipeAlternatives(typed: String, alternatives: List<String>, next: List<String>) {
+        if (!canUse()) return
+        swipeAlternatives = buildList {
+            add(WordSuggestion(typed, "$typed ", emphasized = true))
+            next.firstOrNull()?.let { add(WordSuggestion(typed, "$typed $it ", label = it, nextWord = true)) }
+            alternatives.take(2).forEach { add(WordSuggestion(typed, "$it ")) }
+        }
     }
 
     fun applyWord(suggestion: WordSuggestion) {
@@ -247,6 +322,7 @@ internal class ImeAi(
         if (target.text.isEmpty() && (!ic.getSelectedText(0).isNullOrEmpty() ||
                 ic.getTextBeforeCursor(1, 0)?.toString() != " ")) return
         if (ic.commitText(suggestion.replacement, 1)) {
+            onSuggestionAccepted()
             onTextApplied(suggestion.typed, suggestion.replacement)
             clearDraft()
             refreshDraft(typing = true)
@@ -326,14 +402,20 @@ internal class ImeAi(
         val summary = RewritePipeline.gemma(context, prompt, 96)?.let { AiText.checkedAnswer(question, it, result.text) }
         val answer = summary ?: result.text.takeIf { AiText.usesReplyScript(question, it) }
         return AiPreview(answer ?: "The selected model couldn’t answer from these sources in the question’s language.",
-            generatedLocally = summary != null, sources = result.sources, insertable = answer != null,
-            detail = if (!WebLookup.configured) "Wikipedia · CC BY-SA" else null)
+            generatedLocally = summary != null, sources = result.sources, insertable = answer != null)
     }
 
     fun toggleWeb() {
         abortAction()
         cancelLookup()
         web = automaticNetworkAllowed() && !web
+        if (web) personal = false
+    }
+
+    fun setWebSafeSearch(enabled: Boolean) {
+        if (!web || !webAllowed || enabled == safeSearch) return
+        abortAction()
+        safeSearch = enabled
     }
 
     fun abortAction() {
@@ -341,6 +423,7 @@ internal class ImeAi(
         action?.cancel()
         action = null
         preview = null
+        personalMatches = emptyList()
         askActions = emptyList()
         busy = false
         pendingDraft = null
@@ -348,17 +431,22 @@ internal class ImeAi(
 
     fun searchWeb(query: String) {
         checkDraftPrivacy(query)
-        if (!canUse() || !automaticNetworkAllowed() || query.isBlank()) return
+        if (!canUse() || !web || !webAllowed || query.isBlank()) return
         abortAction()
-        if (!WebLookup.openSearchApp(context, query)) {
-            preview = AiPreview("No web search app is available.")
+        if (!WebLookup.openSearchApp(context, query, safeSearch)) {
+            preview = AiPreview("No browser is available to open DuckDuckGo.")
         }
     }
 
     fun ask(query: String) {
         if (!canUse() || query.isBlank()) return
+        if (web && !WebLookup.searchConfigured) {
+            searchWeb(query)
+            return
+        }
         checkDraftPrivacy(query)
-        if (phoneActionsEnabled() && personalizationAllowed()) {
+        val useWeb = web && webAllowed
+        if (!useWeb && !personal && phoneActionsEnabled() && personalizationAllowed()) {
             val choices = DeviceActions.detect(query, automaticNetworkAllowed(), explicit = true)
             if (choices.isNotEmpty()) {
                 abortAction()
@@ -366,28 +454,50 @@ internal class ImeAi(
                 return
             }
         }
-        val useWeb = web && automaticNetworkAllowed()
+        val filter = safeSearch
         launchRequest {
             if (useWeb) {
                 try {
-                    webPreview(query, WebLookup.ask(query))
+                    webPreview(query, WebLookup.ask(query, filter))
                 } catch (error: CancellationException) {
                     throw error
                 } catch (_: Exception) {
-                    AiPreview("No sourced answer. Try Open web search or turn Web off.")
+                    AiPreview("DuckDuckGo results are unavailable here. Try opening DuckDuckGo in your browser.")
                 }
+            } else if (personal && personalAllowed) {
+                personalAnswer(query)
             } else {
-                offlineAnswer(query)
+                RewritePipeline.respondOffline(context, query)
             }
         }
     }
 
-    private suspend fun offlineAnswer(query: String): AiPreview {
-        val evidence = if (personalizationAllowed() && query.asksAboutJournalCapture()) {
-            MonologData.repository(context).notes.first().captureEvidence(query)
-        } else ""
-        return if (evidence.isBlank()) RewritePipeline.respondOffline(context, query)
-        else RewritePipeline.askOffline(context, query, evidence)
+    private suspend fun personalAnswer(query: String): AiPreview {
+        val matches = withContext(kotlinx.coroutines.Dispatchers.Default) {
+            val notes = MonologData.repository(context).notes.first().matchingJournalEntries(query, limit = 5)
+            val direct = notes.map { note ->
+                val decoded = TagMetadataCodec.decode(note.body)
+                PersonalMatch(note.title, (decoded.bottomComment.ifBlank { decoded.cleanBody }).take(240), noteId = note.id)
+            }
+            val recorded = try {
+                MemorySearch(context).search(query, year = null).map { match ->
+                    val row = match.record
+                    PersonalMatch(match.evidence.summary, match.evidence.excerpt.orEmpty().take(240),
+                        row.noteId, row.reminderId, row.localDay)
+                }
+            } catch (cancelled: CancellationException) {
+                throw cancelled
+            } catch (_: Exception) {
+                emptyList()
+            }
+            (direct + recorded).distinctBy { it.noteId?.let { id -> "note/$id" }
+                ?: it.reminderId?.let { id -> "reminder/$id" } ?: "day/${it.day}/${it.title}" }.take(6)
+        }
+        if (!personal || !personalAllowed) return AiPreview("Personal search is unavailable.")
+        personalMatches = matches
+        if (matches.isEmpty()) return AiPreview("No matching journal entries, notes, or captures.")
+        val evidence = matches.joinToString("\n") { "${it.title} ${it.excerpt}" }
+        return RewritePipeline.askOffline(context, query, evidence)
     }
 
     fun openRewrite(language: KeyboardLanguage) {
@@ -395,7 +505,7 @@ internal class ImeAi(
         cancelLookup()
         closePanel()
         rewriteOpen = true
-        if (language.id == "en" && ModelStore.get(context).state.value is ModelState.Ready) {
+        if (language.isEnglish && ModelStore.get(context).state.value is ModelState.Ready) {
             warmup = scope.launch {
                 try {
                     LocalAi.warm(context)
@@ -424,7 +534,7 @@ internal class ImeAi(
             preview = AiPreview("Select up to 400 characters or type a short draft in this field first.")
             return
         }
-        if (!translate && language.id != "en" && language.translationCode == null && style != RewriteStyle.POLISH) {
+        if (!translate && !language.isEnglish && language.translationCode == null && style != RewriteStyle.POLISH) {
             abortAction()
             preview = AiPreview("This language supports local polish. Choose English for tone rewrites.")
             return

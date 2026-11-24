@@ -1,5 +1,5 @@
 Monolog Privacy Policy
-Last updated 23 November 2026
+Last updated 24 November 2026
 
 NoTokens provides Monolog. This policy covers the Monolog Android app and its official website. Contact monolog@notokens.co for privacy questions or requests.
 
@@ -8,6 +8,8 @@ Keyboard, writing and journal
 When Monolog is your active keyboard, it receives the text you type. Android may also provide selected or nearby text in the current field. Monolog uses this information to enter text, provide suggestions, check for sensitive material and perform actions you request. Local typing suggestions, writing assistance and journal search use data on your device.
 
 If Journal memory is on, Monolog can save summaries of eligible drafts, including text you have not sent. Use Settings → Journal memory to control this. Incognito and protected fields limit what Monolog saves and which features can use the current text. Your saved notes, media, reminders and personal dictionary stay on your device unless you choose to share, export or back up content. NoTokens does not use your typing, voice recordings or journal content to train models.
+
+You can turn keyboard word learning off in Settings. Monolog can keep individual words you use and their frequency on your device, plus aggregate counts such as key presses and accepted suggestions. Incognito and protected fields are excluded. Enabling the optional Keyboard profile in Account & backup includes your dictionary, counts and keyboard preferences in encrypted Google Drive backups.
 
 Microphone, screenshots and clipboard
 
@@ -19,7 +21,7 @@ Clipboard history is optional and off by default. Clipboard history uses copied 
 
 Online services
 
-If you request web results, Monolog sends your query or a search term derived from it to Wikipedia or the web provider available for that feature. If you open an action or search in another app, Monolog passes information needed for that action, such as a search term, phone number or email address. The receiving app handles that information under its own privacy practices.
+If you request web results, Monolog opens your submitted query in DuckDuckGo. If in-keyboard results are available, Monolog sends that query and the Safe Search setting through its configured DuckDuckGo search service. If you enable GIFs and stickers, opening their tabs loads KLIPY content and submitting a media search sends that query to the provider. Advertising may involve additional device, network and interaction information when it is enabled. See the KLIPY media and ads notice in About for details. If you open an action or search in another app, Monolog passes information needed for that action, such as a search term, phone number or email address. The receiving app handles that information under its own privacy practices.
 
 If you enable local weather, Android supplies location information while Monolog is in use. Rounded coordinates are sent to MET Norway for the forecast and can be used by Android's place-name service. MET Norway logs the request, including the coordinates and IP address. You can disable weather or revoke location permission.
 

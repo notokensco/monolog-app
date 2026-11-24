@@ -20,6 +20,7 @@ import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.unit.dp
+import com.notokens.monolog.data.KeyboardPlacement
 import com.notokens.monolog.data.SettingsStore
 import com.notokens.monolog.data.VoiceInputEngine
 import com.notokens.monolog.ui.theme.PaperKeySubText
@@ -31,7 +32,13 @@ import kotlin.math.roundToInt
 @Composable
 internal fun KeyboardBehaviorSettings(settings: SettingsStore) {
     val scope = rememberCoroutineScope()
+    val placement by settings.keyboardPlacement.collectAsState(KeyboardPlacement.FULL)
+    val borders by settings.keyBorders.collectAsState(false)
+    val compact by settings.compactKeys.collectAsState(false)
+    val onlineMedia by settings.onlineMedia.collectAsState(false)
     val phoneActions by settings.phoneActions.collectAsState(true)
+    val capitalize by settings.autoCapitalize.collectAsState(false)
+    val learn by settings.learnWords.collectAsState(true)
     val spellCheck by settings.systemSpellChecker.collectAsState(false)
     val cursorOnSpace by settings.cursorOnSpace.collectAsState(false)
     val popups by settings.keyPopups.collectAsState(false)
@@ -39,13 +46,22 @@ internal fun KeyboardBehaviorSettings(settings: SettingsStore) {
     val height by settings.keyHeightPercent.collectAsState(100)
     val vibrationHaptics by settings.vibrationHaptics.collectAsState(true)
     val keyHoldMs by settings.keyLongPressMs.collectAsState(350)
+    val trail by settings.swipeTrail.collectAsState(120)
     val savedTriggers by settings.sensitiveWords.collectAsState("")
     var triggers by remember(savedTriggers) { mutableStateOf(savedTriggers) }
     var previewHeight by remember(height) { mutableIntStateOf(height) }
     var previewDelay by remember(popupMs) { mutableIntStateOf(popupMs) }
     var previewKeyHoldMs by remember(keyHoldMs) { mutableIntStateOf(keyHoldMs) }
+    var previewTrail by remember(trail) { mutableIntStateOf(trail) }
     SettingsCard("Keyboard layout") {
+        KeyboardSwitch("Left-handed layout", placement == KeyboardPlacement.LEFT) {
+            scope.launch { settings.setKeyboardPlacement(if (it) KeyboardPlacement.LEFT else KeyboardPlacement.FULL) }
+        }
+        if (borders) KeyboardSwitch("Compact keys", compact) { scope.launch { settings.setCompactKeys(it) } }
         KeyboardSwitch("Vibration haptics", vibrationHaptics) { scope.launch { settings.setVibrationHaptics(it) } }
+        KeyboardSwitch("Online GIFs and stickers", onlineMedia) { scope.launch { settings.setOnlineMedia(it) } }
+        KeyboardSwitch("Auto-capitalize sentences", capitalize) { scope.launch { settings.setAutoCapitalize(it) } }
+        KeyboardSwitch("Learn words I type", learn) { scope.launch { settings.setLearnWords(it) } }
         KeyboardSwitch("Android spell checker", spellCheck) { scope.launch { settings.setSystemSpellChecker(it) } }
         if (spellCheck) Text("Offers extra corrections from the spell checker selected in Android settings. Private fields stay local to Monolog.",
             color = PaperKeySubText, style = MaterialTheme.typography.bodySmall)
@@ -68,6 +84,10 @@ internal fun KeyboardBehaviorSettings(settings: SettingsStore) {
         Slider(previewKeyHoldMs.toFloat(), { previewKeyHoldMs = it.roundToInt() },
             onValueChangeFinished = { scope.launch { settings.setKeyLongPressMs(previewKeyHoldMs) } },
             valueRange = 150f..800f, steps = 12)
+        Text(if (previewTrail == 0) "Swipe trail · Off" else "Swipe trail · ${previewTrail * 100 / 120}%")
+        Slider(previewTrail.toFloat(), { previewTrail = it.roundToInt() },
+            onValueChangeFinished = { scope.launch { settings.setSwipeTrail(previewTrail) } },
+            valueRange = 0f..240f, steps = 11)
     }
     SettingsCard("Sensitive drafts") {
         Text("Matching drafts stay out of saved memory. Separate your own trigger words or phrases with commas.",
@@ -105,6 +125,12 @@ internal fun ToneSettings(settings: SettingsStore) {
 @Composable
 internal fun PersonalDictionarySettings(settings: SettingsStore) {
     val words by settings.personalWords.collectAsState(initial = emptySet())
+    val profile by settings.typingProfile.collectAsState(com.notokens.monolog.data.TypingProfile())
+    var learnedShown by remember { mutableIntStateOf(0) }
+    val learned = remember(profile.words, words) {
+        val manual = words.mapTo(hashSetOf(), { com.notokens.monolog.data.wordKey(it) })
+        profile.words.filter { (key, item) -> item.uses > 0 && key !in manual }.values.sortedByDescending { it.at }
+    }
     val scope = rememberCoroutineScope()
     var input by remember { mutableStateOf("") }
     var invalid by remember { mutableStateOf(false) }
@@ -125,6 +151,19 @@ internal fun PersonalDictionarySettings(settings: SettingsStore) {
                 } else if (input == candidate) invalid = true
             }
         }) { Text("Add word") }
+        if (learned.isNotEmpty()) TextButton({
+            learnedShown = if (learnedShown == 0) 20 else 0
+        }) { Text(if (learnedShown == 0) "Show learned words" else "Hide learned words") }
+        learned.take(learnedShown).forEach { item ->
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Text(item.text, Modifier.weight(1f))
+                Text(item.uses.toString(), color = PaperKeySubText)
+                TextButton(onClick = { scope.launch { settings.removePersonalWord(item.text) } }) { Text("Remove") }
+            }
+        }
+        if (learnedShown in 1 until learned.size) {
+            TextButton({ learnedShown += 20 }) { Text("Show more") }
+        }
         words.sorted().forEach { word ->
             Row(verticalAlignment = Alignment.CenterVertically) {
                 Text(word, Modifier.weight(1f))
@@ -161,6 +200,30 @@ internal fun VoiceInputSettings(settings: SettingsStore, onRequestMicPermission:
         if (engine == VoiceInputEngine.NATIVE) Text("Active in Vox", color = MaterialTheme.colorScheme.primary)
         else TextButton({ scope.launch { settings.setVoiceInputEngine(VoiceInputEngine.NATIVE) } }) {
             Text("Use Android speech")
+        }
+    }
+}
+
+@Composable
+internal fun KeyboardUsageSettings(settings: SettingsStore) {
+    val profile by settings.typingProfile.collectAsState(com.notokens.monolog.data.TypingProfile())
+    val manualWords by settings.personalWords.collectAsState(emptySet())
+    SettingsCard("Usage statistics") {
+        Text("Counts exclude incognito and protected fields. Enable Keyboard profile in Account & backup to include them in Drive backups.",
+            style = MaterialTheme.typography.bodySmall, color = PaperKeySubText)
+        for (metric in com.notokens.monolog.data.TypingMetric.entries) {
+            Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+                Text(metric.label, Modifier.weight(1f), color = PaperKeyText)
+                Text(java.text.NumberFormat.getIntegerInstance().format(profile.total(metric)), color = PaperKeyText)
+            }
+        }
+        Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+            Text("Words learned", Modifier.weight(1f), color = PaperKeyText)
+            Text(profile.words.values.count { it.uses > 0 }.toString(), color = PaperKeyText)
+        }
+        Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+            Text("Words added manually", Modifier.weight(1f), color = PaperKeyText)
+            Text(manualWords.size.toString(), color = PaperKeyText)
         }
     }
 }

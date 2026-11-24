@@ -110,6 +110,10 @@ internal class IndicTyping(private val context: Context) {
     fun swipe(points: List<SwipePoint>, language: KeyboardLanguage, before: String): List<String> =
         lexicon(language)?.swipe(points, typedWord(before.trimEnd())).orEmpty()
 
+    fun nextAfter(word: String, language: KeyboardLanguage): List<String> =
+        lexicon(language)?.suggestNativeNext(Normalizer.normalize(word.lowercase(Locale.ROOT),
+            Normalizer.Form.NFC)).orEmpty()
+
     private fun lexicon(language: KeyboardLanguage): IndicLexicon? {
         val native = language.transliterationTarget?.let(KeyboardLanguage::of) ?: language
         val block = native.script ?: return null

@@ -1,6 +1,9 @@
 package com.notokens.monolog.ime.ui
 
+import android.content.Intent
 import androidx.compose.foundation.background
+import androidx.compose.foundation.clickable
+import com.notokens.monolog.MainActivity
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
@@ -21,10 +24,10 @@ import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.text.BasicTextField
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
-import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.remember
 import androidx.compose.ui.Alignment
@@ -32,21 +35,18 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
+import androidx.compose.ui.semantics.selected
 import androidx.compose.ui.text.input.TextFieldValue
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
-import com.notokens.monolog.capture.TagMetadataCodec
-import com.notokens.monolog.data.MonologData
 import com.notokens.monolog.ime.ImeAi
 import com.notokens.monolog.ai.WebLookup
-import com.notokens.monolog.data.matchingJournalEntries
 import com.notokens.monolog.ui.GlassAccent
 import com.notokens.monolog.ui.Glyph
 import com.notokens.monolog.ui.IconControl
 import com.notokens.monolog.ui.MonologIcon
 import com.notokens.monolog.ui.glassSurface
-import com.notokens.monolog.ui.markdownExcerpt
 import com.notokens.monolog.ui.theme.PaperKeySubText
 import com.notokens.monolog.ui.theme.PaperKeyText
 
@@ -59,9 +59,6 @@ internal fun KeyboardSearchPanel(
     availableHeight: Dp
 ) {
     val context = LocalContext.current
-    val repository = remember(context) { MonologData.repository(context) }
-    val notes by repository.notes.collectAsState(initial = emptyList())
-    val matches = remember(notes, query.text) { notes.matchingJournalEntries(query.text, limit = 3) }
     var layout by remember { mutableStateOf<TextLayoutResult?>(null) }
     var caretOn by remember { mutableStateOf(true) }
     LaunchedEffect(query.text, query.selection) {
@@ -108,50 +105,67 @@ internal fun KeyboardSearchPanel(
                 textStyle = MaterialTheme.typography.bodyLarge.copy(color = PaperKeyText),
                 decorationBox = { inner ->
                     Box {
-                        if (query.text.isEmpty()) Text(if (ai.journalAllowed) "Ask or search your journal" else "Ask offline", color = PaperKeySubText)
+                        if (query.text.isEmpty()) Text(if (ai.personal) "Search your journal and captures" else "Ask offline", color = PaperKeySubText)
                         inner()
                     }
                 }
             )
         }
         Row(verticalAlignment = Alignment.CenterVertically) {
+            if (ai.personalAllowed) TextButton(ai::togglePersonal,
+                modifier = Modifier.semantics { selected = ai.personal }) {
+                Text(if (ai.personal) "Personal on" else "Personal")
+            }
             if (ai.webAllowed) TextButton(ai::toggleWeb) {
                 Text(if (ai.web) "Web on" else "Web off")
             }
             TextButton({ ai.ask(query.text) }, enabled = query.text.isNotBlank() && !ai.busy) {
-                Text(if (ai.web) "Search & answer" else "Ask")
+                Text(if (!ai.web) "Ask" else if (WebLookup.searchConfigured) "Search & answer" else "Search DuckDuckGo")
             }
         }
         if (ai.busy) com.notokens.monolog.ui.ProcessingDots()
         if (ai.askActions.isNotEmpty()) Row { DeviceActionButtons(ai.askActions) }
-        if (ai.web) {
-            Text(if (WebLookup.configured) "Only this query is sent to the search service."
-                else "Uses Wikipedia. For other results, open a web search.",
-                style = MaterialTheme.typography.labelSmall, color = PaperKeySubText)
-            TextButton({ ai.searchWeb(query.text) }, enabled = query.text.isNotBlank()) {
-                Text("Open web search")
+        if (ai.web && ai.webAllowed) {
+            Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+                Column(Modifier.weight(1f)) {
+                    Text("Safe Search", style = MaterialTheme.typography.labelLarge, color = PaperKeyText)
+                    Text(if (WebLookup.searchConfigured) "DuckDuckGo via Monolog’s search service"
+                        else "DuckDuckGo opens in your browser",
+                        style = MaterialTheme.typography.labelSmall, color = PaperKeySubText)
+                }
+                Switch(checked = ai.safeSearch, onCheckedChange = ai::setWebSafeSearch,
+                    modifier = Modifier.semantics { contentDescription = "Safe Search" })
+            }
+            if (WebLookup.searchConfigured) TextButton({ ai.searchWeb(query.text) }, enabled = query.text.isNotBlank()) {
+                Text("Open DuckDuckGo in browser")
             }
         }
         ai.preview?.let { AiResultCard(it, ai::apply) }
-        if (ai.webAllowed && !ai.web && ai.preview?.text == com.notokens.monolog.ai.AiText.UNKNOWN_ANSWER) {
+        if (ai.webAllowed && !ai.web && !ai.personal && ai.preview?.text == com.notokens.monolog.ai.AiText.UNKNOWN_ANSWER) {
             TextButton({
                 ai.toggleWeb()
                 ai.ask(query.text)
             }, enabled = query.text.isNotBlank() && !ai.busy) {
-                Text("Find a sourced answer")
+                Text("Search DuckDuckGo")
             }
         }
-        if (ai.journalAllowed && query.text.isNotBlank() && !ai.web && ai.preview == null && !ai.busy && ai.askActions.isEmpty()) {
-            Column(
-                Modifier.fillMaxWidth().heightIn(max = 80.dp).verticalScroll(rememberScrollState()).padding(top = 6.dp),
-                verticalArrangement = Arrangement.spacedBy(4.dp)
-            ) {
-                if (matches.isEmpty()) {
-                    Text("No journal matches", color = PaperKeySubText, style = MaterialTheme.typography.bodySmall)
-                } else matches.forEach { note ->
-                    Text(note.title, color = PaperKeyText, style = MaterialTheme.typography.titleSmall, maxLines = 1, overflow = TextOverflow.Ellipsis)
-                    val preview = remember(note.body) { markdownExcerpt(TagMetadataCodec.decode(note.body).cleanBody).take(180) }
-                    Text(preview, color = PaperKeySubText, style = MaterialTheme.typography.bodySmall, maxLines = 2, overflow = TextOverflow.Ellipsis)
+        if (ai.personal && ai.personalAllowed) {
+            for (match in ai.personalMatches) {
+                Column(Modifier.fillMaxWidth().clickable {
+                    val intent = Intent(context, MainActivity::class.java).apply {
+                        action = MainActivity.ACTION_OPEN_PERSONAL_MATCH
+                        flags = Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TOP or Intent.FLAG_ACTIVITY_SINGLE_TOP
+                        match.noteId?.let { putExtra("note", it) }
+                        match.reminderId?.let { putExtra("reminder", it) }
+                        match.day?.let { putExtra("day", it) }
+                    }
+                    context.startActivity(intent)
+                    onClose()
+                }.padding(vertical = 6.dp)) {
+                    Text(match.title, color = PaperKeyText, style = MaterialTheme.typography.titleSmall,
+                        maxLines = 1, overflow = TextOverflow.Ellipsis)
+                    Text(match.excerpt, color = PaperKeySubText, style = MaterialTheme.typography.bodySmall,
+                        maxLines = 2, overflow = TextOverflow.Ellipsis)
                 }
             }
         }

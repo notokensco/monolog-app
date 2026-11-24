@@ -5,10 +5,14 @@ import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
 import androidx.compose.animation.slideInHorizontally
 import androidx.compose.animation.togetherWith
+import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.height
@@ -19,7 +23,6 @@ import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.widthIn
 import androidx.compose.material3.IconButton
-import androidx.compose.material3.VerticalDivider
 import androidx.compose.material3.DropdownMenu
 import androidx.compose.runtime.*
 import androidx.compose.ui.semantics.contentDescription
@@ -33,6 +36,9 @@ import androidx.compose.runtime.Composable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalUriHandler
+import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.rememberTextMeasurer
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.sp
@@ -41,6 +47,7 @@ import com.notokens.monolog.ai.AiPreview
 import com.notokens.monolog.ai.KeyboardLanguage
 import com.notokens.monolog.ai.RewriteStyle
 import com.notokens.monolog.ime.ImeAi
+import com.notokens.monolog.ime.WordSuggestion
 import com.notokens.monolog.ui.glassSurface
 import com.notokens.monolog.ui.MonologIcon
 import com.notokens.monolog.ui.Glyph
@@ -51,10 +58,30 @@ internal fun KeyboardSuggestionStrip(
     ai: ImeAi,
     language: KeyboardLanguage,
     onShortcut: (com.notokens.monolog.ime.shortcuts.ShortcutSuggestion) -> Unit,
-    clipboardActions: List<com.notokens.monolog.ime.DeviceAction> = emptyList()
+    clipboardActions: List<com.notokens.monolog.ime.DeviceAction> = emptyList(),
+    emojis: List<Emoji> = emptyList(),
+    onEmoji: (Emoji) -> Unit = {}
 ) {
     Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
         val actions = ai.inlineActions.ifEmpty { clipboardActions }
+        val removal = ai.suggestionToRemove.takeIf { ai.dictionaryActionsAllowed }
+        if (removal != null) {
+            Row(Modifier.weight(1f), verticalAlignment = Alignment.CenterVertically) {
+                TextButton(ai::removeCurrentSuggestion, Modifier.weight(1f)) {
+                    Text("Remove suggestion", maxLines = 1)
+                }
+                IconButton({ ai.requestSuggestionRemoval(null) }, Modifier.size(36.dp)) {
+                    MonologIcon(Glyph.CLOSE, Modifier.size(18.dp))
+                }
+            }
+            return@Row
+        }
+        if (ai.selectedDictionaryWord != null && ai.dictionaryActionsAllowed) {
+            TextButton(ai::addSelectedDictionaryWord, Modifier.weight(1f)) {
+                Text("Add to dictionary", maxLines = 1)
+            }
+            return@Row
+        }
         if (!ai.rewriteOpen && ai.inlineBusy) {
             Box(Modifier.weight(1f), contentAlignment = Alignment.Center) { com.notokens.monolog.ui.ProcessingDots() }
         } else if (!ai.rewriteOpen && ai.toolbar == null && actions.isNotEmpty()) {
@@ -69,23 +96,8 @@ internal fun KeyboardSuggestionStrip(
                         color = PaperKeyText, style = MaterialTheme.typography.labelMedium,
                         maxLines = 1, overflow = TextOverflow.Ellipsis)
                 }
-                ai.suggestions.take(3).forEachIndexed { index, suggestion ->
-                    if (index > 0) VerticalDivider(Modifier.height(24.dp))
-                    Box(
-                        Modifier.weight(1f).fillMaxHeight()
-                            .clickable { ai.applyWord(suggestion) }.padding(horizontal = 3.dp),
-                        contentAlignment = Alignment.Center
-                    ) {
-                        Text(
-                            suggestion.replacement.trimEnd(),
-                            color = PaperKeyText,
-                            fontSize = 16.sp,
-                            textAlign = TextAlign.Center,
-                            maxLines = 1,
-                            overflow = TextOverflow.Ellipsis
-                        )
-                    }
-                }
+                SuggestionChoices(Modifier.weight(1f), ai.suggestions, emojis, ai::applyWord, onEmoji,
+                    if (ai.dictionaryActionsAllowed) ai::requestSuggestionRemoval else null)
             }
         } else {
             Row(Modifier.weight(1f).horizontalScroll(rememberScrollState()),
@@ -94,7 +106,7 @@ internal fun KeyboardSuggestionStrip(
                     ToolbarAction(suggestion.label) { onShortcut(suggestion) }
                 }
                 if (ai.rewriteOpen) {
-                    val styles = if (language.id == "en" || language.translationCode != null) RewriteStyle.entries
+                    val styles = if (language.isEnglish || language.translationCode != null) RewriteStyle.entries
                         else listOf(RewriteStyle.POLISH)
                     styles.forEach { style ->
                         ToolbarAction(style.label, enabled = !ai.busy) { ai.rewrite(style, language) }
@@ -129,6 +141,74 @@ internal fun KeyboardSuggestionStrip(
     }
 }
 
+@OptIn(ExperimentalFoundationApi::class)
+@Composable
+private fun SuggestionChoices(
+    modifier: Modifier,
+    suggestions: List<WordSuggestion>,
+    emojis: List<Emoji>,
+    onWord: (WordSuggestion) -> Unit,
+    onEmoji: (Emoji) -> Unit,
+    onRemove: ((WordSuggestion) -> Unit)?
+) {
+    val measurer = rememberTextMeasurer()
+    val density = LocalDensity.current
+    val style = MaterialTheme.typography.bodyMedium.copy(fontSize = 16.sp, fontWeight = FontWeight.Normal)
+    val bold = style.copy(fontWeight = FontWeight.Bold)
+    BoxWithConstraints(modifier.fillMaxHeight()) {
+        val width = with(density) { maxWidth.roundToPx() }
+        val padding = with(density) { 12.dp.roundToPx() }
+        val emojiWidth = with(density) { 28.dp.roundToPx() }
+        val unique = suggestions.distinctBy { it.label.lowercase() }
+        val preferred = unique.firstOrNull { it.emphasized } ?: unique.firstOrNull()
+        val widths = unique.associateWith { word ->
+            measurer.measure(word.label, if (word == preferred) bold else style, maxLines = 1,
+                softWrap = false).size.width + padding
+        }
+        val primary = preferred?.takeIf { widths.getValue(it) <= width }
+            ?: unique.firstOrNull { widths.getValue(it) <= width }
+        val mainWidth = primary?.let(widths::getValue) ?: 0
+        val other = unique.filter { it != primary }.sortedBy { !it.nextWord }
+            .firstOrNull { widths.getValue(it) + mainWidth <= width }
+        val used = mainWidth + (other?.let(widths::getValue) ?: 0)
+        val spare = width - used
+        val emojiCount = minOf(emojis.size, 3, spare / emojiWidth.coerceAtLeast(1))
+            .takeIf { it >= 2 || emojis.size == 1 } ?: 0
+        val extra = if (primary != null && other != null && emojiCount == 0) {
+            unique.firstOrNull { it != primary && it != other && widths.getValue(it) <= spare }
+        } else null
+        val slots = when {
+            primary == null -> emptyList()
+            emojiCount > 0 && other != null -> listOf(other, primary, null)
+            emojiCount > 0 -> listOf(null, primary)
+            extra != null -> listOfNotNull(other, primary, extra)
+            else -> listOfNotNull(other, primary)
+        }
+        Row(Modifier.fillMaxWidth().fillMaxHeight(), verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = if (slots.size == 1) Arrangement.End else Arrangement.SpaceEvenly) {
+            if (slots.isEmpty() && emojiCount > 0) {
+                EmojiShortcutStrip(emptyList(), emojis.take(emojiCount), compact = true, onPick = onEmoji)
+            }
+            slots.forEach { word ->
+                if (word == null) {
+                    EmojiShortcutStrip(emptyList(), emojis.take(emojiCount), compact = true, onPick = onEmoji)
+                } else {
+                    Box(Modifier.fillMaxHeight().combinedClickable(
+                        onClick = { onWord(word) },
+                        onLongClick = if (onRemove != null && com.notokens.monolog.data.dictionaryWord(word.label) != null)
+                            ({ onRemove(word) }) else null,
+                        onLongClickLabel = "Remove suggestion"
+                    ).padding(horizontal = 6.dp),
+                        contentAlignment = Alignment.Center) {
+                        Text(word.label, color = PaperKeyText, style = if (word == preferred) bold else style,
+                            textAlign = TextAlign.Center, maxLines = 1, softWrap = false, overflow = TextOverflow.Clip)
+                    }
+                }
+            }
+        }
+    }
+}
+
 @Composable
 internal fun KeyboardAiControls(ai: ImeAi, language: KeyboardLanguage) {
     if (ai.rewriteOpen && !ai.busy && ai.preview == null) {
@@ -151,6 +231,26 @@ private fun ToolbarAction(label: String, enabled: Boolean = true, onClick: () ->
 @Composable
 internal fun AiResultCard(preview: AiPreview, onApply: (AiPreview) -> Unit) {
     val uriHandler = LocalUriHandler.current
+    val webResults = preview.sources.any { it.snippet.isNotBlank() }
+    if (webResults) {
+        Column(Modifier.fillMaxWidth()) {
+            if (preview.generatedLocally) {
+                Text(preview.text, Modifier.padding(5.dp), color = PaperKeyText)
+                Text("On-device AI can make mistakes.", Modifier.padding(horizontal = 5.dp),
+                    style = MaterialTheme.typography.labelSmall, color = PaperKeyText)
+            }
+            for (source in preview.sources) {
+                Column(Modifier.fillMaxWidth().padding(vertical = 2.dp).glassSurface(12).padding(horizontal = 8.dp, vertical = 5.dp)) {
+                    Text(source.title, style = MaterialTheme.typography.titleSmall, color = PaperKeyText, maxLines = 1,
+                        overflow = TextOverflow.Ellipsis)
+                    Text(source.snippet, style = MaterialTheme.typography.bodySmall, color = PaperKeyText, maxLines = 2,
+                        overflow = TextOverflow.Ellipsis)
+                    TextButton({ runCatching { uriHandler.openUri(source.url) } }) { Text("View in browser") }
+                }
+            }
+        }
+        return
+    }
     Column(
         Modifier.fillMaxWidth().padding(horizontal = 8.dp, vertical = 2.dp).glassSurface(14)
             .heightIn(max = 108.dp).verticalScroll(rememberScrollState()).padding(horizontal = 8.dp)

@@ -13,11 +13,12 @@ import androidx.compose.ui.graphics.Path
 import androidx.compose.ui.graphics.PathMeasure
 import androidx.compose.ui.graphics.StrokeCap
 import androidx.compose.ui.graphics.drawscope.Stroke
+import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import com.notokens.monolog.ui.theme.PaperAccentBlue
 
 @Composable
-internal fun Modifier.aiKeyTracing(enabled: Boolean): Modifier {
+internal fun Modifier.aiKeyTracing(enabled: Boolean, corner: Dp): Modifier {
     if (!enabled) return this
     val position by rememberInfiniteTransition(label = "AI space key").animateFloat(
         0f, 1f, infiniteRepeatable(tween(3700, easing = LinearEasing)), label = "AI trace position")
@@ -26,7 +27,7 @@ internal fun Modifier.aiKeyTracing(enabled: Boolean): Modifier {
         val path = Path().apply {
             val inset = 1.4.dp.toPx()
             addRoundRect(RoundRect(Rect(inset, inset, size.width - inset, size.height - inset),
-                CornerRadius(((size.height - inset * 2) / 2).coerceAtLeast(0f))))
+                CornerRadius((corner.toPx() - inset).coerceIn(0f, (size.minDimension / 2 - inset).coerceAtLeast(0f)))))
         }
         val measure = PathMeasure().apply { setPath(path, true) }
         val trail = Path()

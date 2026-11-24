@@ -31,9 +31,10 @@ internal data class KeyboardLanguage(
     val alternateLetters: Map<Char, String> = emptyMap(),
     val transliterationTarget: String? = null
 ) {
-    val supportsLatinSwipe get() = id == "en" || id == "hi-Latn" || letterRows != null || transliterationTarget != null
+    val isEnglish get() = id == "en" || id.startsWith("en-")
+    val supportsLatinSwipe get() = isEnglish || id == "hi-Latn" || letterRows != null || transliterationTarget != null
     val translationCode: String?
-        get() = if (id == "en" || id == "hi-Latn") null else TranslateLanguage.fromLanguageTag(transliterationTarget ?: id)
+        get() = if (isEnglish || id == "hi-Latn") null else TranslateLanguage.fromLanguageTag(transliterationTarget ?: id)
 
     fun nativeKeys(): List<String> = script?.mapNotNull { point ->
         val category = Character.getType(point)
@@ -44,6 +45,8 @@ internal data class KeyboardLanguage(
     companion object {
         private val nativeAndLatin = listOf(
             KeyboardLanguage("en", "English (India)", "en-IN"),
+            KeyboardLanguage("en-US", "English (US)", "en-US"),
+            KeyboardLanguage("en-GB", "English (UK)", "en-GB"),
             KeyboardLanguage("hi", "Hindi · हिन्दी", "hi-IN", 0x0900..0x097f),
             KeyboardLanguage("hi-Latn", "Hinglish · Romanized Hindi", "hi-IN"),
             KeyboardLanguage("bn", "Bengali · বাংলা", "bn-IN", 0x0981..0x09cd),

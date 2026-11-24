@@ -142,8 +142,8 @@ android {
         applicationId = "com.notokens.monolog"
         minSdk = 35
         targetSdk = 36
-        versionCode = 7
-        versionName = "0.1.0-alpha.3"
+        versionCode = 8
+        versionName = "0.1.0-alpha.4"
         buildConfigField("boolean", "MONOLOG_HAS_GGUF", (llamaSource != null).toString())
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
         val webEndpoint = providers.gradleProperty("monologWebEndpoint").orElse("").get()
@@ -151,6 +151,13 @@ android {
             "monologWebEndpoint must be an HTTPS endpoint without credentials, query parameters or fragments"
         }
         buildConfigField("String", "MONOLOG_WEB_ENDPOINT", "\"$webEndpoint\"")
+        val serviceAddress = Regex("https://[A-Za-z0-9.-]+(?::[0-9]{1,5})?(?:/[A-Za-z0-9._/-]*)?")
+        val searchEndpoint = providers.gradleProperty("monologDuckDuckGoEndpoint").orElse("").get()
+        val klipyEndpoint = providers.gradleProperty("monologKlipyEndpoint").orElse("").get()
+        require(searchEndpoint.isBlank() || searchEndpoint.matches(serviceAddress)) { "Use an HTTPS DuckDuckGo search endpoint." }
+        require(klipyEndpoint.isBlank() || klipyEndpoint.matches(serviceAddress)) { "Use an HTTPS KLIPY endpoint." }
+        buildConfigField("String", "MONOLOG_DUCKDUCKGO_ENDPOINT", "\"$searchEndpoint\"")
+        buildConfigField("String", "MONOLOG_KLIPY_ENDPOINT", "\"$klipyEndpoint\"")
         providers.gradleProperty("monologAbi").orNull?.let { abi ->
             ndk.abiFilters.add(abi)
         }

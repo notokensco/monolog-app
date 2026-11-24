@@ -160,7 +160,7 @@ internal fun LanguageSettings(settings: SettingsStore) {
             Column(Modifier.weight(1f)) {
                 Text(language.label, color = PaperKeyText, style = MaterialTheme.typography.titleSmall)
                 val detail = when {
-                    language.id == "en" -> "Built-in layout and rewrite"
+                    language.isEnglish -> "Built-in layout and rewrite"
                     language.id == "hi-Latn" -> "Roman keyboard and simple local polish"
                     language.transliterationTarget != null -> "Transliteration and candidate suggestions"
                     code in installed -> "Offline keyboard and translation"

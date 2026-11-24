@@ -5,6 +5,7 @@ import android.view.inputmethod.BaseInputConnection
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.testTag
@@ -43,13 +44,21 @@ class KeyboardTypingTest {
                 MonologTheme {
                     Box(Modifier.fillMaxSize(), contentAlignment = Alignment.BottomCenter) {
                         MonologKeyboardView(
+                            layoutSession = 0, editorActive = true,
+                            voxLanguage = com.notokens.monolog.ime.vox.VoxLanguage.resolve(null, "en-IN"),
+                            voxLanguages = emptyList(), onVoxLanguage = {},
+                            cursorDrag = CursorDrag({}, {}, {}), cursorActive = false, cursorCharacter = null,
+                            onAppearance = {}, onEditorCommand = {}, onFloatingBounds = {},
+                            translation = remember { KeyboardTranslation(context, scope, { input }) { false } },
+                            onOpenVoiceSettings = {}, onEmojiSuggestion = { _, _ -> false }, onPasteImage = { false }, onPasteMedia = { false },
+                            onLetterTyped = { typed.add(it) },
                             editorContext = EditorContext.default(), keyboardState = KeyboardState(), voxState = VoxState(),
                             isShortcutsOpen = false, isVoxOpen = false, shortcutDraft = ShortcutDraft(),
                             onDraftChange = {}, onSuggestedShortcut = {}, onToggleShortcuts = {}, onCaptureContext = {},
                             onDismissShortcuts = {}, searchQuery = null, onSearchQueryChange = {}, onOpenSearch = {}, onCloseSearch = {},
                             ai = ai, aiAllowed = false, swipeAllowed = glide.value, language = KeyboardLanguage.of("en"),
                             onOpenSettings = {}, onEnterVox = {}, onExitVox = {}, onStartListening = {}, onPauseListening = {},
-                            onClearTranscript = {}, onCommitTranscript = {}, onRequestPermission = {},
+                            onDeleteVoxWord = {}, onRequestPermission = {},
                             onCharTyped = { typed.add(it) }, onSwipe = { words.add(decoder.decode(it)) },
                             onBackspace = {}, onSpace = {}, onAction = {}, onShiftClick = {}, onCapsLock = {},
                             onToggleSymbols = {}, onToggleMoreSymbols = {}, onToggleEmoji = {}, onCloseKeyboard = {}, onToggleIncognito = {},

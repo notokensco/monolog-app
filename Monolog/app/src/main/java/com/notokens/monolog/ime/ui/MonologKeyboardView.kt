@@ -1,6 +1,9 @@
 package com.notokens.monolog.ime.ui
 
 import kotlinx.coroutines.launch
+import androidx.compose.animation.Crossfade
+import androidx.compose.animation.core.tween
+import com.notokens.monolog.data.KeyboardPlacement
 
 import android.content.res.Configuration
 import androidx.compose.runtime.LaunchedEffect
@@ -10,8 +13,6 @@ import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.fillMaxHeight
-import androidx.compose.material3.DropdownMenu
-import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.Text
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.foundation.layout.fillMaxSize
@@ -19,6 +20,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.layout.onSizeChanged
 import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.platform.LocalLayoutDirection
 import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
@@ -103,6 +105,10 @@ internal fun MonologKeyboardView(
     language: KeyboardLanguage,
     onOpenSettings: () -> Unit,
     onOpenVoiceSettings: () -> Unit,
+    onAppearance: () -> Unit,
+    onEditorCommand: (EditorCommand) -> Unit,
+    onFloatingBounds: (android.graphics.Rect?) -> Unit,
+    translation: KeyboardTranslation,
     onEnterVox: () -> Unit,
     onExitVox: () -> Unit,
     onStartListening: () -> Unit,
@@ -110,8 +116,10 @@ internal fun MonologKeyboardView(
     onDeleteVoxWord: () -> Unit,
     onRequestPermission: () -> Unit,
     onCharTyped: (String) -> Unit,
+    onPasteText: (String) -> Unit = onCharTyped,
     onEmojiSuggestion: (String, String) -> Boolean,
     onPasteImage: (ClipboardImage) -> Boolean,
+    onPasteMedia: (KeyboardMedia.Item) -> Boolean,
     onLetterTyped: (String) -> Unit,
     onSwipe: (List<SwipePoint>) -> Unit,
     onBackspace: () -> Unit,
@@ -129,7 +137,9 @@ internal fun MonologKeyboardView(
 ) {
     val configuration = LocalConfiguration.current
     val isLandscape = configuration.orientation == Configuration.ORIENTATION_LANDSCAPE
-    var numberPadOpen by remember(layoutSession, keyboardState.layer) { mutableStateOf(false) }
+    var numberPadOpen by remember(layoutSession, keyboardState.layer, editorContext.isNumber) {
+        mutableStateOf(editorContext.isNumber)
+    }
     val showSymbolTools = keyboardState.layer == KeyboardLayer.SYMBOLS ||
         keyboardState.layer == KeyboardLayer.MORE_SYMBOLS
     val density = LocalDensity.current
@@ -147,15 +157,17 @@ internal fun MonologKeyboardView(
     val swapVoxAndAi by settings.swapVoxAndAi.collectAsState(initial = false)
     val heightPercent by settings.keyHeightPercent.collectAsState(initial = 100)
     val cursorOnSpace by settings.cursorOnSpace.collectAsState(false)
+    val placement by settings.keyboardPlacement.collectAsState(KeyboardPlacement.FULL)
+    val compactKeys by settings.compactKeys.collectAsState(false)
     val keyBorders by settings.keyBorders.collectAsState(initial = false)
     val keyPopups by settings.keyPopups.collectAsState(initial = false)
     val keyPopupMs by settings.keyPopupMs.collectAsState(initial = 70)
     val vibrationHaptics by settings.vibrationHaptics.collectAsState(initial = true)
     val keyLongPressMs by settings.keyLongPressMs.collectAsState(initial = 350)
+    val swipeTrail by settings.swipeTrail.collectAsState(initial = 120)
     val maxRowHeight = ((configuration.screenHeightDp.dp - 170.dp) / 4).coerceAtLeast(32.dp)
-    val rowHeight = ((if (isLandscape) 38.dp else 54.dp) * (heightPercent / 100f))
+    val preferredRowHeight = ((if (isLandscape) 38.dp else 54.dp) * (heightPercent / 100f))
         .coerceIn(30.dp, maxRowHeight)
-    val bodyHeight = rowHeight * 4 + 24.dp
     val smartFilter by settings.smartVoxFilter.collectAsState(initial = true)
     val keyboardScope = androidx.compose.runtime.rememberCoroutineScope()
     val onHoldSpace = if (swapVoxAndAi) onEnterVox else onOpenSearch
@@ -169,8 +181,9 @@ internal fun MonologKeyboardView(
         phoneActions && editorActive && !privateMode && ai.journalAllowed, customTriggers)
     val input = ai.toolbarInput
     val hasInput = ai.hasDraft || input.isNotBlank()
+    val shortcode = emojiShortcode(input).takeUnless { editorContext.isRestrictedField }
     val nameMatches by androidx.compose.runtime.produceState<Pair<String, EmojiMatches?>?>(null, input, editorContext.isRestrictedField) {
-        value = if (input.lastOrNull()?.isLetter() != true || editorContext.isRestrictedField) null else {
+        value = if ((input.lastOrNull()?.isLetter() != true && shortcode == null) || editorContext.isRestrictedField) null else {
             input to kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.Default) {
                 matchEmojiName(context.assets, input)
             }
@@ -181,21 +194,93 @@ internal fun MonologKeyboardView(
         onCharTyped(emoji.text)
         if (!privateMode) keyboardScope.launch { settings.rememberEmoji(emoji.text, emoji.label) }
     }
+    fun replaceEmoji(typed: String, emoji: Emoji) {
+        if (onEmojiSuggestion(typed, emoji.text) && !privateMode) {
+            keyboardScope.launch { settings.rememberEmoji(emoji.text, emoji.label) }
+        }
+    }
     var dashboardOpen by remember(layoutSession) { mutableStateOf(false) }
+    var dashboardClips by remember(layoutSession) { mutableStateOf(false) }
+    var panel by remember(layoutSession) { mutableStateOf<KeyboardPanel?>(null) }
+    var mediaTab by remember(layoutSession) { mutableStateOf(KeyboardMediaTab.EMOJI) }
+    val mediaOptIn by settings.onlineMedia.collectAsState(false)
+    var mediaSearch by remember(layoutSession) { mutableStateOf(false) }
+    var mediaQuery by remember(layoutSession, mediaTab) { mutableStateOf("") }
+    var submittedMediaQuery by remember(layoutSession, mediaTab) { mutableStateOf("") }
+    val searchingMedia = mediaSearch && keyboardState.layer == KeyboardLayer.EMOJI && !privateMode && !editorContext.isRestrictedField
+    fun finishMediaSearch() { submittedMediaQuery = mediaQuery.trim(); mediaSearch = false }
+    fun typeMediaQuery(value: String) { mediaQuery = (mediaQuery + value).take(80) }
+    var userPinned by remember(layoutSession) { mutableStateOf(false) }
+    var placementMenu by remember(layoutSession) { mutableStateOf(false) }
+    val tiles = visibleDashboardTiles(settings)
+    val toolbarPins by settings.dashboardPins.collectAsState(emptyList())
+    val pinnedTiles = toolbarPins.mapNotNull { id ->
+        tiles.firstOrNull { it.name == id && it.allowed(privateMode, editorContext.isRestrictedField) }
+    }
+    fun activate(tile: DashboardTile) {
+        if (!tile.allowed(privateMode, editorContext.isRestrictedField)) return
+        userPinned = false
+        when (tile) {
+            DashboardTile.SETTINGS -> onOpenSettings()
+            DashboardTile.PRIVATE -> onToggleIncognito()
+            DashboardTile.HIDE -> onCloseKeyboard()
+            DashboardTile.VOX -> onEnterVox()
+            DashboardTile.CLIPBOARD -> { panel = null; dashboardClips = true; dashboardOpen = true }
+            DashboardTile.EDIT_TEXT -> { dashboardOpen = false; panel = KeyboardPanel.EDIT_TEXT }
+            DashboardTile.LANGUAGE -> { dashboardOpen = false; panel = KeyboardPanel.LANGUAGES }
+            DashboardTile.APPEARANCE -> onAppearance()
+            DashboardTile.TRANSLATE -> { dashboardOpen = false; panel = KeyboardPanel.TRANSLATE }
+            DashboardTile.GIFS, DashboardTile.STICKERS -> {
+                dashboardOpen = false
+                mediaTab = if (tile == DashboardTile.GIFS) KeyboardMediaTab.GIFS else KeyboardMediaTab.STICKERS
+                if (keyboardState.layer != KeyboardLayer.EMOJI) onToggleEmoji()
+            }
+            DashboardTile.UNDO -> onEditorCommand(EditorCommand.UNDO)
+            DashboardTile.REDO -> onEditorCommand(EditorCommand.REDO)
+            DashboardTile.AUTOFILL -> onEditorCommand(EditorCommand.AUTOFILL)
+            else -> keyboardScope.launch { toggleDashboardSetting(tile, settings) }
+        }
+    }
+    LaunchedEffect(input, ai.inlineBusy, isShortcutsOpen, isVoxOpen, isAiActive) {
+        userPinned = false
+    }
+    LaunchedEffect(privateMode, editorContext.isRestrictedField) {
+        if (privateMode || editorContext.isRestrictedField) {
+            mediaSearch = false
+            mediaQuery = ""
+            submittedMediaQuery = ""
+            if (panel == KeyboardPanel.TRANSLATE) panel = null
+            if (mediaTab == KeyboardMediaTab.GIFS || mediaTab == KeyboardMediaTab.STICKERS) mediaTab = KeyboardMediaTab.EMOJI
+        }
+    }
     LaunchedEffect(isShortcutsOpen, isVoxOpen, isAiActive) {
-        if (isShortcutsOpen || isVoxOpen || isAiActive) dashboardOpen = false
+        if (isShortcutsOpen || isVoxOpen || isAiActive) {
+            dashboardOpen = false
+            placementMenu = false
+            panel = null
+            translation.close()
+        }
     }
     val overlayHeight = (configuration.screenHeightDp.dp - with(density) { keyboardHeightPx.toDp() })
         .coerceAtLeast(100.dp)
 
-    KeyPreviewHost(keyPopups && !dashboardOpen && !isVoxOpen) {
+    val activePlacement = if (isVoxOpen || isAiActive || isShortcutsOpen) KeyboardPlacement.FULL else placement
+    KeyboardPosition(activePlacement, preferredRowHeight * 4 + 24.dp, onFloatingBounds) { positionModifier, scale, placementControls ->
+    val rowHeight = (preferredRowHeight * scale).coerceAtLeast(30.dp)
+    val bodyHeight = rowHeight * 4 + 24.dp
+    KeyPreviewHost(!dashboardOpen && !isVoxOpen && !placementMenu && panel != KeyboardPanel.EDIT_TEXT) {
     androidx.compose.runtime.CompositionLocalProvider(
-        LocalKeyAppearance provides KeyAppearance(keyBorders, keyPopups, keyPopupMs, vibrationHaptics, keyLongPressMs),
+        LocalKeyAppearance provides KeyAppearance(keyBorders, keyPopups, keyPopupMs, vibrationHaptics, keyLongPressMs, swipeTrail, compactKeys),
         LocalVibrationHaptics provides vibrationHaptics,
-        LocalCursorKeys provides CursorKeys(cursorDrag.takeIf { cursorOnSpace }, cursorActive, cursorCharacter)
+        LocalCursorKeys provides CursorKeys(cursorDrag.takeIf { cursorOnSpace }, cursorActive, cursorCharacter),
+        LocalActiveKeyboardLanguage provides language,
+        LocalKeyboardLayoutMenu provides { placementMenu = !placementMenu; panel = null; dashboardOpen = false },
+        LocalSplitKeys provides (activePlacement == KeyboardPlacement.SPLIT)
     ) {
-    Column(modifier.fillMaxWidth().monologBackdrop(keyboard = true).navigationBarsPadding()
+    Column(positionModifier.then(modifier).fillMaxWidth()
+        .then(if (isVoxOpen) Modifier else Modifier.monologBackdrop(keyboard = true)).navigationBarsPadding()
         .onSizeChanged { keyboardHeightPx = it.height }) {
+        placementControls()
         // If Vox mode is open, render the full Vox Panel
         if (isVoxOpen) {
             VoxPanel(
@@ -214,6 +299,7 @@ internal fun MonologKeyboardView(
                 onContextHold = onToggleShortcuts,
                 onCancel = onExitVox,
                 onRequestPermission = onRequestPermission,
+                onMiniBounds = onFloatingBounds,
                 onOpenModels = onOpenVoiceSettings
             )
         } else {
@@ -236,7 +322,17 @@ internal fun MonologKeyboardView(
                     editorContext = editorContext,
                     onToggleShortcuts = onToggleShortcuts,
                     onCaptureContext = onCaptureContext,
-                    onToggleDashboard = { dashboardOpen = !dashboardOpen },
+                    onToggleDashboard = {
+                        dashboardOpen = !dashboardOpen
+                        dashboardClips = false
+                        userPinned = false
+                        placementMenu = false
+                        if (panel == KeyboardPanel.TRANSLATE) translation.close()
+                        panel = null
+                    },
+                    onHoldDashboard = if (pinnedTiles.isEmpty() || dashboardOpen || searchQuery != null || isShortcutsOpen) null
+                        else ({ userPinned = !userPinned }),
+                    dashboardChevron = pinnedTiles.isNotEmpty() && (hasInput || userPinned),
                     dashboardOpen = dashboardOpen,
                     onModeAction = if (swapVoxAndAi) onOpenSearch else onEnterVox,
                     toolbarAi = swapVoxAndAi,
@@ -245,22 +341,49 @@ internal fun MonologKeyboardView(
                         if (!dashboardOpen && !isShortcutsOpen && searchQuery == null) {
                             val localActions = ai.inlineActions.ifEmpty { if (!hasInput) copiedActions else emptyList() }
                             val match = emojiMatches
+                            val predictionsVisible = aiAllowed && (ai.suggestions.isNotEmpty() || ai.shortcutSuggestion != null)
+                            val mediaVisible = showSymbolTools && !hasInput && !editorContext.isRestrictedField
+                            val idle = !ai.inlineBusy && ai.toolbar == null && !ai.rewriteOpen &&
+                                localActions.isEmpty() && !predictionsVisible && !mediaVisible && match?.entries.isNullOrEmpty()
                             when {
+                                searchingMedia -> Row(verticalAlignment = Alignment.CenterVertically) {
+                                    Text(mediaQuery.ifEmpty { "Search KLIPY" }, Modifier.weight(1f),
+                                        color = PaperKeyText, maxLines = 1)
+                                    IconControl(Glyph.SEARCH, "Submit media search", ::finishMediaSearch)
+                                    IconControl(Glyph.CLOSE, "Cancel media search", {
+                                        mediaQuery = submittedMediaQuery
+                                        mediaSearch = false
+                                    })
+                                }
+                                userPinned || (idle && !translation.active && shortcode == null && pinnedTiles.isNotEmpty()) ->
+                                    PinnedKeyboardWidgets(pinnedTiles, if (userPinned) ({ userPinned = false }) else null, ::activate)
+                                translation.active -> Row(verticalAlignment = Alignment.CenterVertically) {
+                                    Column(Modifier.weight(1f)) {
+                                        Text(translation.status, color = PaperKeyText, fontSize = 12.sp,
+                                            maxLines = 1, overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis)
+                                        GoogleTranslationAttribution()
+                                    }
+                                    IconControl(Glyph.CLOSE, "Stop translating", translation::close)
+                                }
+                                aiAllowed && ai.dictionaryActionsAllowed &&
+                                    (ai.selectedDictionaryWord != null || ai.suggestionToRemove != null) ->
+                                    KeyboardSuggestionStrip(ai, language, onSuggestedShortcut)
+                                shortcode != null -> EmojiShortcutStrip(
+                                    if (privateMode) emptyList() else recentEmoji,
+                                    if (shortcode == ":") null else match?.entries.orEmpty()
+                                ) { emoji -> replaceEmoji(shortcode, emoji) }
                                 aiAllowed && (ai.inlineBusy || ai.toolbar != null || ai.rewriteOpen) ->
                                     KeyboardSuggestionStrip(ai, language, onSuggestedShortcut, copiedActions)
                                 localActions.isNotEmpty() -> Row(Modifier.fillMaxWidth(),
                                     horizontalArrangement = androidx.compose.foundation.layout.Arrangement.Center) {
                                     DeviceActionButtons(localActions)
                                 }
-                                match != null -> EmojiShortcutStrip(recentEmoji, match.entries) { emoji ->
-                                    if (onEmojiSuggestion(match.typed, emoji.text) && !privateMode) {
-                                        keyboardScope.launch { settings.rememberEmoji(emoji.text, emoji.label) }
-                                    }
-                                }
                                 showSymbolTools && !hasInput && !editorContext.isRestrictedField ->
-                                    EmojiShortcutStrip(recentEmoji, onPick = ::pickEmoji)
+                                    EmojiShortcutStrip(if (privateMode) emptyList() else recentEmoji, onPick = ::pickEmoji)
                                 aiAllowed -> KeyboardSuggestionStrip(ai, language, onSuggestedShortcut,
-                                    copiedActions.takeUnless { hasInput }.orEmpty())
+                                    copiedActions.takeUnless { hasInput }.orEmpty(),
+                                    emojis = match?.entries.orEmpty(),
+                                    onEmoji = { if (match != null) replaceEmoji(match.typed, it) })
                             }
                         }
                     }
@@ -300,83 +423,111 @@ internal fun MonologKeyboardView(
             }
 
             Box(Modifier.fillMaxWidth().height(bodyHeight)) {
-                if (dashboardOpen) KeyboardDashboard(
-                    settings = settings,
-                    privateMode = privateMode,
-                    clips = clips,
-                    images = images,
-                    onPasteImage = { if (onPasteImage(it)) dashboardOpen = false },
-                    rowHeight = rowHeight,
-                    onSettings = onOpenSettings,
-                    onIncognito = onToggleIncognito,
-                    onHide = onCloseKeyboard,
-                    onVox = onEnterVox,
-                    onPaste = { value -> onCharTyped(value); dashboardOpen = false }
-                )
-                else Column(
-                    modifier = Modifier
-                        .fillMaxSize()
-                        .padding(start = 3.dp, end = 3.dp, top = 4.dp, bottom = 16.dp)
-                ) {
-                    when (keyboardState.layer) {
-                        KeyboardLayer.LETTERS -> LettersLayout(
+                Crossfade(dashboardOpen, modifier = Modifier.fillMaxSize(), animationSpec = tween(105),
+                    label = "Keyboard dashboard") { showDashboard ->
+                    if (showDashboard) {
+                        KeyboardDashboard(
+                            settings = settings,
+                            privateMode = privateMode,
+                            clips = clips,
+                            images = images,
+                            onPasteImage = { if (onPasteImage(it)) dashboardOpen = false },
                             rowHeight = rowHeight,
-                            shiftState = keyboardState.shiftState,
-                            editorContext = editorContext,
-                            language = language,
-                            onCharTyped = onCharTyped,
-                            onLetterTyped = onLetterTyped,
-                            swipeEnabled = swipeAllowed && language.supportsLatinSwipe && (!isShortcutsOpen || shortcutDraft.isEditing),
-                            longPressCharacters = longPressCharacters,
-                            onSwipe = onSwipe,
-                            onShiftClick = onShiftClick,
-                            onCapsLock = onCapsLock,
-                            onBackspace = onBackspace,
-                            onToggleSymbols = onToggleSymbols,
-                            onToggleEmoji = onToggleEmoji,
-                            onSpace = onSpace,
-                            onHoldSpace = onHoldSpace,
-                            spacebarVox = swapVoxAndAi,
-                            isAiActive = isAiActive,
-                            onToggleIncognito = onToggleIncognito,
-                            onAction = onAction
+                            tiles = tiles,
+                            toolbarPins = toolbarPins,
+                            restricted = editorContext.isRestrictedField,
+                            showClips = dashboardClips,
+                            onShowClips = { dashboardClips = it },
+                            onActivate = ::activate,
+                            onPaste = { value -> onPasteText(value); dashboardOpen = false }
                         )
+                    } else if (placementMenu) {
+                        KeyboardPlacementPicker(placement, onClose = { placementMenu = false }) {
+                            keyboardScope.launch { settings.setKeyboardPlacement(it); placementMenu = false }
+                        }
+                    } else if (panel != null) {
+                        fun closePanel() { panel = null }
+                        when (panel) {
+                            KeyboardPanel.EDIT_TEXT -> KeyboardEditorTools(onEditorCommand, ::closePanel)
+                            KeyboardPanel.LANGUAGES -> KeyboardLanguagePicker(language, {
+                                keyboardScope.launch { settings.setKeyboardLanguage(it.id); closePanel() }
+                            }, ::closePanel)
+                            KeyboardPanel.TRANSLATE -> KeyboardTranslationPicker(translation, ::closePanel)
+                            null -> Unit
+                        }
+                    } else Column(
+                        modifier = Modifier
+                            .fillMaxSize()
+                            .padding(start = 3.dp, end = 3.dp, top = 4.dp, bottom = 16.dp)
+                    ) {
+                        when (if (searchingMedia) KeyboardLayer.LETTERS else keyboardState.layer) {
+                            KeyboardLayer.LETTERS -> LettersLayout(
+                                rowHeight = rowHeight,
+                                shiftState = keyboardState.shiftState,
+                                editorContext = editorContext,
+                                language = language,
+                                onCharTyped = if (searchingMedia) ::typeMediaQuery else ({ userPinned = false; onCharTyped(it) }),
+                                onLetterTyped = if (searchingMedia) ::typeMediaQuery else ({ userPinned = false; onLetterTyped(it) }),
+                                swipeEnabled = !searchingMedia && swipeAllowed && !translation.active && language.supportsLatinSwipe && (!isShortcutsOpen || shortcutDraft.isEditing),
+                                longPressCharacters = longPressCharacters,
+                                onSwipe = { userPinned = false; onSwipe(it) },
+                                onShiftClick = onShiftClick,
+                                onCapsLock = onCapsLock,
+                                onBackspace = if (searchingMedia) ({ mediaQuery = mediaQuery.dropLast(1) }) else ({ userPinned = false; onBackspace() }),
+                                onToggleSymbols = if (searchingMedia) ::finishMediaSearch else onToggleSymbols,
+                                onToggleEmoji = if (searchingMedia) ::finishMediaSearch else onToggleEmoji,
+                                onSpace = if (searchingMedia) ({ typeMediaQuery(" ") }) else ({ userPinned = false; onSpace() }),
+                                onHoldSpace = if (searchingMedia) ({}) else onHoldSpace,
+                                spacebarVox = swapVoxAndAi,
+                                isAiActive = isAiActive,
+                                onToggleIncognito = onToggleIncognito,
+                                onAction = if (searchingMedia) ::finishMediaSearch else ({ userPinned = false; onAction() })
+                            )
 
-                        KeyboardLayer.SYMBOLS, KeyboardLayer.MORE_SYMBOLS -> SymbolsLayout(
-                            moreSymbols = keyboardState.layer == KeyboardLayer.MORE_SYMBOLS,
-                            rowHeight = rowHeight,
-                            numberPadOpen = numberPadOpen,
-                            onNumberPad = { numberPadOpen = !numberPadOpen },
-                            longPressCharacters = longPressCharacters,
-                            editorContext = editorContext,
-                            onCharTyped = onCharTyped,
-                            onToggleMoreSymbols = onToggleMoreSymbols,
-                            onBackspace = onBackspace,
-                            onToggleSymbols = onToggleSymbols,
-                            onToggleEmoji = onToggleEmoji,
-                            onSpace = onSpace,
-                            onHoldSpace = onHoldSpace,
-                            spacebarVox = swapVoxAndAi,
-                            isAiActive = isAiActive,
-                            onToggleIncognito = onToggleIncognito,
-                            onAction = onAction
-                        )
+                            KeyboardLayer.SYMBOLS, KeyboardLayer.MORE_SYMBOLS -> SymbolsLayout(
+                                moreSymbols = keyboardState.layer == KeyboardLayer.MORE_SYMBOLS,
+                                rowHeight = rowHeight,
+                                numberPadOpen = numberPadOpen,
+                                onNumberPad = { numberPadOpen = !numberPadOpen },
+                                longPressCharacters = longPressCharacters,
+                                editorContext = editorContext,
+                                onCharTyped = { userPinned = false; onCharTyped(it) },
+                                onToggleMoreSymbols = onToggleMoreSymbols,
+                                onBackspace = { userPinned = false; onBackspace() },
+                                onToggleSymbols = onToggleSymbols,
+                                onToggleEmoji = onToggleEmoji,
+                                onSpace = { userPinned = false; onSpace() },
+                                onHoldSpace = onHoldSpace,
+                                spacebarVox = swapVoxAndAi,
+                                isAiActive = isAiActive,
+                                onToggleIncognito = onToggleIncognito,
+                                onAction = { userPinned = false; onAction() }
+                            )
 
-                        KeyboardLayer.EMOJI -> EmojiLayout(
-                            rowHeight = rowHeight,
-                            recent = if (editorContext.isIncognito) emptyList() else recentEmoji,
-                            onEmojiPicked = ::pickEmoji,
-                            editorContext = editorContext,
-                            onCharTyped = onCharTyped,
-                            onBackspace = onBackspace,
-                            onToggleLetters = onToggleEmoji,
-                            onSpace = onSpace,
-                            onHoldSpace = onHoldSpace,
-                            spacebarVox = swapVoxAndAi,
-                            isAiActive = isAiActive,
-                            onToggleIncognito = onToggleIncognito,
-                            onAction = onAction
-                        )
+                            KeyboardLayer.EMOJI -> EmojiLayout(
+                                mediaTab = mediaTab,
+                                onMediaTab = { mediaTab = it },
+                                mediaAllowed = !privateMode && !editorContext.isRestrictedField,
+                                mediaOptIn = mediaOptIn,
+                                mediaQuery = submittedMediaQuery,
+                                onMediaSearch = { mediaSearch = true },
+                                onEnableMedia = { keyboardScope.launch { settings.setOnlineMedia(true) } },
+                                onMedia = onPasteMedia,
+                                rowHeight = rowHeight,
+                                recent = if (editorContext.isIncognito) emptyList() else recentEmoji,
+                                onEmojiPicked = ::pickEmoji,
+                                editorContext = editorContext,
+                                onCharTyped = { userPinned = false; onCharTyped(it) },
+                                onBackspace = { userPinned = false; onBackspace() },
+                                onToggleLetters = onToggleEmoji,
+                                onSpace = { userPinned = false; onSpace() },
+                                onHoldSpace = onHoldSpace,
+                                spacebarVox = swapVoxAndAi,
+                                isAiActive = isAiActive,
+                                onToggleIncognito = onToggleIncognito,
+                                onAction = { userPinned = false; onAction() }
+                            )
+                        }
                     }
                 }
             }
@@ -384,6 +535,8 @@ internal fun MonologKeyboardView(
     }
 }
 }
+}
+
 }
 
 private object AboveKeyboardHeader : PopupPositionProvider {
@@ -426,6 +579,7 @@ private fun LettersLayout(
     val typeLetterOrSymbol: (String) -> Unit = { value ->
         if (value.any(Char::isLetter)) onLetterTyped(value) else onCharTyped(value)
     }
+    val split = LocalSplitKeys.current
     val nativeKeys = remember(language) { language.nativeKeys() }
     var page by remember(language) { mutableIntStateOf(0) }
 
@@ -434,6 +588,7 @@ private fun LettersLayout(
         for (row in 0..2) {
             Row(Modifier.fillMaxWidth().height(rowHeight)) {
                 repeat(8) { column ->
+                    if (split && column == 4) Spacer(Modifier.width(SplitKeyboardGap))
                     val key = pages[page].getOrNull(row * 8 + column)
                     if (key == null) Spacer(Modifier.weight(1f))
                     else KeyButton(Modifier.weight(1f), text = key, onClick = { onCharTyped(key) })
@@ -446,20 +601,23 @@ private fun LettersLayout(
     } else {
         val rows = language.letterRows ?: QwertyLayout.rows
         val homeInset = (QwertyLayout.width - rows[1].length) / 2f
-        Column(Modifier.fillMaxWidth().then(swipeTypingModifier(swipeEnabled, rows, onSwipe = onSwipe))) {
+        Column(Modifier.fillMaxWidth().then(swipeTypingModifier(swipeEnabled, rows, split = split, onSwipe = onSwipe))) {
             Row(Modifier.fillMaxWidth().height(rowHeight)) {
                 rows[0].forEachIndexed { index, letter ->
+                    if (split && index == (rows[0].length + 1) / 2) Spacer(Modifier.width(SplitKeyboardGap))
                     LetterKey(Modifier.weight(1f), letter, isUpper, longPressCharacters,
                         language.alternateLetters[letter], "1234567890"[index], typeLetterOrSymbol)
                 }
             }
             Row(Modifier.fillMaxWidth().height(rowHeight)) {
-                if (homeInset > 0) Spacer(Modifier.weight(homeInset))
                 rows[1].forEachIndexed { index, letter ->
-                    LetterKey(Modifier.weight(1f), letter, isUpper, longPressCharacters,
-                        language.alternateLetters[letter], "@#\u00a3_&-+()"[index], typeLetterOrSymbol)
+                    if (split && index == (rows[1].length + 1) / 2) Spacer(Modifier.width(SplitKeyboardGap))
+                    val edge = index == 0 || index == rows[1].lastIndex
+                    LetterKey(Modifier.weight(if (edge) 1 + homeInset else 1f), letter, isUpper, longPressCharacters,
+                        language.alternateLetters[letter], "@#\u00a3_&-+()"[index], typeLetterOrSymbol,
+                        faceStart = if (index == 0) 7.dp * homeInset else 0.dp,
+                        faceEnd = if (index == rows[1].lastIndex) 7.dp * homeInset else 0.dp)
                 }
-                if (homeInset > 0) Spacer(Modifier.weight(homeInset))
             }
             Row(Modifier.fillMaxWidth().height(rowHeight)) {
                 KeyButton(
@@ -477,6 +635,7 @@ private fun LettersLayout(
                     onClick = onShiftClick
                 )
                 rows[2].forEachIndexed { index, letter ->
+                    if (split && index == (rows[2].length + 1) / 2) Spacer(Modifier.width(SplitKeyboardGap))
                     LetterKey(Modifier.weight(1f), letter, isUpper, longPressCharacters,
                         language.alternateLetters[letter], "*\"':;!?"[index], typeLetterOrSymbol)
                 }
@@ -537,36 +696,19 @@ private fun LetterKey(
     longPressCharacters: Boolean,
     accents: String?,
     alternate: Char,
-    onType: (String) -> Unit
+    onType: (String) -> Unit,
+    faceStart: Dp = 0.dp,
+    faceEnd: Dp = 0.dp
 ) {
     fun display(value: Char) = if (!uppercase) value else if (value == 'ß') 'ẞ' else value.uppercaseChar()
     val normal = display(letter).toString()
-    if (accents == null) {
-        val symbol = alternate.toString()
-        KeyButton(modifier, text = normal, subText = symbol.takeIf { longPressCharacters },
-            longClickLabel = "Type $symbol", onLongClick = if (longPressCharacters) ({ onType(symbol) }) else null,
-            onClick = { onType(normal) })
-        return
+    val options = remember(accents, uppercase, alternate, longPressCharacters) {
+        if (longPressCharacters) accents.orEmpty().map { display(it).toString() } + alternate.toString()
+        else emptyList()
     }
-    val options = remember(accents, uppercase, alternate) {
-        accents.map { display(it).toString() } + alternate.toString()
-    }
-    var expanded by remember(letter) { mutableStateOf(false) }
-    Box(modifier.fillMaxSize()) {
-        KeyButton(Modifier.fillMaxSize(), text = normal,
-            subText = options.first().takeIf { longPressCharacters },
-            longClickLabel = "Choose alternate character",
-            onLongClick = if (longPressCharacters) ({ expanded = true }) else null,
-            onClick = { onType(normal) })
-        DropdownMenu(expanded && longPressCharacters, onDismissRequest = { expanded = false }) {
-            options.forEach { symbol ->
-                DropdownMenuItem(text = { Text(symbol) }, onClick = {
-                    expanded = false
-                    onType(symbol)
-                })
-            }
-        }
-    }
+    KeyButton(modifier, text = normal, subText = options.firstOrNull(),
+        faceStart = faceStart, faceEnd = faceEnd,
+        alternates = options, onAlternate = onType, onClick = { onType(normal) })
 }
 
 @Composable
@@ -598,47 +740,49 @@ private fun SymbolsLayout(
 
     val canHold = longPressCharacters && !editorContext.isRestrictedField
     if (numberPadOpen) {
-        DigitsGrid(rowHeight, canHold, onCharTyped, onBackspace)
-    } else {
-        // Row 1
-        Row(modifier = Modifier.fillMaxWidth().height(rowHeight)) {
-            row1.forEach { char ->
-                SymbolKey(Modifier.weight(1f), char, canHold, onCharTyped)
-            }
+        androidx.compose.runtime.CompositionLocalProvider(LocalLayoutDirection provides LayoutDirection.Ltr) {
+            DigitsGrid(rowHeight, canHold, editorContext, onCharTyped, onBackspace, onNumberPad,
+                onToggleSymbols, onSpace, onAction)
+        }
+        return
+    }
+    // Row 1
+    Row(modifier = Modifier.fillMaxWidth().height(rowHeight)) {
+        row1.forEach { char ->
+            SymbolKey(Modifier.weight(1f), char, canHold, onCharTyped)
+        }
+    }
+
+    // Row 2
+    Row(modifier = Modifier.fillMaxWidth().height(rowHeight)) {
+        row2.forEach { char ->
+            SymbolKey(Modifier.weight(1f), char, canHold, onCharTyped)
+        }
+    }
+
+    // Row 3
+    Row(modifier = Modifier.fillMaxWidth().height(rowHeight)) {
+        KeyButton(
+            modifier = Modifier.weight(1.4f),
+            text = if (moreSymbols) "123" else "=\\<",
+            fontSize = 14.sp,
+            fontWeight = FontWeight.SemiBold,
+            isSpecial = true,
+            onClick = onToggleMoreSymbols
+        )
+
+        row3.forEach { char ->
+            SymbolKey(Modifier.weight(1f), char, canHold, onCharTyped)
         }
 
-        // Row 2
-        Row(modifier = Modifier.fillMaxWidth().height(rowHeight)) {
-            row2.forEach { char ->
-                SymbolKey(Modifier.weight(1f), char, canHold, onCharTyped)
-            }
-        }
-
-        // Row 3
-        Row(modifier = Modifier.fillMaxWidth().height(rowHeight)) {
-            KeyButton(
-                modifier = Modifier.weight(1.4f),
-                text = if (moreSymbols) "123" else "=\\<",
-                fontSize = 14.sp,
-                fontWeight = FontWeight.SemiBold,
-                isSpecial = true,
-                onClick = onToggleMoreSymbols
-            )
-
-            row3.forEach { char ->
-                SymbolKey(Modifier.weight(1f), char, canHold, onCharTyped)
-            }
-
-            KeyButton(
-                modifier = Modifier.weight(1.4f),
-                text = "⌫",
-                glyph = Glyph.BACKSPACE,
-                fontSize = 18.sp,
-                isSpecial = true,
-                onClick = onBackspace
-            )
-        }
-
+        KeyButton(
+            modifier = Modifier.weight(1.4f),
+            text = "⌫",
+            glyph = Glyph.BACKSPACE,
+            fontSize = 18.sp,
+            isSpecial = true,
+            onClick = onBackspace
+        )
     }
 
     // Row 4
@@ -649,7 +793,6 @@ private fun SymbolsLayout(
         onModeClick = onToggleSymbols,
         onEmojiClick = onToggleEmoji,
         onNumberPad = onNumberPad,
-        numberPadOpen = numberPadOpen,
         onSpace = onSpace,
         onHoldSpace = onHoldSpace,
         spacebarVox = spacebarVox,
@@ -664,21 +807,52 @@ private fun SymbolsLayout(
 private fun DigitsGrid(
     rowHeight: Dp,
     canHold: Boolean,
+    editorContext: EditorContext,
     onCharTyped: (String) -> Unit,
-    onBackspace: () -> Unit
+    onBackspace: () -> Unit,
+    onSymbols: () -> Unit,
+    onLetters: () -> Unit,
+    onSpace: () -> Unit,
+    onAction: () -> Unit
 ) {
-    val rows = listOf(listOf("1", "2", "3", "+"), listOf("4", "5", "6", "-"), listOf("7", "8", "9", "0"))
-    rows.forEachIndexed { index, row ->
+    val digitRows = listOf("123", "456", "789")
+    val t9 = listOf("", "", "ABC", "DEF", "GHI", "JKL", "MNO", "PQRS", "TUV", "WXYZ")
+    val left = listOf("+", "-", ".")
+    val right = listOf("/", "⌫", "=")
+    digitRows.forEachIndexed { row, digits ->
         Row(Modifier.fillMaxWidth().height(rowHeight)) {
-            row.forEach { digit ->
-                SymbolKey(Modifier.weight(1f), digit, canHold, onCharTyped)
+            SymbolKey(Modifier.weight(.8f), left[row], canHold, onCharTyped)
+            digits.forEach { digit ->
+                val value = digit.toString()
+                val letters = t9[digit.digitToInt()]
+                val options = if (canHold) symbolAlternates[value].orEmpty() else emptyList()
+                KeyButton(Modifier.weight(1.15f), previewText = value,
+                    label = listOf(value, letters).filter(String::isNotEmpty).joinToString(" "),
+                    alternates = options, onAlternate = onCharTyped, onClick = { onCharTyped(value) }) {
+                    Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                        Text(value, fontSize = 22.sp, lineHeight = 22.sp, color = PaperKeyText)
+                        if (letters.isNotEmpty()) Text(letters, fontSize = 9.sp, lineHeight = 10.sp,
+                            color = com.notokens.monolog.ui.theme.PaperKeySubText, fontWeight = FontWeight.Medium)
+                    }
+                }
             }
-            when (index) {
-                0 -> SymbolKey(Modifier.weight(1f), "/", canHold, onCharTyped)
-                1 -> KeyButton(Modifier.weight(1f), glyph = Glyph.BACKSPACE, isSpecial = true, onClick = onBackspace)
-                else -> SymbolKey(Modifier.weight(1f), "=", canHold, onCharTyped)
+            if (row == 1) {
+                KeyButton(Modifier.weight(.8f), glyph = Glyph.BACKSPACE, label = "Backspace", onClick = onBackspace)
+            } else {
+                SymbolKey(Modifier.weight(.8f), right[row], canHold, onCharTyped)
             }
         }
+    }
+    Row(Modifier.fillMaxWidth().height(rowHeight + 4.dp)) {
+        KeyButton(Modifier.weight(.8f), text = "?123", fontSize = 14.sp, label = "Return to symbols", onClick = onSymbols)
+        KeyButton(Modifier.weight(1.15f), text = "ABC", fontSize = 14.sp, label = "Return to letters", onClick = onLetters)
+        SymbolKey(Modifier.weight(1.15f), "0", canHold, onCharTyped)
+        KeyButton(Modifier.weight(1.15f), text = "␣", fontSize = 19.sp, label = "Space", onClick = onSpace)
+        KeyButton(Modifier.weight(.8f), glyph = when (editorContext.action) {
+            KeyboardAction.SEARCH -> Glyph.SEARCH
+            KeyboardAction.GO, KeyboardAction.SEND, KeyboardAction.NEXT -> Glyph.ARROW
+            else -> Glyph.ENTER
+        }, onClick = onAction)
     }
 }
 
@@ -700,6 +874,7 @@ private val symbolAlternates = mapOf(
     "@" to listOf("©", "®", "™"), "#" to listOf("№", "♪"), "&" to listOf("§", "¶"),
     "." to listOf("…", "·"), "_" to listOf("-", "‒"), "~" to listOf("≈", "≃"),
     "°" to listOf("℃", "℉"), "|" to listOf("¦", "‖"), "^" to listOf("↑", "↓"),
+    "`" to listOf("‘", "’", "′"), "\\" to listOf("/", "⧵"),
     "π" to listOf("τ", "φ"), "∆" to listOf("∇", "δ"), "¶" to listOf("§", "†"),
     "•" to listOf("◦", "·"), "©" to listOf("®", "℗"), "®" to listOf("©", "™"),
     "™" to listOf("℠", "®"), ";" to listOf(":", ";")
@@ -708,31 +883,20 @@ private val symbolAlternates = mapOf(
 @Composable
 private fun SymbolKey(modifier: Modifier, symbol: String, canHold: Boolean, onType: (String) -> Unit) {
     val options = if (canHold) symbolAlternates[symbol].orEmpty() else emptyList()
-    if (options.size < 2) {
-        val alternate = options.firstOrNull()
-        KeyButton(modifier, text = symbol, subText = alternate,
-            longClickLabel = alternate?.let { "Type $it" },
-            onLongClick = alternate?.let { { onType(it) } }, onClick = { onType(symbol) })
-        return
-    }
-    var expanded by remember(symbol) { mutableStateOf(false) }
-    Box(modifier.fillMaxSize()) {
-        KeyButton(Modifier.fillMaxSize(), text = symbol, subText = options.first(),
-            longClickLabel = "Choose alternate symbol", onLongClick = { expanded = true },
-            onClick = { onType(symbol) })
-        DropdownMenu(expanded, onDismissRequest = { expanded = false }) {
-            options.forEach { alternate ->
-                DropdownMenuItem(text = { Text(alternate) }, onClick = {
-                    expanded = false
-                    onType(alternate)
-                })
-            }
-        }
-    }
+    KeyButton(modifier, text = symbol, subText = options.firstOrNull(),
+        alternates = options, onAlternate = onType, onClick = { onType(symbol) })
 }
 
 @Composable
 private fun EmojiLayout(
+    mediaTab: KeyboardMediaTab,
+    onMediaTab: (KeyboardMediaTab) -> Unit,
+    mediaAllowed: Boolean,
+    mediaOptIn: Boolean,
+    mediaQuery: String,
+    onMediaSearch: () -> Unit,
+    onEnableMedia: () -> Unit,
+    onMedia: (KeyboardMedia.Item) -> Boolean,
     rowHeight: Dp,
     recent: List<Emoji>,
     onEmojiPicked: (Emoji) -> Unit,
@@ -747,7 +911,8 @@ private fun EmojiLayout(
     onToggleIncognito: () -> Unit,
     onAction: () -> Unit
 ) {
-    EmojiPicker(height = rowHeight * 3, recent = recent, onPick = onEmojiPicked)
+    KeyboardMediaPicker(mediaTab, onMediaTab, rowHeight * 3, recent, mediaAllowed, mediaOptIn,
+        mediaQuery, onMediaSearch, onEnableMedia, onEmojiPicked, onCharTyped, onMedia)
     BottomRow(
         rowHeight = rowHeight,
         modeLabel = "ABC",
@@ -780,13 +945,11 @@ private fun BottomRow(
     onAction: () -> Unit,
     onCharTyped: (String) -> Unit,
     onEmojiBackspace: (() -> Unit)? = null,
-    onNumberPad: (() -> Unit)? = null,
-    numberPadOpen: Boolean = false
+    onNumberPad: (() -> Unit)? = null
 ) {
-    val context = androidx.compose.ui.platform.LocalContext.current
-    val settings = remember(context) { com.notokens.monolog.data.SettingsStore(context.applicationContext) }
-    val languageId by settings.keyboardLanguage.collectAsState(initial = "en")
-    val language = KeyboardLanguage.of(languageId)
+    val language = LocalActiveKeyboardLanguage.current
+    val layoutMenu = LocalKeyboardLayoutMenu.current.takeIf { modeLabel == "?123" }
+    val split = LocalSplitKeys.current
     val cursorDrag = LocalCursorKeys.current.drag
     val smartHold = onHoldSpace.takeUnless { editorContext.isRestrictedField || editorContext.isNumber }
     val smartLabel = when {
@@ -795,7 +958,11 @@ private fun BottomRow(
         else -> "Open Monolog AI search"
     }
     Row(modifier = Modifier.fillMaxWidth().height(rowHeight + 4.dp)) {
-        KeyButton(Modifier.weight(1.4f), text = modeLabel, fontSize = 16.sp, onClick = onModeClick)
+        KeyButton(Modifier.weight(1.4f), text = modeLabel,
+            subText = if (layoutMenu != null) "⋯" else null,
+            fontSize = 16.sp, onClick = onModeClick,
+            longClickLabel = if (layoutMenu != null) "Keyboard layout options" else null,
+            onLongClick = layoutMenu)
         KeyButton(
             Modifier.weight(1.15f),
             label = "Comma",
@@ -812,14 +979,14 @@ private fun BottomRow(
         if (onNumberPad != null) {
             KeyButton(
                 Modifier.weight(1f),
-                isActive = numberPadOpen,
-                label = if (numberPadOpen) "Return to symbols" else "Open number pad",
+                label = "Open number pad",
                 onClick = onNumberPad
             ) {
                 Text("1 2\n3 4", color = PaperKeyText, fontSize = 10.sp,
                     lineHeight = 10.sp, fontWeight = FontWeight.SemiBold)
             }
         }
+        if (split) Spacer(Modifier.width(13.dp))
         KeyButton(
             Modifier.weight(when {
                 onNumberPad != null -> 3.9f
@@ -846,6 +1013,7 @@ private fun BottomRow(
                 if (!editorContext.isIncognito && cursorDrag == null) MonologIcon(if (spacebarVox) Glyph.MIC else Glyph.BOLT, Modifier.size(17.dp))
             }
         }
+        if (split) Spacer(Modifier.width(13.dp))
         KeyButton(
             Modifier.weight(1.1f),
             previewText = ".",

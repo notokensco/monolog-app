@@ -24,8 +24,8 @@ internal data class DayBrief(val text: String, val sourceIds: List<String>, val 
 
 internal class MemorySearch(private val context: Context,
     private val db: MonologDatabase = MonologDatabase.get(context)) {
-    suspend fun search(query: String, year: Int = LocalDate.now().year): List<MemoryMatch> = withContext(Dispatchers.Default) {
-        val records = db.memories().year(year)
+    suspend fun search(query: String, year: Int? = LocalDate.now().year): List<MemoryMatch> = withContext(Dispatchers.Default) {
+        val records = if (year == null) db.memories().all() else db.memories().year(year)
         val encoder = SentenceEncoder.get(context)
         val vector = try { encoder.embed(query) } catch (error: kotlinx.coroutines.CancellationException) { throw error }
             catch (_: Exception) { null }

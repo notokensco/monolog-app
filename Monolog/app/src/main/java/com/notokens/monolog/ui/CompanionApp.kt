@@ -106,7 +106,7 @@ private fun pickReminderTime(context: Context, initial: Long, inkMode: Boolean, 
 
 enum class CompanionDestination(val route: String) {
     NEW_NOTE("note/new"), NEW_REMINDER("reminder/new"),
-    TODAY("today"), JOURNAL("journal"), LIBRARY("library"), SETTINGS("settings"), VOICE("settings/voice")
+    TODAY("today"), JOURNAL("journal"), LIBRARY("library"), SETTINGS("settings"), VOICE("settings/voice"), APPEARANCE("settings/appearance")
 }
 
 @Composable
@@ -114,6 +114,7 @@ fun CompanionApp(
     settings: SettingsStore,
     appearance: Appearance,
     destination: CompanionDestination?,
+    personalRoute: String? = null,
     onDestinationOpened: () -> Unit,
     onRequestMicPermission: () -> Unit
 ) {
@@ -145,8 +146,13 @@ fun CompanionApp(
         nav.navigate(CompanionDestination.SETTINGS.route) { launchSingleTop = true }
         scope.launch { settingsScroll.scrollTo(0) }
     }
-    LaunchedEffect(destination) {
-        if (destination != null) {
+    LaunchedEffect(destination, personalRoute) {
+        if (personalRoute != null) {
+            if (startRoute != "onboarding" || firstRunPrefs.getBoolean("completed", false)) {
+                nav.navigate(personalRoute) { launchSingleTop = true }
+            }
+            onDestinationOpened()
+        } else if (destination != null) {
             when (destination) {
                 CompanionDestination.SETTINGS -> openSettings()
                 else -> nav.navigate(destination.route) {
@@ -309,10 +315,10 @@ fun CompanionApp(
                             }
                         }
                     }
-                    composable("journal?ask={ask}", arguments = listOf(navArgument("ask") {
-                        type = NavType.BoolType
-                        defaultValue = false
-                    })) { journalEntry ->
+                    composable("journal?ask={ask}&day={day}", arguments = listOf(
+                        navArgument("ask") { type = NavType.BoolType; defaultValue = false },
+                        navArgument("day") { type = NavType.StringType; nullable = true; defaultValue = null }
+                    )) { journalEntry ->
                         val allNotes by repo.notes.collectAsState(initial = emptyList())
                         val notes = visibleBackupYears(allNotes)
                         val photoRefs by repo.notePhotos.collectAsState(initial = emptyList())
@@ -340,7 +346,8 @@ fun CompanionApp(
                                     visibleNotes = notes, photos = photosByNote,
                                     query = query, onClearQuery = { query = "" },
                                     onFocusSearch = { searchField.requestFocus(); keyboard?.show() },
-                                    askRequest = askRequest, onAnswering = { answering = it }
+                                    askRequest = askRequest, onAnswering = { answering = it },
+                                    initialDay = journalEntry.arguments?.getString("day")
                                 )
                             }
                             item { ArchivedYearsLink { nav.navigate(SettingsPage.ACCOUNT.route) } }
@@ -777,6 +784,7 @@ fun CompanionApp(
                                         }
                                         KeyboardBehaviorSettings(settings)
                                         PersonalDictionarySettings(settings)
+                                        KeyboardUsageSettings(settings)
                                         val tapOpensShortcuts by settings.tapOpensShortcuts.collectAsState(false)
                                         val holdMs by settings.shortcutHoldMs.collectAsState(initial = 500)
                                         val shortcutHaptics by settings.shortcutHaptics.collectAsState(initial = true)

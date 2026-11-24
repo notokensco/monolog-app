@@ -35,7 +35,8 @@ private data class AboutDocument(val title: String, val asset: String)
 
 private val policyDocuments = listOf(
     AboutDocument("Privacy policy", "policies/privacy.txt"),
-    AboutDocument("Terms of use", "policies/terms.txt")
+    AboutDocument("Terms of use", "policies/terms.txt"),
+    AboutDocument("KLIPY media and ads", "policies/klipy.txt")
 )
 
 private val credits = listOf(
@@ -115,6 +116,8 @@ internal fun AboutSettings() {
     }
     SettingsCard("Privacy and terms") {
         policyDocuments.forEach { item -> TextButton({ selected = item.asset }) { Text(item.title) } }
+        TextButton({ browser.openUri("https://klipy.com/support/privacy-policy") }) { Text("KLIPY privacy policy") }
+        TextButton({ browser.openUri("https://klipy.com/support/terms-services") }) { Text("KLIPY terms of service") }
         TextButton({ browser.openUri("https://monolog.notokens.co/privacy") }) { Text("Latest privacy policy online") }
     }
     SettingsCard("Ownership and licenses") {
@@ -122,6 +125,9 @@ internal fun AboutSettings() {
             "Third-party data, models, fonts, and libraries are available under their respective terms.",
             color = PaperKeySubText, style = MaterialTheme.typography.bodySmall)
         credits.forEach { item -> TextButton({ selected = item.asset }) { Text(item.title) } }
+        Text("Keyboard translation uses Google Translate with downloaded on-device models.",
+            color = PaperKeySubText, style = MaterialTheme.typography.bodySmall)
+        TextButton({ browser.openUri("https://cloud.google.com/translate") }) { Text("Google Translate attribution") }
         TextButton({ browser.openUri("https://docs.api.met.no/doc/License.html") }) { Text("Weather data license") }
     }
 }

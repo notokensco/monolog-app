@@ -17,7 +17,7 @@ internal object NativeTyping {
         }
     }
 
-    internal data class Candidates(val correction: String?, val words: List<String>)
+    internal data class Candidates(val correction: String?, val words: List<String>, val known: Boolean)
 
     private enum class Lexicon(val id: String, val asset: String?) {
         ENGLISH("en", "english-4.0.0.dic"),
@@ -88,11 +88,13 @@ internal object NativeTyping {
     fun suggestions(context: Context, language: String, prefix: String, before: String, next: List<String>): Candidates? {
         val lexicon = ready(context, language) ?: return null
         val ranked = rankSuggestions(lexicon.ordinal, prefix, next.joinToString(" "), before.takeLast(128).lowercase(java.util.Locale.ROOT)) ?: return null
-        return Candidates(ranked.substringBefore('\n').ifEmpty { null }, ranked.substringAfter('\n', "").words())
+        val result = ranked.substringBefore('\n')
+        return Candidates(result.takeUnless { it.isEmpty() || it == "=" },
+            ranked.substringAfter('\n', "").words(), known = result == "=")
     }
 
     fun swipe(context: Context, language: KeyboardLanguage, points: List<SwipePoint>, before: String, next: List<String>): List<String>? {
-        val lexicon = ready(context, language.id) ?: return null
+        val lexicon = ready(context, if (language.isEnglish) "en" else language.id) ?: return null
         val traceSize = minOf(points.size, 256)
         val trace = FloatArray(traceSize * 2)
         for (i in 0 until traceSize) {

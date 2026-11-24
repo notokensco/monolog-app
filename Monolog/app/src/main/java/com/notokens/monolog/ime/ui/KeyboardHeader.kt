@@ -23,6 +23,7 @@ import com.notokens.monolog.ime.EditorContext
 import com.notokens.monolog.ui.*
 import com.notokens.monolog.ui.theme.*
 
+@OptIn(ExperimentalFoundationApi::class)
 @Composable
 fun KeyboardHeader(
     editorContext: EditorContext,
@@ -30,6 +31,8 @@ fun KeyboardHeader(
     onCaptureContext: () -> Unit,
     onToggleDashboard: () -> Unit,
     dashboardOpen: Boolean,
+    onHoldDashboard: (() -> Unit)? = null,
+    dashboardChevron: Boolean = false,
     onModeAction: () -> Unit,
     toolbarAi: Boolean,
     isContextActive: Boolean = false,
@@ -41,8 +44,22 @@ fun KeyboardHeader(
         verticalAlignment = Alignment.CenterVertically,
         horizontalArrangement = Arrangement.spacedBy(2.dp)
     ) {
-        IconControl(if (dashboardOpen) Glyph.CLOSE else Glyph.DASHBOARD,
-            if (dashboardOpen) "Close keyboard dashboard" else "Keyboard dashboard", onToggleDashboard)
+        val dashboardLabel = if (dashboardOpen) "Close keyboard dashboard" else "Keyboard dashboard"
+        Box(Modifier.size(44.dp).clip(RoundedCornerShape(12.dp))
+            .combinedClickable(
+                role = Role.Button,
+                onClick = onToggleDashboard,
+                onLongClick = onHoldDashboard,
+                onLongClickLabel = "Show pinned widgets"
+            ).semantics { contentDescription = dashboardLabel },
+            contentAlignment = Alignment.Center
+        ) {
+            MonologIcon(when {
+                dashboardOpen -> Glyph.CLOSE
+                dashboardChevron -> Glyph.CHEVRON
+                else -> Glyph.DASHBOARD
+            }, Modifier.size(21.dp), PaperKeyText)
+        }
         Box(Modifier.weight(1f), contentAlignment = Alignment.Center) {
             suggestions()
         }

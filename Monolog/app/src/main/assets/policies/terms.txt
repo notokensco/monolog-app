@@ -24,3 +24,7 @@ Subscriptions are planned. For a subscription purchased through Google Play, the
 Support and consumer rights
 
 For help with Monolog, contact monolog@notokens.co. These terms preserve any rights you have under applicable consumer law.
+
+Automatic translations
+
+Monolog provides automatic translations powered by Google. Google disclaims all express and implied warranties concerning these translations, including accuracy, reliability, merchantability, fitness for a particular purpose and noninfringement.

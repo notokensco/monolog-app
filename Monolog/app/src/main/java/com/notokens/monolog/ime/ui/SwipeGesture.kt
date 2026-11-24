@@ -26,19 +26,22 @@ import com.notokens.monolog.ime.SwipePoint
 internal fun swipeTypingModifier(
     enabled: Boolean,
     rows: List<String> = QwertyLayout.rows,
+    split: Boolean = false,
     longPressTimeoutMs: Long = LocalKeyAppearance.current.longPressMs.toLong(),
     onSwipe: (List<SwipePoint>) -> Unit
 ): Modifier {
     if (!enabled) return Modifier
     val onComplete by rememberUpdatedState(onSwipe)
+    val holdTimeout by rememberUpdatedState(longPressTimeoutMs)
     val points = remember { mutableStateListOf<Offset>() }
     val color = MaterialTheme.colorScheme.primary.copy(alpha = .72f)
+    val trail = LocalKeyAppearance.current.swipeTrailDp.dp
     val rtl = LocalLayoutDirection.current == LayoutDirection.Rtl
     return Modifier
         .drawWithContent {
             drawContent()
-            if (points.size > 1) {
-                val trailLength = 84.dp.toPx()
+            if (points.size > 1 && trail > 0.dp) {
+                val trailLength = trail.toPx()
                 clipRect {
                     var remaining = trailLength
                     for (index in points.lastIndex downTo 1) {
@@ -57,17 +60,36 @@ internal fun swipeTypingModifier(
                 }
             }
         }
-        .pointerInput(rtl, rows) {
+        .pointerInput(rtl, rows, split) {
             awaitEachGesture {
                 val down = awaitFirstDown(pass = PointerEventPass.Initial)
                 val width = size.width.toFloat()
                 val height = size.height.toFloat()
                 if (width <= 0f || height <= 0f) return@awaitEachGesture
+                val gap = if (split) SplitKeyboardGap.toPx().coerceAtMost(width / 3f) else 0f
+                val keyAreaWidth = width - gap
+                val rowHeight = height / rows.size
+                val splitStarts = if (split) rows.mapIndexed { index, keys ->
+                    val lead = when (index) {
+                        1 -> (QwertyLayout.width - keys.length) / 2f
+                        2 -> QwertyLayout.shiftWeight
+                        else -> 0f
+                    }
+                    (lead + (keys.length + 1) / 2) / (keys.length + 2 * lead) * keyAreaWidth
+                } else emptyList()
+                fun horizontal(point: Offset) = if (rtl) width - point.x else point.x
+                fun splitStart(point: Offset) = splitStarts[(point.y / rowHeight).toInt().coerceIn(rows.indices)]
+                fun inGap(point: Offset): Boolean = split && horizontal(point) in splitStart(point)..(splitStart(point) + gap)
                 fun normalize(point: Offset): SwipePoint {
-                    val x = if (rtl) width - point.x else point.x
-                    return SwipePoint(x * QwertyLayout.width / width,
+                    val x = horizontal(point)
+                    val keyX = if (split) {
+                        val start = splitStart(point)
+                        x - (x - start).coerceIn(0f, gap)
+                    } else x
+                    return SwipePoint(keyX * QwertyLayout.width / keyAreaWidth,
                         point.y * QwertyLayout.rowSpacing * QwertyLayout.rows.size / height)
                 }
+                if (inGap(down.position)) return@awaitEachGesture
                 val firstLetter = QwertyLayout.letterAt(normalize(down.position), rows) ?: return@awaitEachGesture
 
                 var swiping = false
@@ -88,12 +110,12 @@ internal fun swipeTypingModifier(
                         if (change.isConsumed) break
                         if (!swiping && event.changes.any { it.id != down.id && (it.pressed || it.previousPressed) }) break
                         if (!swiping) {
-                            if (change.uptimeMillis - down.uptimeMillis >= longPressTimeoutMs) break
+                            if (change.uptimeMillis - down.uptimeMillis >= holdTimeout) break
                             // A quick tap can land near a key edge and lift over the next key.
                             // Require a move sample before taking ownership from the letter key.
                             val point = if (change.pressed) change.position else change.historical.lastOrNull()?.position
                             if (point == null) break
-                            val letter = QwertyLayout.letterAt(normalize(point), rows)
+                            val letter = if (inGap(point)) null else QwertyLayout.letterAt(normalize(point), rows)
                             if ((point - down.position).getDistance() < slop || letter == firstLetter || letter == null) {
                                 if (!change.pressed) break
                                 continue

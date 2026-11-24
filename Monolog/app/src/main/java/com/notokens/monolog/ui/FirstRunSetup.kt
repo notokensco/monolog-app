@@ -24,6 +24,8 @@ import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.LifecycleEventObserver
 import androidx.lifecycle.compose.LocalLifecycleOwner
 import com.notokens.monolog.capture.ScreenCaptureService
+import com.notokens.monolog.ai.KeyboardLanguage
+import com.notokens.monolog.data.KeyboardPlacement
 import com.notokens.monolog.data.SettingsStore
 import com.notokens.monolog.data.ThemeMode
 import com.notokens.monolog.memory.MemoryPreferences
@@ -41,6 +43,10 @@ internal fun FirstRunSetup(settings: SettingsStore, onRequestMic: () -> Unit,
     val scope = rememberCoroutineScope()
     val lifecycle = LocalLifecycleOwner.current
     val memory = remember { MemoryPreferences(context) }
+    val language by settings.keyboardLanguage.collectAsState("en")
+    val placement by settings.keyboardPlacement.collectAsState(KeyboardPlacement.FULL)
+    val borders by settings.keyBorders.collectAsState(false)
+    var pickLanguage by rememberSaveable { mutableStateOf(false) }
     var page by rememberSaveable { mutableIntStateOf(0) }
     val setupState = rememberSaveableStateHolder()
     var offlineReady by remember { mutableStateOf(false) }
@@ -96,9 +102,37 @@ internal fun FirstRunSetup(settings: SettingsStore, onRequestMic: () -> Unit,
                             Switch(rememberMoments, { rememberMoments = it; memory.enabled = it })
                         }
                     }
-                    Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
-                        OutlinedButton({ scope.launch { settings.setThemeMode(ThemeMode.PAPER) } }) { Text("Paper mode") }
-                        OutlinedButton({ scope.launch { settings.setThemeMode(ThemeMode.INK) } }) { Text("Ink mode") }
+                    SettingsCard("Keyboard preferences") {
+                        OutlinedButton({ pickLanguage = true }) {
+                            Text(KeyboardLanguage.of(language).label)
+                        }
+                        if (pickLanguage) AlertDialog(
+                            onDismissRequest = { pickLanguage = false },
+                            title = { Text("Typing language") },
+                            text = {
+                                Column(Modifier.heightIn(max = 320.dp).verticalScroll(rememberScrollState())) {
+                                    for (item in KeyboardLanguage.all) TextButton({
+                                        scope.launch { settings.setKeyboardLanguage(item.id) }
+                                        pickLanguage = false
+                                    }) { Text(item.label) }
+                                }
+                            },
+                            confirmButton = { TextButton({ pickLanguage = false }) { Text("Close") } }
+                        )
+                        Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                            OutlinedButton({ scope.launch { settings.setThemeMode(ThemeMode.PAPER) } }) { Text("Paper") }
+                            OutlinedButton({ scope.launch { settings.setThemeMode(ThemeMode.INK) } }) { Text("Ink") }
+                        }
+                        Row(verticalAlignment = Alignment.CenterVertically) {
+                            Text("Left-handed layout", Modifier.weight(1f), color = PaperKeyText)
+                            Switch(placement == KeyboardPlacement.LEFT, {
+                                scope.launch { settings.setKeyboardPlacement(if (it) KeyboardPlacement.LEFT else KeyboardPlacement.FULL) }
+                            })
+                        }
+                        Row(verticalAlignment = Alignment.CenterVertically) {
+                            Text("Key borders", Modifier.weight(1f), color = PaperKeyText)
+                            Switch(borders, { scope.launch { settings.setKeyBorders(it) } })
+                        }
                     }
                 }
                 1 -> {
@@ -109,6 +143,8 @@ internal fun FirstRunSetup(settings: SettingsStore, onRequestMic: () -> Unit,
                     SetupAction("Choose Monolog", selected, "Choose keyboard") {
                         context.getSystemService(InputMethodManager::class.java)?.showInputMethodPicker()
                     }
+                    Text("GIFs and stickers are optional online features. If you enable KLIPY, it receives the searches you submit and may show ads. Ordinary typing stays separate.",
+                        color = PaperKeySubText, style = MaterialTheme.typography.bodySmall)
                     Text("Tap M to capture a screen. Hold M for quick shortcuts. Hold the spacebar to open Ask.",
                         color = PaperKeyText, style = MaterialTheme.typography.bodyLarge)
                 }

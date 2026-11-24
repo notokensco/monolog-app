@@ -1,6 +1,5 @@
 package com.notokens.monolog.ai
 
-import android.app.SearchManager
 import android.content.ActivityNotFoundException
 import android.content.Context
 import android.content.Intent
@@ -19,64 +18,48 @@ import org.json.JSONObject
 import kotlin.coroutines.resume
 import kotlin.coroutines.resumeWithException
 
-internal data class WebSource(val title: String, val url: String)
+internal data class WebSource(val title: String, val url: String, val snippet: String = "")
 internal data class WebAnswer(val text: String, val sources: List<WebSource>)
 
 internal object WebLookup {
     val configured: Boolean get() = BuildConfig.MONOLOG_WEB_ENDPOINT.isNotBlank()
 
-    fun openSearchApp(context: Context, query: String): Boolean {
+    val searchConfigured: Boolean get() = BuildConfig.MONOLOG_DUCKDUCKGO_ENDPOINT.isNotBlank()
+
+    fun openSearchApp(context: Context, query: String, safeSearch: Boolean): Boolean {
         val text = query.trim().take(600)
         if (text.isEmpty()) return false
-        val search = Intent(Intent.ACTION_WEB_SEARCH).putExtra(SearchManager.QUERY, text)
-        val browser = Uri.parse("https://www.google.com/search").buildUpon().appendQueryParameter("q", text).build()
-        return listOf(search, Intent(Intent.ACTION_VIEW, browser)).any { intent ->
-            try {
-                context.startActivity(intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK))
-                true
-            } catch (_: ActivityNotFoundException) {
-                false
-            } catch (_: SecurityException) {
-                false
-            }
+        val address = Uri.Builder().scheme("https")
+            .authority(if (safeSearch) "safe.duckduckgo.com" else "duckduckgo.com")
+            .path("/")
+            .appendQueryParameter("q", text)
+            .appendQueryParameter("kp", if (safeSearch) "1" else "-2")
+            .build()
+        return try {
+            context.startActivity(Intent(Intent.ACTION_VIEW, address).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK))
+            true
+        } catch (_: ActivityNotFoundException) {
+            false
+        } catch (_: SecurityException) {
+            false
         }
     }
 
-    suspend fun ask(submittedQuery: String): WebAnswer {
-        val query = submittedQuery.trim().take(600)
-        if (configured) {
-            val raw = request(providerUrl(), JSONObject().put("kind", "search").put("query", query))
-            return parse(raw) ?: throw IOException("No sourced search results.")
+    suspend fun ask(submittedQuery: String, safeSearch: Boolean): WebAnswer {
+        val endpoint = URI.create(BuildConfig.MONOLOG_DUCKDUCKGO_ENDPOINT).toURL()
+        val payload = JSONObject().put("query", submittedQuery.trim().take(600)).put("safeSearch", safeSearch)
+        val response = request(endpoint, payload)
+        if (response.optString("engine") != "duckduckgo" || response.opt("safeSearch") != safeSearch) {
+            throw IOException("The search service did not confirm the provider and Safe Search setting.")
         }
-        if (AiText.needsWeb(query)) throw IOException("Live information requires the search service.")
-        val searchTerm = AiText.encyclopediaQuery(query)
-        val url = Uri.parse("https://en.wikipedia.org/w/api.php").buildUpon()
-            .appendQueryParameter("action", "query")
-            .appendQueryParameter("generator", "search")
-            .appendQueryParameter("gsrsearch", searchTerm)
-            .appendQueryParameter("gsrlimit", "3")
-            .appendQueryParameter("prop", "extracts|info")
-            .appendQueryParameter("inprop", "url")
-            .appendQueryParameter("exintro", "1")
-            .appendQueryParameter("explaintext", "1")
-            .appendQueryParameter("exchars", "430")
-            .appendQueryParameter("format", "json")
-            .appendQueryParameter("formatversion", "2")
-            .build()
-        val response = request(URI.create(url.toString()).toURL())
-        val pages = response.optJSONObject("query")?.optJSONArray("pages")
-            ?: throw IOException("No Wikipedia results.")
-        val results = (0 until pages.length()).mapNotNull { index ->
-            val page = pages.optJSONObject(index) ?: return@mapNotNull null
-            val id = page.optInt("pageid")
-            val title = page.optString("title")
-            val extract = page.optString("extract").trim().take(430)
-            if (id <= 0 || title.isBlank() || extract.isBlank()) return@mapNotNull null
-            val rank = if (title.equals(searchTerm, ignoreCase = true)) 0 else page.optInt("index", index + 1)
-            Triple(rank, "$title: $extract", WebSource(title, "https://en.wikipedia.org/?curid=$id"))
-        }.sortedBy { it.first }
-        if (results.isEmpty()) throw IOException("No Wikipedia excerpts.")
-        return WebAnswer(results.joinToString("\n\n") { it.second }, results.map { it.third })
+        val entries = response.optJSONArray("results") ?: throw IOException("No DuckDuckGo results.")
+        val sources = (0 until minOf(entries.length(), 12)).mapNotNull { index ->
+            entries.optJSONObject(index)?.let(::source)
+        }.distinctBy { it.url }.take(4)
+        if (sources.isEmpty()) throw IOException("No DuckDuckGo results.")
+        return WebAnswer(sources.joinToString("\n\n") { result ->
+            if (result.snippet.isBlank()) result.title else "${result.title} — ${result.snippet}"
+        }, sources)
     }
 
     suspend fun weather(intent: ToolbarLookup, city: String): WebAnswer {
@@ -87,7 +70,7 @@ internal object WebLookup {
 
     private fun providerUrl() = URI.create(BuildConfig.MONOLOG_WEB_ENDPOINT).toURL()
 
-    private suspend fun request(endpoint: java.net.URL, payload: JSONObject? = null): JSONObject = suspendCancellableCoroutine { continuation ->
+    private suspend fun request(endpoint: java.net.URL, payload: JSONObject): JSONObject = suspendCancellableCoroutine { continuation ->
         val active = AtomicReference<HttpsURLConnection?>()
         val job = CoroutineScope(Dispatchers.IO).launch {
             try {
@@ -97,17 +80,15 @@ internal object WebLookup {
                     if (!continuation.isActive) return@launch
                     connection.instanceFollowRedirects = false
                     connection.useCaches = false
-                    connection.requestMethod = if (payload == null) "GET" else "POST"
+                    connection.requestMethod = "POST"
                     connection.setRequestProperty("User-Agent", "Monolog/1.0 (https://github.com/notokensco/monolog-app) Android")
                     connection.connectTimeout = 6_000
                     connection.readTimeout = 10_000
-                    if (payload != null) {
-                        val bytes = payload.toString().toByteArray(Charsets.UTF_8)
-                        connection.doOutput = true
-                        connection.setRequestProperty("Content-Type", "application/json; charset=utf-8")
-                        connection.setFixedLengthStreamingMode(bytes.size)
-                        connection.outputStream.use { it.write(bytes) }
-                    }
+                    val bytes = payload.toString().toByteArray(Charsets.UTF_8)
+                    connection.doOutput = true
+                    connection.setRequestProperty("Content-Type", "application/json; charset=utf-8")
+                    connection.setFixedLengthStreamingMode(bytes.size)
+                    connection.outputStream.use { it.write(bytes) }
                     if (connection.responseCode != 200) throw IOException("Web lookup did not return a result.")
                     val raw = connection.inputStream.use { input ->
                         var total = 0
@@ -139,15 +120,20 @@ internal object WebLookup {
         }
     }
 
+    private fun source(json: JSONObject): WebSource? {
+        val link = json.optString("url")
+        val uri = runCatching { URI.create(link) }.getOrNull() ?: return null
+        if (uri.scheme != "https" || uri.host.isNullOrBlank() || uri.userInfo != null) return null
+        return WebSource(json.optString("title").ifBlank { uri.host }.take(100), link,
+            json.optString("content").trim().take(240))
+    }
+
     private fun parse(json: JSONObject): WebAnswer? {
         val answer = json.optString("answer").trim().take(1800)
         val references = json.optJSONArray("sources") ?: return null
         val sources = (0 until minOf(references.length(), 5)).mapNotNull { index ->
-            val source = references.optJSONObject(index) ?: return@mapNotNull null
-            val link = source.optString("url")
-            val uri = runCatching { URI.create(link) }.getOrNull() ?: return@mapNotNull null
-            if (uri.scheme != "https" || uri.host.isNullOrBlank() || uri.userInfo != null) return@mapNotNull null
-            WebSource(source.optString("title").ifBlank { uri.host }.take(100), link)
+            val entry = references.optJSONObject(index) ?: return@mapNotNull null
+            source(entry)
         }
         return if (answer.isBlank() || sources.isEmpty()) null else WebAnswer(answer, sources)
     }

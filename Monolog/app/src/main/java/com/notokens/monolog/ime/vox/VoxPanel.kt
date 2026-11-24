@@ -28,6 +28,15 @@ import com.notokens.monolog.ime.ui.triggerHapticFeedback
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.collectLatest
 import androidx.compose.foundation.background
+import androidx.compose.foundation.gestures.detectDragGestures
+import androidx.compose.foundation.layout.offset
+import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.ui.layout.boundsInWindow
+import androidx.compose.ui.layout.onGloballyPositioned
+import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.unit.IntOffset
+import kotlin.math.roundToInt
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
@@ -105,6 +114,7 @@ fun VoxPanel(
     onCancel: () -> Unit,
     onRequestPermission: () -> Unit,
     onOpenModels: () -> Unit = {},
+    onMiniBounds: (android.graphics.Rect?) -> Unit = {},
     modifier: Modifier = Modifier
 ) {
     val fullTranscript = listOf(voxState.transcript, voxState.partialTranscript)
@@ -114,6 +124,55 @@ fun VoxPanel(
     var languagesOpen by remember { mutableStateOf(false) }
     val view = LocalView.current
     val vibration = com.notokens.monolog.ime.ui.LocalVibrationHaptics.current
+    var minimized by remember { mutableStateOf(false) }
+    if (minimized) {
+        val boundsChanged by rememberUpdatedState(onMiniBounds)
+        androidx.compose.runtime.DisposableEffect(Unit) { onDispose { boundsChanged(null) } }
+        BoxWithConstraints(Modifier.fillMaxWidth().height(134.dp), contentAlignment = Alignment.BottomCenter) {
+            val density = LocalDensity.current
+            val width = (maxWidth - 16.dp).coerceAtMost(390.dp).coerceAtLeast(1.dp)
+            val limitX = with(density) { ((maxWidth - width) / 2).toPx() }
+            val limitY = with(density) { 72.dp.toPx() }
+            var position by remember { mutableStateOf(Offset.Zero) }
+            Row(Modifier.offset {
+                IntOffset(position.x.coerceIn(-limitX, limitX).roundToInt(),
+                    position.y.coerceIn(-limitY, 0f).roundToInt())
+            }.width(width).height(56.dp).onGloballyPositioned {
+                val r = it.boundsInWindow()
+                boundsChanged(android.graphics.Rect(r.left.roundToInt(), r.top.roundToInt(), r.right.roundToInt(), r.bottom.roundToInt()))
+            }.glassSurface(18, GlassAccent.LAVENDER).padding(horizontal = 3.dp),
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                IconControl(Glyph.EXPAND, "Expand Vox", {
+                    triggerHapticFeedback(view, enabled = vibration)
+                    minimized = false
+                })
+                Box(Modifier.weight(1f).pointerInput(limitX, limitY) {
+                    detectDragGestures { change, movement ->
+                        change.consume()
+                        position = Offset((position.x + movement.x).coerceIn(-limitX, limitX),
+                            (position.y + movement.y).coerceIn(-limitY, 0f))
+                    }
+                }.semantics { contentDescription = "Drag Vox bar" }) {
+                    VoxTranscriptStage(fullTranscript, isListening, voxState.rmsLevel, compact = true)
+                }
+                Text(when {
+                    preparing -> "…"
+                    isListening -> "❚❚"
+                    else -> "▶"
+                }, Modifier.clip(RoundedCornerShape(10.dp)).clickable(
+                    enabled = !preparing && voxState.status != VoxStatus.PROCESSING
+                ) {
+                    triggerHapticFeedback(view, enabled = vibration)
+                    if (voxState.status == VoxStatus.PERMISSION_REQUIRED) onRequestPermission()
+                    else if (isListening) onPauseListening() else onStartListening()
+                }.semantics { contentDescription = if (isListening) "Pause listening" else "Start listening" }
+                    .padding(10.dp), color = PaperAccentBlue, fontSize = 17.sp)
+                ContextKey(contextEnabled, contextActive, onContext, onContextHold)
+            }
+        }
+        return
+    }
 
     Column(
         modifier = modifier
@@ -132,7 +191,12 @@ fun VoxPanel(
             Text("VOX", Modifier.align(Alignment.Center), color = PaperKeyText, fontSize = 22.sp,
                 fontFamily = FontFamily(Font(R.font.science_gothic_vox, FontWeight.SemiBold)),
                 fontWeight = FontWeight.SemiBold)
-            Box(Modifier.align(Alignment.CenterEnd)) {
+            Row(Modifier.align(Alignment.CenterEnd), verticalAlignment = Alignment.CenterVertically) {
+                IconControl(Glyph.DOUBLE_DOWN, "Minimize Vox", {
+                    triggerHapticFeedback(view, enabled = vibration)
+                    languagesOpen = false
+                    minimized = true
+                })
                 ContextKey(contextEnabled, contextActive, onContext, onContextHold)
             }
         }
@@ -303,7 +367,8 @@ fun VoxPanel(
 private fun VoxTranscriptStage(
     transcript: String,
     isListening: Boolean,
-    rmsLevel: Float
+    rmsLevel: Float,
+    compact: Boolean = false
 ) {
     val colors = MaterialTheme.colorScheme
     val surface = colors.surface
@@ -325,7 +390,7 @@ private fun VoxTranscriptStage(
     val words = visible.takeLast(4)
 
     Box(
-        Modifier.fillMaxWidth().height(142.dp)
+        Modifier.fillMaxWidth().height(if (compact) 46.dp else 142.dp)
             .glassSurface(18, GlassAccent.BLUE)
             .clip(RoundedCornerShape(18.dp))
     ) {
@@ -349,7 +414,7 @@ private fun VoxTranscriptStage(
                     textAlign = TextAlign.Center
                 )
             } else {
-                Box(Modifier.fillMaxWidth().height(67.dp).semantics { contentDescription = transcript }) {
+                Box(Modifier.fillMaxWidth().height(if (compact) 30.dp else 67.dp).semantics { contentDescription = transcript }) {
                     Row(
                         Modifier.align(Alignment.CenterStart).fillMaxWidth(.28f).clipToBounds(),
                         horizontalArrangement = Arrangement.Start,
@@ -380,8 +445,8 @@ private fun VoxTranscriptStage(
                         Text(
                             word,
                             color = PaperKeyText,
-                            fontSize = 32.sp,
-                            lineHeight = 34.sp,
+                            fontSize = if (compact) 15.sp else 32.sp,
+                            lineHeight = if (compact) 17.sp else 34.sp,
                             fontWeight = FontWeight.Bold,
                             textAlign = TextAlign.Center,
                             maxLines = 2,

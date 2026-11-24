@@ -46,10 +46,10 @@ internal data class BackupMemory(
 }
 
 internal data class BackupPayload(val owner: String, val year: Int, val entries: List<BackupEntry>, val zone: String = "UTC",
-    val memories: List<BackupMemory> = emptyList()) {
+    val memories: List<BackupMemory> = emptyList(), val keyboard: JSONObject? = null) {
     fun encode(): ByteArray = JSONObject().put("version", 2).put("owner", owner).put("year", year)
         .put("zone", zone).put("entries", JSONArray(entries.map { it.toJson() }))
-        .put("memories", JSONArray(memories.map { it.toJson() })).toString().toByteArray()
+        .put("memories", JSONArray(memories.map { it.toJson() })).put("keyboard", keyboard).toString().toByteArray()
 
     companion object {
         fun decode(bytes: ByteArray, owner: String, year: Int): BackupPayload {
@@ -97,7 +97,12 @@ internal data class BackupPayload(val owner: String, val year: Int, val entries:
                 com.notokens.monolog.memory.MemoryRepository.decodePayload(moment.payload)
                 moment
             }
-            return BackupPayload(owner, year, entries, zone.id, memories)
+            val keyboard = json.optJSONObject("keyboard")?.also {
+                require(it.toString().length <= 600_000)
+                it.getJSONObject("settings")
+                com.notokens.monolog.data.TypingProfile.decode(it.getJSONObject("profile"))
+            }
+            return BackupPayload(owner, year, entries, zone.id, memories, keyboard)
         }
     }
 }

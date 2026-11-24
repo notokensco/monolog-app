@@ -10,6 +10,12 @@ import androidx.datastore.preferences.core.stringPreferencesKey
 import androidx.datastore.preferences.core.stringSetPreferencesKey
 import androidx.datastore.preferences.preferencesDataStore
 import java.io.IOException
+import androidx.datastore.preferences.core.Preferences
+import kotlinx.coroutines.flow.first
+import kotlinx.coroutines.flow.flowOn
+import org.json.JSONObject
+import java.util.UUID
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.Flow
@@ -27,6 +33,10 @@ enum class ThemeMode {
 data class Appearance(val theme: ThemeMode = ThemeMode.INK, val reduceTransparency: Boolean = false,
     val wallpaperRevision: Long = 0L)
 
+enum class KeyboardPlacement(val label: String) {
+    FULL("Full width"), LEFT("Left hand"), RIGHT("Right hand"), SPLIT("Split"), FLOATING("Floating")
+}
+
 enum class QuickShortcut { REMINDER, ALARM, JOURNAL }
 
 enum class VoiceInputEngine(val id: String, val label: String) {
@@ -36,6 +46,48 @@ enum class VoiceInputEngine(val id: String, val label: String) {
 }
 
 class SettingsStore(private val context: Context) {
+    private val autoCapKey = booleanPreferencesKey("keyboard_auto_capitalize")
+    private val learningKey = booleanPreferencesKey("keyboard_learn_words")
+    private val typingProfileKey = stringPreferencesKey("keyboard_typing_profile")
+    private val statsDeviceKey = stringPreferencesKey("keyboard_stats_device")
+    val autoCapitalize = context.monologSettings.data.map { it[autoCapKey] ?: false }.distinctUntilChanged()
+    val learnWords = context.monologSettings.data.map { it[learningKey] ?: true }.distinctUntilChanged()
+    internal val typingProfile = context.monologSettings.data.map { it[typingProfileKey] }
+        .distinctUntilChanged().map(::decodeTypingProfile).flowOn(Dispatchers.Default)
+
+    suspend fun setAutoCapitalize(enabled: Boolean) { context.monologSettings.edit { it[autoCapKey] = enabled } }
+    suspend fun setLearnWords(enabled: Boolean) { context.monologSettings.edit { it[learningKey] = enabled } }
+
+    private fun readTypingProfile(values: Preferences): TypingProfile = decodeTypingProfile(values[typingProfileKey])
+
+    private fun decodeTypingProfile(cipher: String?): TypingProfile {
+        if (cipher == null) return TypingProfile()
+        return TypingProfile.decode(JSONObject(JournalCipher.open(cipher, "keyboard-typing-profile")))
+    }
+
+    internal suspend fun recordTyping(tokens: Map<String, Int>, counters: Map<TypingMetric, Long>) {
+        if (tokens.isEmpty() && counters.isEmpty()) return
+        context.monologSettings.edit { values ->
+            val profile = readTypingProfile(values)
+            val device = values[statsDeviceKey] ?: UUID.randomUUID().toString().also { values[statsDeviceKey] = it }
+            val counts = profile.usage[device].orEmpty().toMutableMap()
+            counters.forEach { (metric, delta) -> counts[metric] = ((counts[metric] ?: 0L) + delta).coerceAtMost(1_000_000_000_000L) }
+            val words = profile.words.toMutableMap()
+            if (values[learningKey] != false) {
+                val now = System.currentTimeMillis()
+                tokens.forEach { (input, count) ->
+                    val word = dictionaryWord(input) ?: return@forEach
+                    val key = wordKey(word)
+                    val previous = words[key]
+                    words[key] = LearnedWord(previous?.text ?: word, ((previous?.uses ?: 0) + count).coerceAtMost(9999),
+                        maxOf(now, (previous?.at ?: 0L) + 1))
+                }
+            }
+            val updated = TypingProfile(TypingProfile.limit(words), profile.usage + (device to counts))
+            values[typingProfileKey] = JournalCipher.seal(updated.encode().toString(), "keyboard-typing-profile")
+        }
+    }
+
     private val autocorrectKey = booleanPreferencesKey("autocorrect")
     private val systemSpellCheckerKey = booleanPreferencesKey("system_spell_checker")
     val systemSpellChecker = context.monologSettings.data.map { it[systemSpellCheckerKey] ?: false }.distinctUntilChanged()
@@ -43,6 +95,11 @@ class SettingsStore(private val context: Context) {
     val autocorrect = context.monologSettings.data.map { it[autocorrectKey] ?: true }.distinctUntilChanged()
     suspend fun setAutocorrect(value: Boolean) { context.monologSettings.edit { it[autocorrectKey] = value } }
     private val swipeTypingKey = booleanPreferencesKey("swipe_typing")
+    private val swipeTrailKey = intPreferencesKey("swipe_trail_dp")
+    val swipeTrail = context.monologSettings.data.map { it[swipeTrailKey] ?: 120 }.distinctUntilChanged()
+    suspend fun setSwipeTrail(value: Int) {
+        context.monologSettings.edit { it[swipeTrailKey] = value.coerceIn(0, 240) }
+    }
     private val longPressCharactersKey = booleanPreferencesKey("long_press_characters")
     val swipeTyping = context.monologSettings.data.map { it[swipeTypingKey] ?: true }.distinctUntilChanged()
     val longPressCharacters = context.monologSettings.data.map { it[longPressCharactersKey] ?: true }.distinctUntilChanged()
@@ -119,17 +176,58 @@ class SettingsStore(private val context: Context) {
     suspend fun setVoxLanguage(code: String) { context.monologSettings.edit { it[voxLanguageKey] = code } }
 
     private val keyBordersKey = booleanPreferencesKey("keyboard_key_borders")
+    private val onlineMediaKey = booleanPreferencesKey("keyboard_online_media")
+    val onlineMedia = preferences.map { it[onlineMediaKey] ?: false }.distinctUntilChanged()
+    suspend fun setOnlineMedia(enabled: Boolean) { context.monologSettings.edit { it[onlineMediaKey] = enabled } }
+
+    private val compactKeysKey = booleanPreferencesKey("keyboard_compact_keys")
+    private val placementKey = stringPreferencesKey("keyboard_placement")
+    val compactKeys = preferences.map { it[compactKeysKey] ?: false }.distinctUntilChanged()
+    val keyboardPlacement = preferences.map { values ->
+        KeyboardPlacement.entries.firstOrNull { it.name == values[placementKey] } ?: KeyboardPlacement.FULL
+    }.distinctUntilChanged()
+    suspend fun setCompactKeys(enabled: Boolean) { context.monologSettings.edit { it[compactKeysKey] = enabled } }
+    suspend fun setKeyboardPlacement(value: KeyboardPlacement) {
+        context.monologSettings.edit { it[placementKey] = value.name }
+    }
     private val keyPopupsKey = booleanPreferencesKey("keyboard_key_popups")
     private val keyPopupMsKey = intPreferencesKey("keyboard_key_popup_ms")
     private val keyHeightKey = intPreferencesKey("keyboard_height_percent")
     private val sensitiveWordsKey = stringPreferencesKey("keyboard_sensitive_words")
     private val clipboardPinsKey = stringPreferencesKey("keyboard_clipboard_pins")
     private val dashboardExtrasKey = stringSetPreferencesKey("keyboard_dashboard_extras")
+    private val dashboardOrderKey = stringPreferencesKey("keyboard_dashboard_order")
+    private val dashboardPinsKey = stringPreferencesKey("keyboard_dashboard_pins")
+    val dashboardOrder = preferences.map { dashboardIds(it[dashboardOrderKey]) }.distinctUntilChanged()
+    val dashboardPins = preferences.map { dashboardIds(it[dashboardPinsKey]).take(4) }.distinctUntilChanged()
+
+    suspend fun setDashboardOrder(ids: List<String>) {
+        context.monologSettings.edit { values ->
+            val remaining = dashboardIds(values[dashboardOrderKey]).filterNot { it in ids }
+            values[dashboardOrderKey] = (ids + remaining).distinct().joinToString(",")
+        }
+    }
+
+    suspend fun toggleDashboardPin(id: String) {
+        context.monologSettings.edit { values ->
+            val pins = dashboardIds(values[dashboardPinsKey]).take(4)
+            values[dashboardPinsKey] = when {
+                id in pins -> pins - id
+                pins.size < 4 -> pins + id
+                else -> pins
+            }.joinToString(",")
+        }
+    }
+
+    private fun dashboardIds(value: String?) = value.orEmpty().split(',').filter(String::isNotBlank).distinct()
+
     val dashboardExtras = preferences.map { it[dashboardExtrasKey].orEmpty() }.distinctUntilChanged()
     val clipboardPins = preferences.map { decodePins(it[clipboardPinsKey]) }.distinctUntilChanged()
     suspend fun setDashboardExtra(id: String, visible: Boolean) {
         context.monologSettings.edit { values ->
             val items = values[dashboardExtrasKey].orEmpty()
+            if (!visible) values[dashboardPinsKey] =
+                (dashboardIds(values[dashboardPinsKey]) - id).joinToString(",")
             if (!visible || items.size < 12) values[dashboardExtrasKey] = if (visible) items + id else items - id
         }
     }
@@ -174,6 +272,7 @@ class SettingsStore(private val context: Context) {
 
     suspend fun setDashboardTileVisible(id: String, visible: Boolean) {
         context.monologSettings.edit {
+            if (!visible) it[dashboardPinsKey] = (dashboardIds(it[dashboardPinsKey]) - id).joinToString(",")
             val hidden = it[hiddenDashboardKey].orEmpty()
             it[hiddenDashboardKey] = if (visible) hidden - id else hidden + id
         }
@@ -208,14 +307,18 @@ class SettingsStore(private val context: Context) {
     }
 
     suspend fun addPersonalWord(input: String): Boolean {
-        val word = input.trim()
-        if (word.length !in 2..24 || !Regex("""[\p{L}\p{M}]+(?:['’-][\p{L}\p{M}]+)*""").matches(word)) return false
+        val word = dictionaryWord(input) ?: return false
         var accepted = false
         context.monologSettings.edit {
             val words = it[personalWordsKey].orEmpty()
             val existing = words.firstOrNull { item -> item.equals(word, ignoreCase = true) }
             if (existing != null || words.size < 500) {
                 it[personalWordsKey] = (words - setOfNotNull(existing)) + word
+                val profile = readTypingProfile(it)
+                val key = wordKey(word)
+                val updated = if (profile.words[key]?.uses == 0) profile.copy(words = profile.words - key) else profile
+                if (updated != profile) it[typingProfileKey] =
+                    JournalCipher.seal(updated.encode().toString(), "keyboard-typing-profile")
                 accepted = true
             }
         }
@@ -223,7 +326,71 @@ class SettingsStore(private val context: Context) {
     }
 
     suspend fun removePersonalWord(word: String) {
-        context.monologSettings.edit { it[personalWordsKey] = it[personalWordsKey].orEmpty() - word }
+        val text = dictionaryWord(word) ?: return
+        val key = wordKey(text)
+        context.monologSettings.edit { values ->
+            values[personalWordsKey] = values[personalWordsKey].orEmpty().filterNot { wordKey(it) == key }.toSet()
+            val profile = readTypingProfile(values)
+            val at = maxOf(System.currentTimeMillis(), (profile.words[key]?.at ?: 0L) + 1)
+            val words = TypingProfile.limit(profile.words + (key to LearnedWord(text, 0, at)))
+            values[typingProfileKey] = JournalCipher.seal(profile.copy(words = words).encode().toString(), "keyboard-typing-profile")
+        }
+    }
+
+    private val portableBooleans get() = listOf(autoCapKey, learningKey, autocorrectKey, swipeTypingKey,
+        systemSpellCheckerKey, longPressCharactersKey, shortcutHapticsKey, vibrationHapticsKey, tapOpensShortcutsKey,
+        smartToneKey, clipboardKey, phoneActionsKey, defaultVoxKey, smartFilterKey, cursorOnSpaceKey,
+        keyBordersKey, compactKeysKey, keyPopupsKey, swapVoxAndAiKey, reduceTransparencyKey)
+    private val portableIntegers get() = listOf(swipeTrailKey, keyLongPressMsKey, shortcutHoldKey,
+        keyPopupMsKey, keyHeightKey, voxPauseKey)
+    private val portableStrings get() = listOf(keyboardLanguageKey, themeModeKey, placementKey,
+        dashboardOrderKey, dashboardPinsKey, voiceInputEngineKey, voxLanguageKey, quickShortcutOrderKey, sensitiveWordsKey)
+    private val portableSets get() = listOf(dashboardExtrasKey, hiddenDashboardKey, personalWordsKey)
+
+    internal suspend fun exportKeyboard(): JSONObject {
+        val values = preferences.first()
+        return JSONObject().put("profile", readTypingProfile(values).encode()).put("settings", JSONObject().apply {
+            portableBooleans.forEach { put(it.name, values[it] ?: JSONObject.NULL) }
+            portableIntegers.forEach { put(it.name, values[it] ?: JSONObject.NULL) }
+            portableStrings.forEach { put(it.name, values[it] ?: JSONObject.NULL) }
+            portableSets.forEach { put(it.name, org.json.JSONArray(values[it].orEmpty().toList())) }
+        })
+    }
+
+    internal suspend fun importKeyboard(snapshot: JSONObject, stillAuthorized: () -> Unit) {
+        val remote = TypingProfile.decode(snapshot.getJSONObject("profile"))
+        val saved = snapshot.getJSONObject("settings")
+        context.monologSettings.edit { values ->
+            stillAuthorized()
+            val profile = readTypingProfile(values).merge(remote)
+            portableBooleans.forEach { key ->
+                when (val value = saved.opt(key.name)) {
+                    is Boolean -> values[key] = value
+                    JSONObject.NULL -> values.remove(key)
+                }
+            }
+            portableIntegers.forEach { key ->
+                when (val value = saved.opt(key.name)) {
+                    is Int -> values[key] = value
+                    JSONObject.NULL -> values.remove(key)
+                }
+            }
+            portableStrings.forEach { key ->
+                when (val value = saved.opt(key.name)) {
+                    is String -> if (value.length <= 1500 && !(key == themeModeKey && value == ThemeMode.PHOTO.name)) values[key] = value
+                    JSONObject.NULL -> values.remove(key)
+                }
+            }
+            portableSets.forEach { key ->
+                val list = saved.optJSONArray(key.name) ?: return@forEach
+                val items = (0 until minOf(500, list.length())).mapNotNull { list.opt(it) as? String }
+                if (key == personalWordsKey) {
+                    values[key] = (values[key].orEmpty() + items.mapNotNull(::dictionaryWord))
+                        .filter { profile.words[wordKey(it)]?.uses != 0 }.distinctBy(::wordKey).take(500).toSet()
+                } else values[key] = items.filter { it.length <= 40 }.toSet()
+            }
+            values[typingProfileKey] = JournalCipher.seal(profile.encode().toString(), "keyboard-typing-profile")
+        }
     }
 
     @OptIn(ExperimentalCoroutinesApi::class)

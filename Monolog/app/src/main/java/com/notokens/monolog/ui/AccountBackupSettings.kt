@@ -179,13 +179,16 @@ internal fun AccountBackupSettings(onboarding: Boolean = false) {
         SelectionRow("Saved screen context", account.context, !busy) {
             store.selection(account.journal, it, account.attachments)
         }
+        SelectionRow("Keyboard profile", account.keyboard, !busy) { store.keyboardBackup(it) }
+        Text("Includes your dictionary, aggregate usage, and keyboard preferences in encrypted backups.",
+            style = MaterialTheme.typography.bodySmall)
         SelectionRow("Include attachments", account.attachments, !busy) {
             store.selection(account.journal, account.context, it)
         }
         if (!account.connected || account.reconnect) {
             Text("Connect Drive to merge the current year with existing account backups, then back up your selected guest data.",
                 color = PaperKeySubText, style = MaterialTheme.typography.bodySmall)
-            Button(enabled = !busy && (account.journal || account.context), onClick = {
+            Button(enabled = !busy && account.hasSelection, onClick = {
                 run {
                     val selected = store.state.value
                     authorizationSession = selected.session
@@ -205,7 +208,7 @@ internal fun AccountBackupSettings(onboarding: Boolean = false) {
             Text(if (account.lastBackup == 0L) "No successful backup yet" else "Last backup · ${formatTime(account.lastBackup)}",
                 color = PaperKeySubText, style = MaterialTheme.typography.bodySmall)
             if (onboarding) return@SettingsCard
-            Button(enabled = !busy && (account.journal || account.context), onClick = {
+            Button(enabled = !busy && account.hasSelection, onClick = {
                 run { prepareBackup() }
             }) { Text("Back up now") }
             OutlinedButton(enabled = !busy, onClick = {
@@ -220,7 +223,7 @@ internal fun AccountBackupSettings(onboarding: Boolean = false) {
                 listOf("Manual", "Daily", "Weekly", "Monthly").forEach { frequency ->
                     FilterChip(account.frequency == frequency, { store.frequency(frequency) },
                         { Text(frequency) }, enabled = !busy && (frequency == "Manual" ||
-                            account.lastBackup > 0 && keys.hasKey(account.id) && (account.journal || account.context)))
+                            account.lastBackup > 0 && keys.hasKey(account.id) && account.hasSelection))
                 }
             }
             if (account.frequency != "Manual") {

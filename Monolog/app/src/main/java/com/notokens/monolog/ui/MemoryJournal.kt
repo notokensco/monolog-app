@@ -83,7 +83,7 @@ internal fun MemoryJournal(
     onOpenNote: (Long) -> Unit, onOpenReminder: (Long) -> Unit, onNewNote: () -> Unit,
     visibleNotes: List<com.notokens.monolog.data.Note>, photos: Map<Long, List<com.notokens.monolog.data.NotePhotoRef>>,
     query: String, onClearQuery: () -> Unit, onFocusSearch: () -> Unit,
-    askRequest: Int, onAnswering: (Boolean) -> Unit
+    askRequest: Int, onAnswering: (Boolean) -> Unit, initialDay: String? = null
 ) {
     val context = LocalContext.current
     val db = remember { MonologDatabase.get(context) }
@@ -96,9 +96,9 @@ internal fun MemoryJournal(
     val encoderStatus by encoder.status.collectAsState()
     val semanticReady = encoder.ready()
     val records by db.memories().observeAll().collectAsState(initial = emptyList())
-    var date by rememberSaveable { mutableStateOf(LocalDate.now().toString()) }
+    var date by rememberSaveable(initialDay) { mutableStateOf(initialDay ?: LocalDate.now().toString()) }
     var period by rememberSaveable { mutableStateOf("Day") }
-    var showDay by rememberSaveable { mutableStateOf(false) }
+    var showDay by rememberSaveable(initialDay) { mutableStateOf(initialDay != null) }
     val showSearch = query.isNotBlank()
     val month = remember(date) { java.time.YearMonth.from(LocalDate.parse(date)) }
     var matches by remember { mutableStateOf<List<MemoryMatch>?>(null) }

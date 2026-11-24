@@ -22,8 +22,8 @@ internal object RewritePipeline {
     }
 
     suspend fun rewrite(context: Context, draft: String, style: RewriteStyle, language: KeyboardLanguage): AiPreview {
-        if (style == RewriteStyle.POLISH && language.id != "en") return edit(AiText.polishSeparators(draft))
-        if (language.id == "en") return rewriteEnglish(context, draft, style)
+        if (style == RewriteStyle.POLISH && !language.isEnglish) return edit(AiText.polishSeparators(draft))
+        if (language.isEnglish) return rewriteEnglish(context, draft, style)
         val english = translateToEnglish(context, language, draft)
         val rewritten = rewriteEnglish(context, english, style)
         if (!rewritten.generatedLocally) return edit(AiText.simpleRewrite(draft), detail = rewritten.detail)

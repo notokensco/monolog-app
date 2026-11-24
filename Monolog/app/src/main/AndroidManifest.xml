@@ -102,6 +102,11 @@
             </intent-filter>
         </receiver>
         <provider
+            android:name=".ime.ui.KeyboardMediaProvider"
+            android:authorities="${applicationId}.imemedia"
+            android:exported="false"
+            android:grantUriPermissions="true" />
+        <provider
             android:name="androidx.core.content.FileProvider"
             android:authorities="${applicationId}.imeclipboard"
             android:exported="false"

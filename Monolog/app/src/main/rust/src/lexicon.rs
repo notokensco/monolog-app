@@ -257,10 +257,11 @@ pub(crate) fn suggest(mode: usize, prefix: &str, context: &str, before: &str) ->
     let mut best = Best::default();
     let mut unique = None;
     let mut ambiguous = false;
+    let known = dict.exact(prefix).is_some();
     if mode == 0
         && (3..=MAX_WORD_LENGTH).contains(&prefix.len())
         && prefix.bytes().all(|c| c.is_ascii_lowercase() || c == b'\'')
-        && dict.exact(prefix).is_none()
+        && !known
     {
         dict.edits(prefix, |entry, penalty| {
             let word = entry.text.as_ref();
@@ -293,7 +294,7 @@ pub(crate) fn suggest(mode: usize, prefix: &str, context: &str, before: &str) ->
     }
     Some(format!(
         "{}\n{}",
-        if ambiguous { "" } else { unique.unwrap_or("") },
+        if known { "=" } else if ambiguous { "" } else { unique.unwrap_or("") },
         best.items().join("\n")
     ))
 }

@@ -68,7 +68,7 @@ private object EmojiCatalog {
     private fun readFile(assets: AssetManager): List<EmojiGroup> {
         val groups = linkedMapOf<String, MutableList<Emoji>>()
         var group: MutableList<Emoji>? = null
-        assets.open("emoji-17.0.tsv").bufferedReader().useLines { lines ->
+        assets.open("emoji-18.0.tsv").bufferedReader().useLines { lines ->
             for (line in lines) {
                 if (line.startsWith("##") || line.isBlank()) continue
                 val separator = line.indexOf('\t')
@@ -104,6 +104,8 @@ private val ToolbarEmoji = listOf(
 internal data class EmojiMatches(val typed: String, val entries: List<Emoji>)
 
 private val emojiTerms = Regex("""[\p{L}]+(?:[ -][\p{L}]+){0,3}$""")
+private val shortcode = Regex("""(?<!\S):[\p{L}_-]*(?: [\p{L}_-]+){0,3}$""")
+internal fun emojiShortcode(before: String): String? = shortcode.find(before)?.value
 private val emojiAliases = mapOf(
     "smile" to "grinning face", "happy" to "smiling face with smiling eyes",
     "laugh" to "face with tears of joy", "lol" to "face with tears of joy",
@@ -113,6 +115,12 @@ private val emojiAliases = mapOf(
 )
 
 internal fun matchEmojiName(assets: AssetManager, before: String): EmojiMatches? {
+    val explicit = emojiShortcode(before)
+    if (explicit != null) {
+        val query = explicit.drop(1).lowercase().replace('_', ' ').replace('-', ' ')
+        if (query.isBlank()) return null
+        return EmojiMatches(explicit, rankedEmojis(EmojiCatalog.searchIndex(assets), query))
+    }
     val ending = emojiTerms.find(before)?.value ?: return null
     val emojis = EmojiCatalog.searchIndex(assets)
     val words = ending.split(' ', '-')
@@ -121,30 +129,36 @@ internal fun matchEmojiName(assets: AssetManager, before: String): EmojiMatches?
         val typed = ending.takeLast(length)
         val query = typed.lowercase().replace('-', ' ')
         if (query.length < 3) continue
-        val alias = emojiAliases[query]
-        val matches = emojis.mapNotNull { (emoji, name) ->
-            val score = when {
-                name == alias -> 0
-                name == query -> 1
-                name.startsWith(query) -> 2
-                size == 1 && (name.endsWith(" $query") || name.contains(" $query ")) -> 3
-                else -> return@mapNotNull null
-            }
-            emoji to score
-        }.sortedWith(compareBy({ it.second }, { it.first.label.length })).take(7).map { it.first }
+        val matches = rankedEmojis(emojis, query)
         if (matches.isNotEmpty()) return EmojiMatches(typed, matches)
     }
     return null
 }
 
+private fun rankedEmojis(emojis: List<EmojiSearchEntry>, query: String): List<Emoji> {
+    val alias = emojiAliases[query]
+    return emojis.mapNotNull { (emoji, name) ->
+        val score = when {
+            name == alias -> 0
+            name == query -> 1
+            name.startsWith(query) -> 2
+            ' ' !in query && (name.endsWith(" $query") || name.contains(" $query ")) -> 3
+            else -> return@mapNotNull null
+        }
+        emoji to score
+    }.sortedWith(compareBy({ it.second }, { it.first.label.length })).take(7).map { it.first }
+}
+
 @Composable
-internal fun EmojiShortcutStrip(recent: List<Emoji>, matches: List<Emoji>? = null, onPick: (Emoji) -> Unit) {
+internal fun EmojiShortcutStrip(recent: List<Emoji>, matches: List<Emoji>? = null,
+    compact: Boolean = false, onPick: (Emoji) -> Unit) {
     val choices = matches ?: (recent + ToolbarEmoji).distinctBy(Emoji::text).take(7)
-    Row(Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()), verticalAlignment = Alignment.CenterVertically,
+    Row(if (compact) Modifier else Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()),
+        verticalAlignment = Alignment.CenterVertically,
         horizontalArrangement = Arrangement.Center) {
         choices.forEach { emoji ->
             KeyButton(
-                modifier = Modifier.width(34.dp).height(40.dp),
+                modifier = Modifier.width(if (compact) 28.dp else 34.dp).height(40.dp),
                 label = emoji.label,
                 onClick = { onPick(emoji) }
             ) {

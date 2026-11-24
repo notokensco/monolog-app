@@ -49,7 +49,7 @@ class BackupWork(context: Context, params: WorkerParameters) : CoroutineWorker(c
         private const val OLD_NAME = "monolog-drive-backup"
         private const val NAME = "monolog-drive-backup-clock"
         private fun configFor(account: BackupAccount) =
-            "${account.frequency}|${account.backupMinute}|${account.journal}|${account.context}|${account.attachments}"
+            "${account.frequency}|${account.backupMinute}|${account.journal}|${account.context}|${account.attachments}|${account.keyboard}"
 
         fun cancel(context: Context) {
             val manager = WorkManager.getInstance(context)
@@ -60,7 +60,7 @@ class BackupWork(context: Context, params: WorkerParameters) : CoroutineWorker(c
         internal fun schedule(context: Context, account: BackupAccount) {
             WorkManager.getInstance(context).cancelUniqueWork(OLD_NAME)
             if (account.frequency == "Manual" || !account.connected || account.reconnect ||
-                !(account.journal || account.context)) {
+                !account.hasSelection) {
                 WorkManager.getInstance(context).cancelUniqueWork(NAME)
                 return
             }

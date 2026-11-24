@@ -40,10 +40,13 @@ class MainActivity : ComponentActivity() {
         const val ACTION_NEW_REMINDER = "com.notokens.monolog.NEW_REMINDER"
         const val ACTION_OPEN_TODAY = "com.notokens.monolog.OPEN_TODAY"
         const val ACTION_OPEN_VOICE = "com.notokens.monolog.OPEN_VOICE"
+        const val ACTION_OPEN_PERSONAL_MATCH = "com.notokens.monolog.OPEN_PERSONAL_MATCH"
+        const val ACTION_OPEN_APPEARANCE = "com.notokens.monolog.OPEN_APPEARANCE"
         const val ACTION_OPEN_SETTINGS = "com.notokens.monolog.OPEN_SETTINGS"
     }
 
     private var destination by mutableStateOf<CompanionDestination?>(null)
+    private var personalRoute by mutableStateOf<String?>(null)
     private val micPermissionLauncher = registerForActivityResult(ActivityResultContracts.RequestPermission()) { granted ->
         Toast.makeText(this, if (granted) "Microphone enabled for Vox" else "Microphone permission required for Vox", Toast.LENGTH_SHORT).show()
     }
@@ -82,7 +85,7 @@ class MainActivity : ComponentActivity() {
             }
             val current = appearance ?: Appearance()
             var showLaunch by remember { mutableStateOf(launchFromHome) }
-            val launchVisible = showLaunch && destination == null
+            val launchVisible = showLaunch && destination == null && personalRoute == null
             MonologTheme(appearance = current) {
                 val lightBars = !launchVisible && !LocalMonologDark.current
                 SideEffect {
@@ -97,7 +100,8 @@ class MainActivity : ComponentActivity() {
                     settings = settings,
                     appearance = current,
                     destination = destination,
-                    onDestinationOpened = { destination = null },
+                    personalRoute = personalRoute,
+                    onDestinationOpened = { destination = null; personalRoute = null },
                     onRequestMicPermission = { micPermissionLauncher.launch(Manifest.permission.RECORD_AUDIO) }
                 )
             }
@@ -116,13 +120,26 @@ class MainActivity : ComponentActivity() {
             destination = CompanionDestination.SETTINGS
             return
         }
+        personalRoute = null
         when (intent?.action) {
+            ACTION_OPEN_PERSONAL_MATCH -> {
+                val note = intent.getLongExtra("note", 0)
+                val reminder = intent.getLongExtra("reminder", 0)
+                val day = intent.getStringExtra("day")?.let { runCatching { java.time.LocalDate.parse(it) }.getOrNull() }
+                personalRoute = when {
+                    note > 0 -> "note/$note"
+                    reminder > 0 -> "reminder/edit/$reminder"
+                    day != null -> "journal?day=$day"
+                    else -> "journal"
+                }
+            }
             ACTION_REQUEST_MIC_PERMISSION -> micPermissionLauncher.launch(Manifest.permission.RECORD_AUDIO)
             ACTION_OPEN_JOURNAL -> destination = CompanionDestination.JOURNAL
             ACTION_NEW_NOTE -> destination = CompanionDestination.NEW_NOTE
             ACTION_NEW_REMINDER -> destination = CompanionDestination.NEW_REMINDER
             ACTION_OPEN_TODAY -> destination = CompanionDestination.TODAY
             ACTION_OPEN_VOICE -> destination = CompanionDestination.VOICE
+            ACTION_OPEN_APPEARANCE -> destination = CompanionDestination.APPEARANCE
             ACTION_OPEN_SETTINGS -> destination = CompanionDestination.SETTINGS
         }
     }

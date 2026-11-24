@@ -42,6 +42,7 @@ internal class BackupCoordinator(
 ) {
     private val accounts = BackupAccountStore.get(context)
     private val keys = BackupKeyStore(context)
+    private val settings = com.notokens.monolog.data.SettingsStore(context.applicationContext)
 
     suspend fun files(account: BackupAccount): List<DriveBackup> {
         requireConnected(account)
@@ -56,7 +57,7 @@ internal class BackupCoordinator(
 
     suspend fun backUp(account: BackupAccount): Int = operations.withLock {
         requireConnected(account)
-        require(account.journal || account.context) { "Select journal entries or saved context." }
+        require(account.hasSelection) { "Select an item to back up." }
         val snapshot = snapshot(account)
         require(snapshot.payloads.isNotEmpty()) { "There are no selected entries to back up." }
         authorized(account) { drive ->
@@ -82,7 +83,7 @@ internal class BackupCoordinator(
             db.memories().receipt(snapshot.memoryReceipts)
         }
         accounts.success(account.session)
-        snapshot.payloads.sumOf { it.entries.size + it.memories.size }
+        snapshot.payloads.sumOf { it.entries.size + it.memories.size + if (it.keyboard == null) 0 else 1 }
     }
 
     /** Validate every selected file before the first database write. The import is a single transaction. */
@@ -127,6 +128,17 @@ internal class BackupCoordinator(
             accounts.requireSession(account.session)
             val report = importPayloads(account, payloads)
             accounts.requireSession(account.session)
+            if (account.keyboard) {
+                val snapshots = payloads.mapNotNull { it.keyboard }.sortedBy { it.optLong("savedAt") }
+                val latest = snapshots.lastOrNull()
+                if (latest != null) {
+                    val profile = snapshots.fold(com.notokens.monolog.data.TypingProfile()) { accumulated, snapshot ->
+                        accumulated.merge(com.notokens.monolog.data.TypingProfile.decode(snapshot.getJSONObject("profile")))
+                    }
+                    latest.put("profile", profile.encode())
+                    settings.importKeyboard(latest) { accounts.requireSession(account.session) }
+                }
+            }
             withContext(Dispatchers.IO) {
                 if (!keys.hasKey(account.id) || code != null) keys.save(account.id, checkNotNull(recoveredSecrets))
             }
@@ -143,6 +155,8 @@ internal class BackupCoordinator(
     }
 
     private suspend fun snapshot(account: BackupAccount): BackupSnapshot = withContext(Dispatchers.IO) {
+        val keyboard = if (account.keyboard) settings.exportKeyboard().put("savedAt", System.currentTimeMillis()) else null
+        val currentYear = java.time.LocalDate.now().year
         db.withTransaction {
             val records = db.backups().records().associateBy { it.noteId }.toMutableMap()
             val refs = db.photos().observeRefs().first().groupBy { it.noteId }
@@ -177,9 +191,10 @@ internal class BackupCoordinator(
                 Instant.ofEpochMilli(it.createdAt).atZone(ZoneId.systemDefault()).year }
             val memoryYears = memories.groupBy { java.time.LocalDate.parse(it.day).year }
             val receipts = memories.map { MemoryBackupReceipt(account.id, it.id, it.revision, it.digest()) }
-            BackupSnapshot((noteYears.keys + memoryYears.keys).sorted().map { year ->
+            val years = noteYears.keys + memoryYears.keys + listOfNotNull(currentYear.takeIf { keyboard != null })
+            BackupSnapshot(years.sorted().map { year ->
                 BackupPayload(account.id, year, noteYears[year].orEmpty(), ZoneId.systemDefault().id,
-                    memoryYears[year].orEmpty()) }, archives, receipts)
+                    memoryYears[year].orEmpty(), keyboard.takeIf { year == currentYear }) }, archives, receipts)
         }
     }
 

@@ -25,8 +25,11 @@ internal data class BackupAccount(
     val connected: Boolean = false, val reconnect: Boolean = false,
     val journal: Boolean = true, val context: Boolean = true, val attachments: Boolean = true,
     val frequency: String = "Manual", val lastBackup: Long = 0, val loadedYears: Set<Int> = emptySet(),
-    val backupMinute: Int = 4 * 60
-)
+    val backupMinute: Int = 4 * 60,
+    val keyboard: Boolean = false
+) {
+    val hasSelection get() = journal || context || keyboard
+}
 
 internal class BackupAccountStore private constructor(private val context: Context) {
     private val prefs = context.getSharedPreferences("drive_backup_account", Context.MODE_PRIVATE)
@@ -37,7 +40,7 @@ internal class BackupAccountStore private constructor(private val context: Conte
         prefs.getBoolean("journal", true), prefs.getBoolean("context", true), prefs.getBoolean("attachments", true),
         prefs.getString("frequency", "Manual").orEmpty(), prefs.getLong("lastBackup", 0),
         prefs.getStringSet("loadedYears", emptySet()).orEmpty().mapNotNull { it.toIntOrNull() }.toSet(),
-        prefs.getInt("backupMinute", 4 * 60).coerceIn(0, 1439)
+        prefs.getInt("backupMinute", 4 * 60).coerceIn(0, 1439), prefs.getBoolean("keyboard", false)
     )
     private val mutableState = MutableStateFlow(read())
     val state = mutableState.asStateFlow()
@@ -80,6 +83,11 @@ internal class BackupAccountStore private constructor(private val context: Conte
         prefs.edit().putBoolean("journal", journal).putBoolean("context", context)
             .putBoolean("attachments", attachments).persist()
         BackupWork.schedule(this.context, state.value)
+    }
+    fun keyboardBackup(enabled: Boolean) {
+        BackupWork.cancel(context)
+        prefs.edit().putBoolean("keyboard", enabled).persist()
+        BackupWork.schedule(context, state.value)
     }
     fun frequency(value: String) {
         require(value in listOf("Manual", "Daily", "Weekly", "Monthly"))

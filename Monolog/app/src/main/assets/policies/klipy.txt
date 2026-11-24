@@ -1,0 +1,18 @@
+KLIPY media and ads
+
+GIFs and stickers are optional online services. If you enable them, Monolog requests
+catalog items when you open either tab and sends media searches you choose to submit.
+KLIPY and its media delivery providers may receive those search terms, your network
+address, and a locale. You can turn the feature off under Keyboard & shortcuts.
+
+The KLIPY catalog may contain sponsored items. Any future sponsored items shown in
+Monolog will be labeled. When advertising is active, KLIPY and its advertising
+partners may process device, network, and interaction information to display and
+measure ads. See the provider's privacy policy and applicable terms for details.
+
+The media feature does not receive ordinary keyboard drafts, your clipboard, your
+journal, or your voice recordings. Its online tabs are unavailable in incognito
+and protected fields. Media selected for insertion is sent to the app you are typing in.
+
+KLIPY Privacy Policy: https://klipy.com/support/privacy-policy
+KLIPY Terms of Service: https://klipy.com/support/terms-services
