@@ -56,7 +56,6 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.TextRange
 import androidx.compose.ui.text.input.TextFieldValue
 import androidx.compose.ui.text.input.ImeAction
-import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
@@ -461,63 +460,61 @@ fun CompanionApp(
                                 dismissButton = { TextButton(onClick = { confirmDelete = false }) { Text("Cancel") } }
                             )
                         }
-                        ScreenFrame(null, showLocalAi = true) {
-                            WeatherDateCard()
+                        ScreenFrame(null, showLocalAi = true, showWeatherAndDate = true) {
                             LazyColumn(Modifier.weight(1f).fillMaxWidth(),
                                 contentPadding = PaddingValues(top = 20.dp, bottom = 24.dp),
                                 verticalArrangement = Arrangement.spacedBy(14.dp)) {
                                 item {
-                                    Row(verticalAlignment = Alignment.CenterVertically) {
-                                        Column(Modifier.weight(1f)) {
-                                            Text("Context library", color = ink, style = MaterialTheme.typography.headlineMedium,
+                                    Column {
+                                        Row(verticalAlignment = Alignment.CenterVertically) {
+                                            Text("Context library", Modifier.weight(1f), color = ink,
+                                                style = MaterialTheme.typography.headlineSmall,
                                                 fontWeight = FontWeight.SemiBold)
-                                            Text("Saved moments, ready when you need them", color = muted,
-                                                style = MaterialTheme.typography.bodyMedium)
-                                        }
-                                        Box {
-                                            IconControl(Glyph.PLUS, "Create", { creating = true }, frosted = true)
-                                            DropdownMenu(
-                                                expanded = creating,
-                                                onDismissRequest = { creating = false },
-                                                shape = RoundedCornerShape(24.dp),
-                                                containerColor = MaterialTheme.colorScheme.surfaceContainerHigh,
-                                                border = BorderStroke(1.dp, PaperPillBorder)
-                                            ) {
-                                                DropdownMenuItem(text = { Text("Note or photo") },
-                                                    leadingIcon = { MonologIcon(Glyph.PHOTO) },
-                                                    onClick = { creating = false; nav.navigate("note/new") })
-                                                DropdownMenuItem(text = { Text("Journal entry") },
-                                                    leadingIcon = { MonologIcon(Glyph.BOOK) },
-                                                    onClick = { creating = false; nav.navigate("journal") })
-                                                DropdownMenuItem(text = { Text("Reminder") },
-                                                    leadingIcon = { MonologIcon(Glyph.BELL) },
-                                                    onClick = { creating = false; nav.navigate("reminders") })
-                                                DropdownMenuItem(text = { Text("Capture screen") },
-                                                    leadingIcon = { MonologIcon(Glyph.CAPTURE) }, enabled = !capturePending,
-                                                    onClick = {
-                                                        creating = false
-                                                        if (!capturePending) screenScope.launch {
-                                                            capturePending = true
-                                                            try {
-                                                                focusManager.clearFocus(force = true)
-                                                                keyboard?.hide()
-                                                                val ready = withTimeoutOrNull(1_500) {
-                                                                    snapshotFlow { imeInsets.getBottom(density) == 0 }.first { it }
-                                                                } == true
-                                                                if (ready && view.hasWindowFocus()) {
-                                                                    captureToJournal(context, settings) { copyCompanionWindow(view) }
+                                            LibraryViewOptions(compact, { compact = !compact }, sort, { sort = it }, enabled = !selecting)
+                                            Box {
+                                                IconControl(Glyph.PLUS, "Create", { creating = true }, frosted = true)
+                                                DropdownMenu(
+                                                    expanded = creating,
+                                                    onDismissRequest = { creating = false },
+                                                    shape = RoundedCornerShape(24.dp),
+                                                    containerColor = MaterialTheme.colorScheme.surfaceContainerHigh,
+                                                    border = BorderStroke(1.dp, PaperPillBorder)
+                                                ) {
+                                                    DropdownMenuItem(text = { Text("Note or photo") },
+                                                        leadingIcon = { MonologIcon(Glyph.PHOTO) },
+                                                        onClick = { creating = false; nav.navigate("note/new") })
+                                                    DropdownMenuItem(text = { Text("Journal entry") },
+                                                        leadingIcon = { MonologIcon(Glyph.BOOK) },
+                                                        onClick = { creating = false; nav.navigate("journal") })
+                                                    DropdownMenuItem(text = { Text("Reminder") },
+                                                        leadingIcon = { MonologIcon(Glyph.BELL) },
+                                                        onClick = { creating = false; nav.navigate("reminders") })
+                                                    DropdownMenuItem(text = { Text("Capture screen") },
+                                                        leadingIcon = { MonologIcon(Glyph.CAPTURE) }, enabled = !capturePending,
+                                                        onClick = {
+                                                            creating = false
+                                                            if (!capturePending) screenScope.launch {
+                                                                capturePending = true
+                                                                try {
+                                                                    focusManager.clearFocus(force = true)
+                                                                    keyboard?.hide()
+                                                                    val ready = withTimeoutOrNull(1_500) {
+                                                                        snapshotFlow { imeInsets.getBottom(density) == 0 }.first { it }
+                                                                    } == true
+                                                                    if (ready && view.hasWindowFocus()) {
+                                                                        captureToJournal(context, settings) { copyCompanionWindow(view) }
+                                                                    }
+                                                                } finally {
+                                                                    capturePending = false
                                                                 }
-                                                            } finally {
-                                                                capturePending = false
                                                             }
-                                                        }
-                                                    })
+                                                        })
+                                                }
                                             }
                                         }
+                                        Text("Saved moments, ready when you need them", color = muted,
+                                            style = MaterialTheme.typography.bodyMedium)
                                     }
-                                }
-                                item {
-                                    LibraryViewOptions(compact, { compact = !compact }, sort, { sort = it }, enabled = !selecting)
                                 }
                                 answer?.let { result ->
                                     item {
@@ -1028,8 +1025,7 @@ private fun Screen(
     footer: (@Composable () -> Unit)? = null,
     content: @Composable () -> Unit
 ) {
-    ScreenFrame(onBack) {
-        if (showWeatherAndDate) WeatherDateCard()
+    ScreenFrame(onBack, showWeatherAndDate = showWeatherAndDate) {
         Column(Modifier.weight(1f).fillMaxWidth().verticalScroll(scrollState).padding(vertical = 12.dp)) {
             ScreenTitle(title)
             Spacer(Modifier.height(12.dp))
@@ -1048,8 +1044,7 @@ private fun CollectionScreen(
     footer: (@Composable () -> Unit)? = null,
     content: LazyListScope.() -> Unit
 ) {
-    ScreenFrame(onBack, showLocalAi = showWeatherAndDate) {
-        if (showWeatherAndDate) WeatherDateCard()
+    ScreenFrame(onBack, showLocalAi = showWeatherAndDate, showWeatherAndDate = showWeatherAndDate) {
         LazyColumn(
             Modifier.weight(1f).fillMaxWidth(),
             state = scrollState,
@@ -1064,8 +1059,35 @@ private fun CollectionScreen(
 }
 
 @Composable
-private fun ScreenFrame(onBack: (() -> Unit)?, showLocalAi: Boolean = false, content: @Composable ColumnScope.() -> Unit) {
+private fun ScreenFrame(
+    onBack: (() -> Unit)?,
+    showLocalAi: Boolean = false,
+    showWeatherAndDate: Boolean = false,
+    content: @Composable ColumnScope.() -> Unit
+) {
+    if (showWeatherAndDate) {
+        WithWeatherDateCard { weatherDetails, weatherCard ->
+            ScreenFrameLayout(onBack, showLocalAi, weatherDetails) {
+                weatherCard()
+                content()
+            }
+        }
+    } else {
+        ScreenFrameLayout(onBack, showLocalAi, content = content)
+    }
+}
+
+@Composable
+private fun ScreenFrameLayout(
+    onBack: (() -> Unit)?,
+    showLocalAi: Boolean,
+    weatherDetails: (@Composable () -> Unit)? = null,
+    content: @Composable ColumnScope.() -> Unit
+) {
     val onSettings = LocalSettingsAction.current
+    val configuration = LocalConfiguration.current
+    val showBadgeLabel = configuration.screenWidthDp >= 344 &&
+        (configuration.fontScale <= 1.3f || configuration.screenWidthDp >= 412)
     Box(Modifier.fillMaxSize(), contentAlignment = Alignment.TopCenter) {
         Column(Modifier.widthIn(max = 640.dp).fillMaxWidth().fillMaxHeight().padding(horizontal = 16.dp)) {
             Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
@@ -1076,11 +1098,14 @@ private fun ScreenFrame(onBack: (() -> Unit)?, showLocalAi: Boolean = false, con
                     fontWeight = FontWeight.SemiBold, modifier = Modifier.weight(1f),
                     maxLines = 1, overflow = TextOverflow.Ellipsis
                 )
-                if (showLocalAi) Row(Modifier.glassSurface(18).padding(horizontal = 8.dp, vertical = 4.dp),
+                if (showLocalAi) Row(
+                    Modifier.glassSurface(18).padding(horizontal = 8.dp, vertical = 4.dp)
+                        .semantics { if (!showBadgeLabel) contentDescription = "On-device AI" },
                     verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(4.dp)) {
                     MonologIcon(Glyph.SHIELD, Modifier.size(13.dp), muted)
-                    Text("On-device AI", color = muted, style = MaterialTheme.typography.labelSmall)
+                    if (showBadgeLabel) Text("On-device AI", color = muted, style = MaterialTheme.typography.labelSmall)
                 }
+                weatherDetails?.invoke()
                 if (onBack == null) IconControl(Glyph.SETTINGS, "Settings", onSettings, frosted = true)
             }
             content()
@@ -1176,29 +1201,19 @@ private fun LibraryViewOptions(
     compact: Boolean, onToggleCompact: () -> Unit, sort: LibrarySort, onSort: (LibrarySort) -> Unit, enabled: Boolean
 ) {
     var showSort by remember { mutableStateOf(false) }
-    val padding = PaddingValues(horizontal = 10.dp, vertical = 6.dp)
-    Row(Modifier.fillMaxWidth().height(IntrinsicSize.Min), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-        OutlinedButton(
+    Row(verticalAlignment = Alignment.CenterVertically) {
+        IconControl(
+            glyph = if (compact) Glyph.LIST else Glyph.GRID,
+            label = if (compact) "Show grid view" else "Show compact list",
             onClick = onToggleCompact,
-            modifier = Modifier.weight(1f).fillMaxHeight().semantics { selected = compact },
+            modifier = Modifier.semantics { selected = compact },
             enabled = enabled,
-            contentPadding = padding,
-            colors = ButtonDefaults.outlinedButtonColors(
-                containerColor = if (compact) MaterialTheme.colorScheme.primaryContainer else Color.Transparent
-            )
-        ) {
-            Text("Compact view", textAlign = TextAlign.Center)
-        }
-        Box(Modifier.weight(1f).fillMaxHeight()) {
-            OutlinedButton(
-                onClick = { showSort = true }, enabled = enabled,
-                modifier = Modifier.fillMaxSize().semantics { contentDescription = "Sort: ${sort.label}" },
-                contentPadding = padding
-            ) {
-                Text(sort.label, textAlign = TextAlign.Center)
-                Spacer(Modifier.width(6.dp))
-                MonologIcon(Glyph.DOWN, Modifier.size(14.dp))
-            }
+            frosted = true,
+            compact = true
+        )
+        Box {
+            IconControl(sort.icon, "Sort: ${sort.label}", { showSort = true },
+                frosted = true, compact = true, enabled = enabled)
             DropdownMenu(expanded = showSort, onDismissRequest = { showSort = false }, shape = RoundedCornerShape(20.dp)) {
                 LibrarySort.entries.forEach { option ->
                     DropdownMenuItem(
@@ -1213,11 +1228,11 @@ private fun LibraryViewOptions(
     }
 }
 
-private enum class LibrarySort(val label: String, val comparator: Comparator<Note>) {
-    NEWEST("Newest first", compareByDescending<Note> { it.updatedAt }.thenByDescending { it.id }),
-    OLDEST("Oldest first", compareBy<Note> { it.updatedAt }.thenBy { it.id }),
-    TITLE_ASC("Title A–Z", compareBy<Note, String>(String.CASE_INSENSITIVE_ORDER) { it.title }.thenBy { it.id }),
-    TITLE_DESC("Title Z–A", compareBy<Note, String>(String.CASE_INSENSITIVE_ORDER.reversed()) { it.title }.thenBy { it.id })
+private enum class LibrarySort(val label: String, val icon: Glyph, val comparator: Comparator<Note>) {
+    NEWEST("Newest first", Glyph.SORT_DOWN, compareByDescending<Note> { it.updatedAt }.thenByDescending { it.id }),
+    OLDEST("Oldest first", Glyph.SORT_UP, compareBy<Note> { it.updatedAt }.thenBy { it.id }),
+    TITLE_ASC("Title A–Z", Glyph.SORT_TITLE_DOWN, compareBy<Note, String>(String.CASE_INSENSITIVE_ORDER) { it.title }.thenBy { it.id }),
+    TITLE_DESC("Title Z–A", Glyph.SORT_TITLE_UP, compareBy<Note, String>(String.CASE_INSENSITIVE_ORDER.reversed()) { it.title }.thenBy { it.id })
 }
 
 @Composable

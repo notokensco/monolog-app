@@ -16,7 +16,9 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.drawWithCache
 import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.geometry.CornerRadius
 import androidx.compose.ui.geometry.Rect
+import androidx.compose.ui.geometry.RoundRect
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.ColorFilter
@@ -37,7 +39,7 @@ import com.notokens.monolog.ui.theme.*
 import kotlin.math.cos
 import kotlin.math.sin
 
-enum class Glyph { INFO, DASHBOARD, CLIPBOARD, DOWN, CLOSE, EXPAND, BOLT, CLOCK, BELL, ALARM, BOOK, LAYERS, PLUS, HOME, SETTINGS, MIC, GLOBE, SMILE, SHIFT, BACKSPACE, ENTER, SEARCH, SHIELD, PRIVACY, ARROW, BACK, DOT, PAPER, INK, PHOTO, CAPTURE, EDIT, REWRITE, DRAG_HANDLE, PIN, SHARE, CHEVRON, DOUBLE_DOWN, REFRESH }
+enum class Glyph { INFO, DASHBOARD, CLIPBOARD, DOWN, CLOSE, EXPAND, BOLT, CLOCK, BELL, ALARM, BOOK, LAYERS, PLUS, HOME, SETTINGS, MIC, GLOBE, SMILE, SHIFT, BACKSPACE, ENTER, SEARCH, SHIELD, PRIVACY, ARROW, BACK, DOT, PAPER, INK, PHOTO, CAPTURE, EDIT, REWRITE, DRAG_HANDLE, PIN, SHARE, CHEVRON, DOUBLE_DOWN, REFRESH, GRID, LIST, SORT_DOWN, SORT_UP, SORT_TITLE_DOWN, SORT_TITLE_UP }
 
 @Composable
 fun MonologIcon(glyph: Glyph, modifier: Modifier = Modifier, color: Color = PaperKeyText) {
@@ -76,6 +78,28 @@ fun MonologIcon(glyph: Glyph, modifier: Modifier = Modifier, color: Color = Pape
                 Glyph.REFRESH -> {
                     path.arcTo(Rect(4f, 4f, 20f, 20f), 15f, 300f, forceMoveTo = true)
                     line(18f, 2.5f, 18f, 7f, 13.5f, 7f)
+                }
+                Glyph.GRID -> {
+                    for (x in listOf(4f, 14f)) for (y in listOf(4f, 14f)) {
+                        path.addRoundRect(RoundRect(Rect(x, y, x + 6f, y + 6f), CornerRadius(1f)))
+                    }
+                }
+                Glyph.LIST -> for (y in listOf(6f, 12f, 18f)) {
+                    line(4f, y, 5f, y)
+                    line(9f, y, 20f, y)
+                }
+                Glyph.SORT_DOWN, Glyph.SORT_UP, Glyph.SORT_TITLE_DOWN, Glyph.SORT_TITLE_UP -> {
+                    if (glyph == Glyph.SORT_TITLE_DOWN || glyph == Glyph.SORT_TITLE_UP) {
+                        line(3f, 16f, 7f, 6f, 11f, 16f)
+                        line(4.5f, 12f, 9.5f, 12f)
+                    } else {
+                        line(3f, 6f, 12f, 6f)
+                        line(3f, 12f, 10f, 12f)
+                        line(3f, 18f, 8f, 18f)
+                    }
+                    line(18f, 5f, 18f, 19f)
+                    if (glyph == Glyph.SORT_DOWN || glyph == Glyph.SORT_TITLE_DOWN) line(14f, 15f, 18f, 19f, 22f, 15f)
+                    else line(14f, 9f, 18f, 5f, 22f, 9f)
                 }
                 Glyph.CLOSE -> { line(5f, 5f, 19f, 19f); line(19f, 5f, 5f, 19f) }
                 Glyph.EXPAND -> { line(14f, 4f, 20f, 4f, 20f, 10f); line(20f, 4f, 14f, 10f); line(10f, 20f, 4f, 20f, 4f, 14f); line(4f, 20f, 10f, 14f) }
@@ -181,18 +205,22 @@ fun IconControl(
     label: String,
     onClick: () -> Unit,
     modifier: Modifier = Modifier,
-    frosted: Boolean = false
+    frosted: Boolean = false,
+    compact: Boolean = false,
+    enabled: Boolean = true
 ) {
     Box(
-        modifier.size(48.dp).clip(CircleShape).clickable(role = Role.Button, onClick = onClick)
+        modifier.size(48.dp).clip(CircleShape).clickable(enabled = enabled, role = Role.Button, onClick = onClick)
             .semantics { contentDescription = label },
         contentAlignment = Alignment.Center
     ) {
         Box(
-            Modifier.size(36.dp).then(if (frosted) Modifier.glassSurface(18) else Modifier),
+            Modifier.size(if (compact) 30.dp else 36.dp)
+                .then(if (frosted) Modifier.glassSurface(if (compact) 15 else 18) else Modifier),
             contentAlignment = Alignment.Center
         ) {
-            MonologIcon(glyph, Modifier.size(20.dp))
+            MonologIcon(glyph, Modifier.size(if (compact) 17.dp else 20.dp),
+                color = if (enabled) PaperKeyText else PaperKeySubText.copy(alpha = 0.5f))
         }
     }
 }

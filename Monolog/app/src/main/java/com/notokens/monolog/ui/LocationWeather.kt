@@ -217,7 +217,9 @@ private fun granted(context: Context, permission: String) =
     ContextCompat.checkSelfPermission(context, permission) == PackageManager.PERMISSION_GRANTED
 
 @Composable
-internal fun WeatherDateCard() {
+internal fun WithWeatherDateCard(
+    content: @Composable (details: @Composable () -> Unit, card: @Composable () -> Unit) -> Unit
+) {
     val context = LocalContext.current
     val settings = remember(context) { SettingsStore(context.applicationContext) }
     val locationManager = remember(context) { context.getSystemService(LocationManager::class.java) }
@@ -225,11 +227,9 @@ internal fun WeatherDateCard() {
     val private by settings.incognito.collectAsState(false)
     val scope = rememberCoroutineScope()
     val lifecycle = LocalLifecycleOwner.current.lifecycle
-    val browser = LocalUriHandler.current
     var result by remember { mutableStateOf<LocalForecast.Forecast?>(null) }
     var loading by remember { mutableStateOf(false) }
     var failed by remember { mutableStateOf(false) }
-    var showAttribution by remember { mutableStateOf(false) }
     var locationOn by remember(locationManager) { mutableStateOf(locationManager?.isLocationEnabled == true) }
     var showLocationPrompt by remember { mutableStateOf(false) }
     DisposableEffect(context, locationManager) {
@@ -296,29 +296,46 @@ internal fun WeatherDateCard() {
             dismissButton = { TextButton(onClick = { showLocationPrompt = false }) { Text("Cancel") } }
         )
     }
+    val forecast = result.takeIf { locationOn && !private }
+    content(
+        { if (forecast != null) WeatherDetailsButton(forecast) },
+        {
+            WeatherDateRow(
+                forecast = forecast,
+                showWeather = !private,
+                status = when {
+                    !locationOn -> "Turn on location"
+                    loading -> "Finding weather\u2026"
+                    failed -> "Weather unavailable \u00b7 Retry"
+                    else -> "Use location for weather"
+                },
+                onWeatherClick = {
+                    locationOn = locationManager?.isLocationEnabled == true
+                    if (locationOn) requestWeather() else showLocationPrompt = true
+                }
+            )
+        }
+    )
+}
+
+@Composable
+private fun WeatherDateRow(
+    forecast: LocalForecast.Forecast?, showWeather: Boolean, status: String, onWeatherClick: () -> Unit
+) {
     Row(
         Modifier.fillMaxWidth().glassSurface(24).padding(end = 14.dp),
         horizontalArrangement = Arrangement.spacedBy(8.dp),
         verticalAlignment = Alignment.CenterVertically
     ) {
-        if (!private) {
+        if (showWeather) {
             Row(
-                Modifier.weight(2f).heightIn(min = 52.dp).clickable {
-                    locationOn = locationManager?.isLocationEnabled == true
-                    if (locationOn) requestWeather() else showLocationPrompt = true
-                }.padding(start = 10.dp),
+                Modifier.weight(2f).heightIn(min = 52.dp).clickable(onClick = onWeatherClick).padding(start = 10.dp),
                 horizontalArrangement = Arrangement.spacedBy(6.dp),
                 verticalAlignment = Alignment.CenterVertically
             ) {
-                val forecast = result.takeIf { locationOn }
                 if (forecast == null) {
                     WeatherArtwork(WeatherSky.UNKNOWN, false)
-                    Text(when {
-                        !locationOn -> "Turn on location"
-                        loading -> "Finding weather\u2026"
-                        failed -> "Weather unavailable \u00b7 Retry"
-                        else -> "Use location for weather"
-                    }, Modifier.weight(1f), style = MaterialTheme.typography.labelMedium,
+                    Text(status, Modifier.weight(1f), style = MaterialTheme.typography.labelMedium,
                         maxLines = 2, overflow = TextOverflow.Ellipsis)
                 } else {
                     WeatherArtwork(forecast.sky, true)
@@ -328,25 +345,6 @@ internal fun WeatherDateCard() {
                         Text("${forecast.place.substringBefore(", ")} \u00b7 ${localForecastTime(forecast.forecastTime)}",
                             color = PaperKeySubText, style = MaterialTheme.typography.labelSmall, maxLines = 1,
                             overflow = TextOverflow.Ellipsis)
-                    }
-                    Box {
-                        IconControl(Glyph.INFO, "Weather details and source", { showAttribution = true })
-                        DropdownMenu(showAttribution, { showAttribution = false }) {
-                            Text(
-                                "${forecast.temperature}°C · ${forecast.sky.title}\n" +
-                                    "${forecast.place} · ${localForecastTime(forecast.forecastTime)}",
-                                modifier = Modifier.widthIn(max = 260.dp).padding(horizontal = 12.dp, vertical = 8.dp),
-                                style = MaterialTheme.typography.bodySmall
-                            )
-                            DropdownMenuItem(text = { Text("Weather data by MET Norway") }, onClick = {
-                                showAttribution = false
-                                browser.openUri("https://www.met.no/en")
-                            })
-                            DropdownMenuItem(text = { Text("CC BY 4.0 · Forecast rounded and summarized") }, onClick = {
-                                showAttribution = false
-                                browser.openUri("https://creativecommons.org/licenses/by/4.0/")
-                            })
-                        }
                     }
                 }
             }
@@ -360,6 +358,31 @@ internal fun WeatherDateCard() {
             maxLines = 2,
             overflow = TextOverflow.Ellipsis
         )
+    }
+}
+
+@Composable
+private fun WeatherDetailsButton(forecast: LocalForecast.Forecast) {
+    val browser = LocalUriHandler.current
+    var expanded by remember { mutableStateOf(false) }
+    Box {
+        IconControl(Glyph.INFO, "Weather details and source", { expanded = true }, frosted = true, compact = true)
+        DropdownMenu(expanded, { expanded = false }) {
+            Text(
+                "${forecast.temperature}°C · ${forecast.sky.title}\n" +
+                    "${forecast.place} · ${localForecastTime(forecast.forecastTime)}",
+                modifier = Modifier.widthIn(max = 260.dp).padding(horizontal = 12.dp, vertical = 8.dp),
+                style = MaterialTheme.typography.bodySmall
+            )
+            DropdownMenuItem(text = { Text("Weather data by MET Norway") }, onClick = {
+                expanded = false
+                browser.openUri("https://www.met.no/en")
+            })
+            DropdownMenuItem(text = { Text("CC BY 4.0 · Forecast rounded and summarized") }, onClick = {
+                expanded = false
+                browser.openUri("https://creativecommons.org/licenses/by/4.0/")
+            })
+        }
     }
 }
 
