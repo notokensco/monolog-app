@@ -94,7 +94,7 @@ private val todayMemoryRequest = Regex(
     """\b(?:my (?:journal|notes?|memories|photos?|screenshots?|day)|(?:what|when|where) did (?:i|we)|saved (?:notes?|memories|photos?))\b""",
     RegexOption.IGNORE_CASE
 )
-private val LocalSettingsAction = compositionLocalOf<() -> Unit> { error("Settings navigation is missing") }
+private val LocalSettingsAction = compositionLocalOf<(SettingsPage?) -> Unit> { error("Settings navigation is missing") }
 
 fun formatTime(millis: Long): String = DateFormat.getDateTimeInstance(DateFormat.MEDIUM, DateFormat.SHORT).format(Date(millis))
 
@@ -148,11 +148,11 @@ fun CompanionApp(
         keyboard?.hide()
         nav.popBackStack()
     }
-    val openSettings: () -> Unit = {
+    val openSettings: (SettingsPage?) -> Unit = { page ->
         focusManager.clearFocus(force = true)
         keyboard?.hide()
-        nav.navigate(CompanionDestination.SETTINGS.route) { launchSingleTop = true }
-        scope.launch { settingsScroll.scrollTo(0) }
+        nav.navigate(page?.route ?: CompanionDestination.SETTINGS.route) { launchSingleTop = true }
+        if (page == null) scope.launch { settingsScroll.scrollTo(0) }
     }
     LaunchedEffect(destination, personalRoute) {
         if (personalRoute != null) {
@@ -162,7 +162,7 @@ fun CompanionApp(
             onDestinationOpened()
         } else if (destination != null) {
             when (destination) {
-                CompanionDestination.SETTINGS -> openSettings()
+                CompanionDestination.SETTINGS -> openSettings(null)
                 else -> nav.navigate(destination.route) {
                     popUpTo(CompanionDestination.TODAY.route)
                     launchSingleTop = true
@@ -460,7 +460,7 @@ fun CompanionApp(
                                 dismissButton = { TextButton(onClick = { confirmDelete = false }) { Text("Cancel") } }
                             )
                         }
-                        ScreenFrame(null, showLocalAi = true, showWeatherAndDate = true) {
+                        ScreenFrame(null, showWeatherAndDate = true) {
                             LazyColumn(Modifier.weight(1f).fillMaxWidth(),
                                 contentPadding = PaddingValues(top = 20.dp, bottom = 24.dp),
                                 verticalArrangement = Arrangement.spacedBy(14.dp)) {
@@ -1044,7 +1044,7 @@ private fun CollectionScreen(
     footer: (@Composable () -> Unit)? = null,
     content: LazyListScope.() -> Unit
 ) {
-    ScreenFrame(onBack, showLocalAi = showWeatherAndDate, showWeatherAndDate = showWeatherAndDate) {
+    ScreenFrame(onBack, showWeatherAndDate = showWeatherAndDate) {
         LazyColumn(
             Modifier.weight(1f).fillMaxWidth(),
             state = scrollState,
@@ -1061,52 +1061,67 @@ private fun CollectionScreen(
 @Composable
 private fun ScreenFrame(
     onBack: (() -> Unit)?,
-    showLocalAi: Boolean = false,
     showWeatherAndDate: Boolean = false,
     content: @Composable ColumnScope.() -> Unit
 ) {
     if (showWeatherAndDate) {
         WithWeatherDateCard { weatherDetails, weatherCard ->
-            ScreenFrameLayout(onBack, showLocalAi, weatherDetails) {
+            ScreenFrameLayout(onBack, weatherDetails) {
                 weatherCard()
                 content()
             }
         }
     } else {
-        ScreenFrameLayout(onBack, showLocalAi, content = content)
+        ScreenFrameLayout(onBack, content = content)
     }
 }
 
 @Composable
 private fun ScreenFrameLayout(
     onBack: (() -> Unit)?,
-    showLocalAi: Boolean,
     weatherDetails: (@Composable () -> Unit)? = null,
     content: @Composable ColumnScope.() -> Unit
 ) {
     val onSettings = LocalSettingsAction.current
     val configuration = LocalConfiguration.current
-    val showBadgeLabel = configuration.screenWidthDp >= 344 &&
+    val showBadgeLabel = configuration.screenWidthDp >= 358 &&
         (configuration.fontScale <= 1.3f || configuration.screenWidthDp >= 412)
     Box(Modifier.fillMaxSize(), contentAlignment = Alignment.TopCenter) {
         Column(Modifier.widthIn(max = 640.dp).fillMaxWidth().fillMaxHeight().padding(horizontal = 16.dp)) {
             Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
                 if (onBack != null) IconControl(Glyph.BACK, "Back", onBack, frosted = true)
-                MonologLogo(Modifier.size(38.dp))
+                MonologLogo(Modifier.size(if (weatherDetails != null) 36.dp else 38.dp))
                 Text(
-                    stringResource(R.string.app_name), color = ink, style = MaterialTheme.typography.titleLarge,
-                    fontWeight = FontWeight.SemiBold, modifier = Modifier.weight(1f),
+                    stringResource(R.string.app_name), color = ink,
+                    style = if (weatherDetails != null) MaterialTheme.typography.titleLarge.copy(fontSize = 20.sp)
+                        else MaterialTheme.typography.titleLarge,
+                    fontWeight = FontWeight.SemiBold, modifier = Modifier.weight(1f).padding(end = 4.dp),
                     maxLines = 1, overflow = TextOverflow.Ellipsis
                 )
-                if (showLocalAi) Row(
-                    Modifier.glassSurface(18).padding(horizontal = 8.dp, vertical = 4.dp)
-                        .semantics { if (!showBadgeLabel) contentDescription = "On-device AI" },
-                    verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(4.dp)) {
-                    MonologIcon(Glyph.SHIELD, Modifier.size(13.dp), muted)
-                    if (showBadgeLabel) Text("On-device AI", color = muted, style = MaterialTheme.typography.labelSmall)
+                if (weatherDetails != null) {
+                    Box(
+                        Modifier.widthIn(min = 48.dp).heightIn(min = 48.dp).clip(CircleShape)
+                            .clickable(role = Role.Button) { onSettings(SettingsPage.MODELS) }
+                            .semantics { if (!showBadgeLabel) contentDescription = "On-device AI" },
+                        contentAlignment = Alignment.Center
+                    ) {
+                        Row(
+                            Modifier.glassSurface(16).padding(horizontal = 6.dp, vertical = 5.dp),
+                            horizontalArrangement = Arrangement.spacedBy(3.dp),
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            MonologIcon(Glyph.SHIELD, Modifier.size(12.dp), muted)
+                            if (showBadgeLabel) Text("On-device AI", color = muted, style = MaterialTheme.typography.labelSmall)
+                        }
+                    }
+                    weatherDetails()
+                    if (onBack == null) {
+                        IconControl(Glyph.SETTINGS, "Settings", { onSettings(null) },
+                            frosted = true, compact = true, iconOffsetX = (-3).dp)
+                    }
+                } else if (onBack == null) {
+                    IconControl(Glyph.SETTINGS, "Settings", { onSettings(null) }, frosted = true)
                 }
-                weatherDetails?.invoke()
-                if (onBack == null) IconControl(Glyph.SETTINGS, "Settings", onSettings, frosted = true)
             }
             content()
         }

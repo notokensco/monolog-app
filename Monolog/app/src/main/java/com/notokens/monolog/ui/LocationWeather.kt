@@ -366,7 +366,8 @@ private fun WeatherDetailsButton(forecast: LocalForecast.Forecast) {
     val browser = LocalUriHandler.current
     var expanded by remember { mutableStateOf(false) }
     Box {
-        IconControl(Glyph.INFO, "Weather details and source", { expanded = true }, frosted = true, compact = true)
+        IconControl(Glyph.INFO, "Weather details and source", { expanded = true },
+            frosted = true, compact = true, iconOffsetX = 3.dp)
         DropdownMenu(expanded, { expanded = false }) {
             Text(
                 "${forecast.temperature}°C · ${forecast.sky.title}\n" +

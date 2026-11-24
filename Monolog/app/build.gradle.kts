@@ -142,8 +142,8 @@ android {
         applicationId = "com.notokens.monolog"
         minSdk = 35
         targetSdk = 36
-        versionCode = 12
-        versionName = "0.1.0-alpha.5.6"
+        versionCode = 13
+        versionName = "0.1.0-alpha.6"
         buildConfigField("boolean", "MONOLOG_HAS_GGUF", (llamaSource != null).toString())
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
         val webEndpoint = providers.gradleProperty("monologWebEndpoint").orElse("").get()

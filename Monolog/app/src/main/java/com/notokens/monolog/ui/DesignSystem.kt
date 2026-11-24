@@ -6,6 +6,7 @@ import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
@@ -33,6 +34,7 @@ import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
+import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import com.notokens.monolog.R
 import com.notokens.monolog.ui.theme.*
@@ -207,7 +209,8 @@ fun IconControl(
     modifier: Modifier = Modifier,
     frosted: Boolean = false,
     compact: Boolean = false,
-    enabled: Boolean = true
+    enabled: Boolean = true,
+    iconOffsetX: Dp = 0.dp
 ) {
     Box(
         modifier.size(48.dp).clip(CircleShape).clickable(enabled = enabled, role = Role.Button, onClick = onClick)
@@ -215,7 +218,7 @@ fun IconControl(
         contentAlignment = Alignment.Center
     ) {
         Box(
-            Modifier.size(if (compact) 30.dp else 36.dp)
+            Modifier.offset(x = iconOffsetX).size(if (compact) 30.dp else 36.dp)
                 .then(if (frosted) Modifier.glassSurface(if (compact) 15 else 18) else Modifier),
             contentAlignment = Alignment.Center
         ) {
