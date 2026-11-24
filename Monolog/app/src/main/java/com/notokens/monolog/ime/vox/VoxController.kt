@@ -88,6 +88,17 @@ internal class VoxController(
         }
     }
 
+    private fun useAndroidSpeech() {
+        recorder?.cancel()
+        recorder = null
+        if (activeEngine == VoiceInputEngine.REGIONAL) {
+            languageTag = if (regionalMode == VoxLanguage.ENGLISH) "en-IN" else regionalMode.code
+            languageLabel = regionalMode.title
+        }
+        activeEngine = VoiceInputEngine.NATIVE
+        startNativeCapture()
+    }
+
     private fun startNativeCapture() {
         val session = generation
         update(state.copy(
@@ -95,6 +106,7 @@ internal class VoxController(
             language = languageLabel,
             engineLabel = "Native streaming",
             errorMessage = null,
+            partialTranscript = "",
             rmsLevel = 0f
         ))
         try {
@@ -240,10 +252,7 @@ internal class VoxController(
         }
         if (problem != null) {
             if (recordingNote) startAudioOnlyNote(problem)
-            else {
-                isListening = false
-                update(state.copy(status = VoxStatus.UNAVAILABLE, errorMessage = problem))
-            }
+            else useAndroidSpeech()
             return
         }
 
@@ -326,6 +335,10 @@ internal class VoxController(
                 startAudioOnlyNote("Captions unavailable. Recording audio only.")
                 return@launch
             }
+            if (failure && !recordingNote && isListening) {
+                useAndroidSpeech()
+                return@launch
+            }
             if (failure) isListening = false
             val restart = isListening && !recordingNote
             val transcript = result.ifBlank {
@@ -360,10 +373,7 @@ internal class VoxController(
         val mode = regionalMode
         if (!RegionalVox.ready(context, mode)) {
             if (recordingNote) startAudioOnlyNote("Download VOX AI India to transcribe this language.")
-            else {
-                isListening = false
-                update(state.copy(status = VoxStatus.UNAVAILABLE, errorMessage = "Download ${mode.title} for VOX AI India in On-device AI settings."))
-            }
+            else useAndroidSpeech()
             return
         }
         val session = generation
@@ -446,6 +456,10 @@ internal class VoxController(
                 startAudioOnlyNote("Captions unavailable. Recording audio only.")
                 return@launch
             }
+            if (failed && !recordingNote && isListening) {
+                useAndroidSpeech()
+                return@launch
+            }
             if (failed) isListening = false
             val restart = isListening && !recordingNote
             completeClip(transcript, when {
@@ -466,7 +480,14 @@ internal class VoxController(
         }
     }
 
-    private fun startAudioOnlyNote(cause: String) {
+    fun startNoteRecording() {
+        cleanup()
+        clearTranscript()
+        isListening = true
+        startAudioOnlyNote()
+    }
+
+    private fun startAudioOnlyNote(cause: String? = null) {
         val session = generation
         try {
             val audio = VoiceRecorder(scope)
@@ -495,6 +516,10 @@ internal class VoxController(
 
     fun pauseOrStopListening() {
         isListening = false
+        if (recordingNote && recorder != null && offlineJob == null) {
+            completeClip("", null, false)
+            return
+        }
         when (activeEngine) {
             VoiceInputEngine.MOONSHINE, VoiceInputEngine.REGIONAL -> {
                 recorder?.stop()
@@ -563,10 +588,10 @@ internal class VoxController(
         finishedAudio = null
     }
 
-    suspend fun finishNote(): RecordedVoice {
+    suspend fun finishNote(includeTranscript: Boolean = true): RecordedVoice {
         pauseOrStopListening()
         offlineJob?.join()
-        val transcript = cleanTranscript(state.transcript).take(4000)
+        val transcript = if (includeTranscript) cleanTranscript(state.transcript).take(4000) else ""
         val segment = takeVoiceSegment()
         cleanup()
         val audio = try {

@@ -2,14 +2,20 @@ package com.notokens.monolog.ui
 
 import android.Manifest
 import android.annotation.SuppressLint
+import android.content.ActivityNotFoundException
+import android.content.BroadcastReceiver
 import android.content.Context
+import android.content.Intent
+import android.content.IntentFilter
 import android.content.pm.PackageManager
 import android.location.Geocoder
 import android.location.Location
 import android.location.LocationManager
 import android.os.CancellationSignal
 import android.os.SystemClock
+import android.provider.Settings
 import android.util.LruCache
+import android.widget.Toast
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.animation.core.animateFloatAsState
@@ -17,10 +23,12 @@ import androidx.compose.animation.core.tween
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
+import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -31,6 +39,7 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.Path
 import androidx.compose.ui.graphics.StrokeCap
 import androidx.compose.ui.graphics.graphicsLayer
+import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalUriHandler
@@ -42,6 +51,7 @@ import androidx.lifecycle.repeatOnLifecycle
 import com.notokens.monolog.data.SettingsStore
 import com.notokens.monolog.ui.theme.PaperKeySubText
 import java.net.URL
+import java.text.SimpleDateFormat
 import java.time.Instant
 import java.time.ZoneId
 import java.time.format.DateTimeFormatter
@@ -52,6 +62,7 @@ import kotlin.math.sin
 import kotlinx.coroutines.async
 import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.delay
+import java.util.Date
 import java.util.Locale
 import javax.net.ssl.HttpsURLConnection
 import kotlin.coroutines.resume
@@ -206,9 +217,10 @@ private fun granted(context: Context, permission: String) =
     ContextCompat.checkSelfPermission(context, permission) == PackageManager.PERMISSION_GRANTED
 
 @Composable
-internal fun WeatherChip() {
+internal fun WeatherDateCard() {
     val context = LocalContext.current
     val settings = remember(context) { SettingsStore(context.applicationContext) }
+    val locationManager = remember(context) { context.getSystemService(LocationManager::class.java) }
     val enabled by settings.locationWeather.collectAsState(false)
     val private by settings.incognito.collectAsState(false)
     val scope = rememberCoroutineScope()
@@ -218,8 +230,22 @@ internal fun WeatherChip() {
     var loading by remember { mutableStateOf(false) }
     var failed by remember { mutableStateOf(false) }
     var showAttribution by remember { mutableStateOf(false) }
+    var locationOn by remember(locationManager) { mutableStateOf(locationManager?.isLocationEnabled == true) }
+    var showLocationPrompt by remember { mutableStateOf(false) }
+    DisposableEffect(context, locationManager) {
+        val receiver = object : BroadcastReceiver() {
+            override fun onReceive(context: Context, intent: Intent) {
+                locationOn = locationManager?.isLocationEnabled == true
+                if (locationOn) showLocationPrompt = false
+            }
+        }
+        ContextCompat.registerReceiver(context, receiver, IntentFilter(LocationManager.MODE_CHANGED_ACTION),
+            ContextCompat.RECEIVER_NOT_EXPORTED)
+        locationOn = locationManager?.isLocationEnabled == true
+        onDispose { context.unregisterReceiver(receiver) }
+    }
     suspend fun refresh(force: Boolean) {
-        if (loading || settings.incognito.first()) return
+        if (settings.incognito.first() || loading || locationManager?.isLocationEnabled != true) return
         loading = true
         try {
             result = LocalForecast.fetch(context.applicationContext, force)
@@ -230,8 +256,20 @@ internal fun WeatherChip() {
         if (permissions.values.any { it }) scope.launch { settings.setLocationWeather(true); refresh(true) }
         else failed = true
     }
-    LaunchedEffect(enabled, private, lifecycle) {
-        if (enabled && !private) {
+    fun requestWeather() {
+        if (granted(context, Manifest.permission.ACCESS_COARSE_LOCATION) ||
+            granted(context, Manifest.permission.ACCESS_FINE_LOCATION)) {
+            scope.launch { settings.setLocationWeather(true); refresh(true) }
+        } else {
+            permission.launch(arrayOf(Manifest.permission.ACCESS_FINE_LOCATION, Manifest.permission.ACCESS_COARSE_LOCATION))
+        }
+    }
+    val locationSettings = rememberLauncherForActivityResult(ActivityResultContracts.StartActivityForResult()) {
+        locationOn = locationManager?.isLocationEnabled == true
+        if (locationOn && !private) requestWeather()
+    }
+    LaunchedEffect(enabled, private, locationOn, lifecycle) {
+        if (enabled && !private && locationOn) {
             lifecycle.repeatOnLifecycle(Lifecycle.State.STARTED) {
                 while (true) {
                     refresh(false)
@@ -240,43 +278,88 @@ internal fun WeatherChip() {
             }
         } else result = null
     }
-    if (private) return
-    Row(Modifier.fillMaxWidth().glassSurface(24).clickable {
-        if (granted(context, Manifest.permission.ACCESS_COARSE_LOCATION) || granted(context, Manifest.permission.ACCESS_FINE_LOCATION)) {
-            scope.launch { settings.setLocationWeather(true); refresh(true) }
-        } else permission.launch(arrayOf(Manifest.permission.ACCESS_FINE_LOCATION, Manifest.permission.ACCESS_COARSE_LOCATION))
-    }.padding(horizontal = 14.dp, vertical = 9.dp),
-        horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {
-        val forecast = result
-        if (forecast == null) {
-            WeatherArtwork(WeatherSky.UNKNOWN, false)
-            Text(when {
-                loading -> "Finding local weather\u2026"
-                failed -> "Weather unavailable \u00b7 Retry"
-                else -> "Use location for weather"
-            }, Modifier.weight(1f), style = MaterialTheme.typography.labelLarge)
-        } else {
-            WeatherArtwork(forecast.sky, true)
-            Column(Modifier.weight(1f)) {
-                Text("${forecast.temperature}\u00b0C \u00b7 ${forecast.sky.title}", style = MaterialTheme.typography.labelLarge)
-                Text("${forecast.place} \u00b7 ${localForecastTime(forecast.forecastTime)}",
-                    color = PaperKeySubText, style = MaterialTheme.typography.labelSmall, maxLines = 2,
-                    overflow = TextOverflow.Ellipsis)
-            }
-            Box {
-                IconControl(Glyph.INFO, "Weather source", { showAttribution = true })
-                DropdownMenu(showAttribution, { showAttribution = false }) {
-                    DropdownMenuItem(text = { Text("Weather data by MET Norway") }, onClick = {
-                        showAttribution = false
-                        browser.openUri("https://www.met.no/en")
-                    })
-                    DropdownMenuItem(text = { Text("CC BY 4.0 · Forecast rounded and summarized") }, onClick = {
-                        showAttribution = false
-                        browser.openUri("https://creativecommons.org/licenses/by/4.0/")
-                    })
+    if (!private && !locationOn && showLocationPrompt) {
+        AlertDialog(
+            onDismissRequest = { showLocationPrompt = false },
+            title = { Text("Turn on location") },
+            text = { Text("Monolog uses your approximate location to show the local forecast.") },
+            confirmButton = {
+                TextButton(onClick = {
+                    showLocationPrompt = false
+                    try {
+                        locationSettings.launch(Intent(Settings.ACTION_LOCATION_SOURCE_SETTINGS))
+                    } catch (_: ActivityNotFoundException) {
+                        Toast.makeText(context, "Turn on Location in Android settings, then try again.", Toast.LENGTH_LONG).show()
+                    }
+                }) { Text("Open settings") }
+            },
+            dismissButton = { TextButton(onClick = { showLocationPrompt = false }) { Text("Cancel") } }
+        )
+    }
+    Row(
+        Modifier.fillMaxWidth().glassSurface(24).padding(end = 14.dp),
+        horizontalArrangement = Arrangement.spacedBy(8.dp),
+        verticalAlignment = Alignment.CenterVertically
+    ) {
+        if (!private) {
+            Row(
+                Modifier.weight(2f).heightIn(min = 52.dp).clickable {
+                    locationOn = locationManager?.isLocationEnabled == true
+                    if (locationOn) requestWeather() else showLocationPrompt = true
+                }.padding(start = 10.dp),
+                horizontalArrangement = Arrangement.spacedBy(6.dp),
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                val forecast = result.takeIf { locationOn }
+                if (forecast == null) {
+                    WeatherArtwork(WeatherSky.UNKNOWN, false)
+                    Text(when {
+                        !locationOn -> "Turn on location"
+                        loading -> "Finding weather\u2026"
+                        failed -> "Weather unavailable \u00b7 Retry"
+                        else -> "Use location for weather"
+                    }, Modifier.weight(1f), style = MaterialTheme.typography.labelMedium,
+                        maxLines = 2, overflow = TextOverflow.Ellipsis)
+                } else {
+                    WeatherArtwork(forecast.sky, true)
+                    Column(Modifier.weight(1f)) {
+                        Text("${forecast.temperature}\u00b0C \u00b7 ${forecast.sky.title}",
+                            style = MaterialTheme.typography.labelMedium, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                        Text("${forecast.place.substringBefore(", ")} \u00b7 ${localForecastTime(forecast.forecastTime)}",
+                            color = PaperKeySubText, style = MaterialTheme.typography.labelSmall, maxLines = 1,
+                            overflow = TextOverflow.Ellipsis)
+                    }
+                    Box {
+                        IconControl(Glyph.INFO, "Weather details and source", { showAttribution = true })
+                        DropdownMenu(showAttribution, { showAttribution = false }) {
+                            Text(
+                                "${forecast.temperature}°C · ${forecast.sky.title}\n" +
+                                    "${forecast.place} · ${localForecastTime(forecast.forecastTime)}",
+                                modifier = Modifier.widthIn(max = 260.dp).padding(horizontal = 12.dp, vertical = 8.dp),
+                                style = MaterialTheme.typography.bodySmall
+                            )
+                            DropdownMenuItem(text = { Text("Weather data by MET Norway") }, onClick = {
+                                showAttribution = false
+                                browser.openUri("https://www.met.no/en")
+                            })
+                            DropdownMenuItem(text = { Text("CC BY 4.0 · Forecast rounded and summarized") }, onClick = {
+                                showAttribution = false
+                                browser.openUri("https://creativecommons.org/licenses/by/4.0/")
+                            })
+                        }
+                    }
                 }
             }
         }
+        Text(
+            SimpleDateFormat("EEEE\nd MMMM", Locale.getDefault()).format(Date()),
+            modifier = Modifier.weight(1f).padding(vertical = 8.dp),
+            color = PaperKeySubText,
+            style = MaterialTheme.typography.bodySmall,
+            textAlign = TextAlign.End,
+            maxLines = 2,
+            overflow = TextOverflow.Ellipsis
+        )
     }
 }
 
@@ -314,7 +397,7 @@ private fun WeatherArtwork(sky: WeatherSky, hasForecast: Boolean) {
         appeared = true
     }
     val alpha by animateFloatAsState(if (appeared) 1f else .26f, tween(480), label = "Weather artwork")
-    Canvas(Modifier.size(43.dp).graphicsLayer { this.alpha = alpha }) {
+    Canvas(Modifier.size(32.dp).graphicsLayer { this.alpha = alpha }) {
         val unit = size.minDimension / 40
         fun p(x: Float, y: Float) = Offset(x * unit, y * unit)
         fun line(color: Color, x1: Float, y1: Float, x2: Float, y2: Float, width: Float = 1.5f) =

@@ -4,13 +4,17 @@ import android.app.DatePickerDialog
 import android.app.TimePickerDialog
 import android.content.Context
 import android.net.Uri
+import androidx.activity.compose.BackHandler
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.PickVisualMediaRequest
 import androidx.activity.result.contract.ActivityResultContracts
+import androidx.compose.foundation.BorderStroke
+import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.ScrollState
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.text.KeyboardActions
 import androidx.compose.foundation.text.KeyboardOptions
@@ -40,8 +44,11 @@ import androidx.compose.ui.platform.LocalFocusManager
 import androidx.compose.ui.platform.LocalSoftwareKeyboardController
 import androidx.compose.ui.platform.LocalView
 import androidx.compose.ui.res.stringResource
+import androidx.compose.ui.semantics.LiveRegionMode
 import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.liveRegion
+import androidx.compose.ui.semantics.selected
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.TextRange
@@ -67,7 +74,6 @@ import com.notokens.monolog.data.*
 import com.notokens.monolog.setup.SetupScreen
 import com.notokens.monolog.ui.theme.*
 import java.text.DateFormat
-import java.text.SimpleDateFormat
 import java.time.LocalDate
 import java.time.ZoneId
 import java.time.ZonedDateTime
@@ -229,7 +235,7 @@ fun CompanionApp(
                         val todayScope = rememberCoroutineScope()
                         val todayScroll = rememberScrollState()
                         val journal = remember(context) { MemorySearch(context.applicationContext) }
-                        Screen("Your day, remembered.", showDate = true, scrollState = todayScroll, footer = {
+                        Screen("Your day, remembered.", showWeatherAndDate = true, scrollState = todayScroll, footer = {
                             JournalAskBar(query, {
                                 request?.cancel()
                                 query = it
@@ -333,7 +339,7 @@ fun CompanionApp(
                                 searchField.requestFocus()
                             }
                         }
-                        CollectionScreen("Journal", showWeather = true, footer = {
+                        CollectionScreen("Journal", showWeatherAndDate = true, footer = {
                             JournalAskBar(query, { query = it }, "Ask about your days\u2026", searchField,
                                 answering, { nav.navigate("note/new") }, { askRequest++ })
                         }) {
@@ -356,6 +362,12 @@ fun CompanionApp(
                     composable("library") {
                         var filter by rememberSaveable { mutableStateOf("All") }
                         var query by rememberSaveable { mutableStateOf("") }
+                        var compact by rememberSaveable { mutableStateOf(false) }
+                        var sort by rememberSaveable { mutableStateOf(LibrarySort.NEWEST) }
+                        var selectedIds by rememberSaveable { mutableStateOf(longArrayOf()) }
+                        var confirmDelete by rememberSaveable { mutableStateOf(false) }
+                        var deleting by remember { mutableStateOf(false) }
+                        var deleteError by remember { mutableStateOf(false) }
                         var creating by remember { mutableStateOf(false) }
                         var capturePending by remember { mutableStateOf(false) }
                         val screenScope = rememberCoroutineScope()
@@ -383,7 +395,7 @@ fun CompanionApp(
                         val notes = visibleBackupYears(allNotes)
                         val photoRefs by repo.notePhotos.collectAsState(initial = emptyList())
                         val photosByNote = remember(photoRefs) { photoRefs.groupBy { it.noteId } }
-                        val entries = remember(notes, photosByNote, filter, query, relatedIds) {
+                        val entries = remember(notes, photosByNote, filter, query, relatedIds, sort) {
                             val candidates = notes.filter { note ->
                                 val metadata = TagMetadataCodec.decode(note.body)
                                 when (filter) {
@@ -393,12 +405,59 @@ fun CompanionApp(
                                     else -> true
                                 }
                             }
-                            if (query.isBlank()) candidates else {
+                            val matches = if (query.isBlank()) candidates else {
                                 (candidates.matchingJournalEntries(query) + candidates.filter { it.id in relatedIds }).distinctBy { it.id }
                             }
+                            matches.sortedWith(sort.comparator)
+                        }
+                        val selecting = selectedIds.isNotEmpty()
+                        val selectedNotes = remember(notes, selectedIds) { notes.filter { it.id in selectedIds } }
+                        fun toggleSelection(id: Long) {
+                            if (deleting) return
+                            if (!selecting) {
+                                focusManager.clearFocus(force = true)
+                                keyboard?.hide()
+                            }
+                            deleteError = false
+                            selectedIds = if (id in selectedIds) selectedIds.filterNot { it == id }.toLongArray() else selectedIds + id
+                        }
+                        BackHandler(enabled = selecting) {
+                            if (!deleting) {
+                                selectedIds = longArrayOf()
+                                deleteError = false
+                            }
+                        }
+                        if (confirmDelete && selectedNotes.isNotEmpty()) {
+                            val count = selectedNotes.size
+                            AlertDialog(
+                                onDismissRequest = { confirmDelete = false },
+                                title = { Text(if (count == 1) "Delete this item?" else "Delete $count items?") },
+                                text = { Text("This removes the selected items and their attachments from this device.") },
+                                confirmButton = {
+                                    TextButton(onClick = {
+                                        confirmDelete = false
+                                        deleting = true
+                                        screenScope.launch {
+                                            try {
+                                                repo.deleteNotes(selectedNotes)
+                                                selectedIds = longArrayOf()
+                                                answerJob?.cancel()
+                                                answer = null
+                                            } catch (cancelled: CancellationException) {
+                                                throw cancelled
+                                            } catch (_: Exception) {
+                                                deleteError = true
+                                            } finally {
+                                                deleting = false
+                                            }
+                                        }
+                                    }) { Text("Delete", color = MaterialTheme.colorScheme.error) }
+                                },
+                                dismissButton = { TextButton(onClick = { confirmDelete = false }) { Text("Cancel") } }
+                            )
                         }
                         ScreenFrame(null, showLocalAi = true) {
-                            WeatherChip()
+                            WeatherDateCard()
                             LazyColumn(Modifier.weight(1f).fillMaxWidth(),
                                 contentPadding = PaddingValues(top = 20.dp, bottom = 24.dp),
                                 verticalArrangement = Arrangement.spacedBy(14.dp)) {
@@ -412,7 +471,13 @@ fun CompanionApp(
                                         }
                                         Box {
                                             IconControl(Glyph.PLUS, "Create", { creating = true }, frosted = true)
-                                            DropdownMenu(expanded = creating, onDismissRequest = { creating = false }) {
+                                            DropdownMenu(
+                                                expanded = creating,
+                                                onDismissRequest = { creating = false },
+                                                shape = RoundedCornerShape(24.dp),
+                                                containerColor = MaterialTheme.colorScheme.surfaceContainerHigh,
+                                                border = BorderStroke(1.dp, PaperPillBorder)
+                                            ) {
                                                 DropdownMenuItem(text = { Text("Note or photo") },
                                                     leadingIcon = { MonologIcon(Glyph.PHOTO) },
                                                     onClick = { creating = false; nav.navigate("note/new") })
@@ -446,6 +511,9 @@ fun CompanionApp(
                                         }
                                     }
                                 }
+                                item {
+                                    LibraryViewOptions(compact, { compact = !compact }, sort, { sort = it }, enabled = !selecting)
+                                }
                                 answer?.let { result ->
                                     item {
                                         Column(Modifier.fillMaxWidth().glassSurface(20).padding(14.dp)) {
@@ -458,7 +526,8 @@ fun CompanionApp(
                                 item {
                                     Row(Modifier.horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(7.dp)) {
                                         listOf("All" to null, "Photos" to Glyph.PHOTO, "Screenshots" to Glyph.CAPTURE, "Voice" to Glyph.MIC).forEach { (label, glyph) ->
-                                            FilterChip(filter == label, { filter = label }, { Text(label) }, shape = RoundedCornerShape(22.dp),
+                                            FilterChip(filter == label, { filter = label }, { Text(label) }, enabled = !selecting,
+                                                shape = RoundedCornerShape(22.dp),
                                                 leadingIcon = glyph?.let { icon -> { MonologIcon(icon, Modifier.size(14.dp)) } })
                                         }
                                     }
@@ -468,14 +537,20 @@ fun CompanionApp(
                                         if (query.isNotBlank()) "Try another search or filter." else "Tap + to add a note or photo. Use M on the keyboard to capture a screen.")
                                 }
                                 item { ArchivedYearsLink { nav.navigate(SettingsPage.ACCOUNT.route) } }
-                                items(entries.chunked(2), key = { row -> row.first().id }) { row ->
+                                items(entries.chunked(if (compact) 1 else 2), key = { row -> row.first().id }) { row ->
                                     Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(12.dp)) {
                                         row.forEach { note ->
                                             Box(Modifier.weight(1f)) {
-                                                NoteTile(note, photosByNote[note.id].orEmpty()) { nav.navigate("note/${note.id}") }
+                                                NoteTile(
+                                                    note, photosByNote[note.id].orEmpty(), compact, selecting, note.id in selectedIds,
+                                                    onSelect = { toggleSelection(note.id) },
+                                                    onClick = {
+                                                        if (selecting) toggleSelection(note.id) else nav.navigate("note/${note.id}")
+                                                    }
+                                                )
                                             }
                                         }
-                                        if (row.size == 1) Spacer(Modifier.weight(1f))
+                                        if (!compact && row.size == 1) Spacer(Modifier.weight(1f))
                                     }
                                 }
                                 item {
@@ -487,7 +562,26 @@ fun CompanionApp(
                                     }
                                 }
                             }
-                            JournalAskBar(query, { query = it }, "Ask about your memories\u2026", searchField,
+                            if (selecting) {
+                                if (deleteError) Text("Couldn’t delete the selected items. Try again.",
+                                    color = MaterialTheme.colorScheme.error)
+                                Row(
+                                    Modifier.fillMaxWidth().glassSurface(24).padding(horizontal = 6.dp),
+                                    verticalAlignment = Alignment.CenterVertically
+                                ) {
+                                    if (deleting) CircularProgressIndicator(Modifier.padding(12.dp).size(24.dp), strokeWidth = 2.dp)
+                                    else IconControl(Glyph.CLOSE, "Clear selection", { selectedIds = longArrayOf(); deleteError = false })
+                                    Text(
+                                        "${selectedNotes.size} selected",
+                                        Modifier.weight(1f).semantics { liveRegion = LiveRegionMode.Polite },
+                                        color = ink
+                                    )
+                                    TextButton(onClick = { confirmDelete = true }, enabled = !deleting && selectedNotes.isNotEmpty(),
+                                        colors = ButtonDefaults.textButtonColors(contentColor = MaterialTheme.colorScheme.error)) {
+                                        Text("Delete")
+                                    }
+                                }
+                            } else JournalAskBar(query, { query = it }, "Ask about your memories\u2026", searchField,
                                 answering, { nav.navigate("note/new") }, {
                                     if (query.isNotBlank() && !answering) {
                                         val asked = query
@@ -923,16 +1017,16 @@ private fun SettingsLink(page: SettingsPage, onOpen: (SettingsPage) -> Unit) {
 @Composable
 private fun Screen(
     title: String,
-    showDate: Boolean = false,
+    showWeatherAndDate: Boolean = false,
     onBack: (() -> Unit)? = null,
     scrollState: ScrollState = rememberScrollState(),
     footer: (@Composable () -> Unit)? = null,
     content: @Composable () -> Unit
 ) {
     ScreenFrame(onBack) {
-        if (showDate) WeatherChip()
+        if (showWeatherAndDate) WeatherDateCard()
         Column(Modifier.weight(1f).fillMaxWidth().verticalScroll(scrollState).padding(vertical = 12.dp)) {
-            ScreenTitle(title, showDate)
+            ScreenTitle(title)
             Spacer(Modifier.height(12.dp))
             content()
         }
@@ -943,20 +1037,19 @@ private fun Screen(
 @Composable
 private fun CollectionScreen(
     title: String,
-    showDate: Boolean = false,
-    showWeather: Boolean = false,
+    showWeatherAndDate: Boolean = false,
     onBack: (() -> Unit)? = null,
     footer: (@Composable () -> Unit)? = null,
     content: LazyListScope.() -> Unit
 ) {
-    ScreenFrame(onBack, showLocalAi = showWeather) {
-        if (showWeather) WeatherChip()
+    ScreenFrame(onBack, showLocalAi = showWeatherAndDate) {
+        if (showWeatherAndDate) WeatherDateCard()
         LazyColumn(
             Modifier.weight(1f).fillMaxWidth(),
             contentPadding = PaddingValues(vertical = 12.dp),
             verticalArrangement = Arrangement.spacedBy(10.dp)
         ) {
-            item(contentType = "title") { ScreenTitle(title, showDate) }
+            item(contentType = "title") { ScreenTitle(title) }
             content()
         }
         footer?.invoke()
@@ -1016,17 +1109,7 @@ private fun JournalAskBar(
 }
 
 @Composable
-private fun ScreenTitle(title: String, showDate: Boolean) {
-    if (showDate) {
-        Row(
-            Modifier.fillMaxWidth().glassSurface(24).padding(horizontal = 16.dp, vertical = 8.dp),
-            horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically
-        ) {
-            MonologIcon(Glyph.CLOCK, Modifier.size(16.dp), muted)
-            Text(SimpleDateFormat("EEEE, d MMMM", Locale.getDefault()).format(Date()), color = muted, style = MaterialTheme.typography.bodyMedium)
-        }
-        Spacer(Modifier.height(16.dp))
-    }
+private fun ScreenTitle(title: String) {
     Text(title, color = ink, style = MaterialTheme.typography.headlineMedium, fontWeight = FontWeight.SemiBold)
 }
 
@@ -1082,23 +1165,90 @@ private fun EmptyCard(title: String, body: String) {
 }
 
 @Composable
+@OptIn(ExperimentalLayoutApi::class)
+private fun LibraryViewOptions(
+    compact: Boolean, onToggleCompact: () -> Unit, sort: LibrarySort, onSort: (LibrarySort) -> Unit, enabled: Boolean
+) {
+    var showSort by remember { mutableStateOf(false) }
+    FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+        FilterChip(compact, onToggleCompact, { Text("Compact view") }, enabled = enabled, shape = CircleShape)
+        Box {
+            OutlinedButton(onClick = { showSort = true }, enabled = enabled) {
+                Text("Sort: ${sort.label}")
+                Spacer(Modifier.width(6.dp))
+                MonologIcon(Glyph.DOWN, Modifier.size(14.dp))
+            }
+            DropdownMenu(expanded = showSort, onDismissRequest = { showSort = false }, shape = RoundedCornerShape(20.dp)) {
+                LibrarySort.entries.forEach { option ->
+                    DropdownMenuItem(
+                        text = { Text(option.label) },
+                        leadingIcon = { RadioButton(selected = sort == option, onClick = null) },
+                        modifier = Modifier.semantics { selected = sort == option },
+                        onClick = { onSort(option); showSort = false }
+                    )
+                }
+            }
+        }
+    }
+}
+
+private enum class LibrarySort(val label: String, val comparator: Comparator<Note>) {
+    NEWEST("Newest first", compareByDescending<Note> { it.updatedAt }.thenByDescending { it.id }),
+    OLDEST("Oldest first", compareBy<Note> { it.updatedAt }.thenBy { it.id }),
+    TITLE_ASC("Title A–Z", compareBy<Note, String>(String.CASE_INSENSITIVE_ORDER) { it.title }.thenBy { it.id }),
+    TITLE_DESC("Title Z–A", compareBy<Note, String>(String.CASE_INSENSITIVE_ORDER.reversed()) { it.title }.thenBy { it.id })
+}
+
+@Composable
+@OptIn(ExperimentalFoundationApi::class)
 private fun NoteTile(
     note: Note,
     photos: List<NotePhotoRef>,
-    onPhotoClick: ((Long) -> Unit)? = null,
+    compact: Boolean,
+    selecting: Boolean,
+    isSelected: Boolean,
+    onSelect: () -> Unit,
     onClick: () -> Unit
 ) {
     val decoded = remember(note.body) { TagMetadataCodec.decode(note.body) }
     val excerpt = remember(decoded.cleanBody) { markdownExcerpt(decoded.cleanBody).take(120) }
     val audio = remember(note.body) { VoiceNoteBody.audio(note.body) ?: decoded.bottomAudio ?: decoded.tags.firstNotNullOfOrNull { it.audio } }
+    val tile = Modifier
+        .fillMaxWidth()
+        .glassSurface(20, GlassAccent.LAVENDER)
+        .then(if (isSelected) Modifier.border(2.dp, MaterialTheme.colorScheme.primary, RoundedCornerShape(20.dp)) else Modifier)
+        .combinedClickable(
+            role = Role.Button,
+            onLongClickLabel = if (isSelected) "Deselect item" else "Select item",
+            onLongClick = onSelect,
+            onClick = onClick
+        )
+        .semantics { if (selecting) selected = isSelected }
+        .padding(12.dp)
+    if (compact) {
+        Row(tile, horizontalArrangement = Arrangement.spacedBy(12.dp), verticalAlignment = Alignment.CenterVertically) {
+            if (photos.isNotEmpty()) {
+                JournalPhotoImage(
+                    JournalPhoto.Saved(photos.first().id), "Attached photo",
+                    Modifier.size(40.dp).clip(RoundedCornerShape(10.dp)),
+                    contentScale = ContentScale.Crop, thumbnailSize = 48.dp
+                )
+            } else {
+                IconBadge(if (audio != null || decoded.bottomIsVoice) Glyph.MIC else Glyph.PAPER)
+            }
+            Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(2.dp)) {
+                Text(note.title, color = ink, style = MaterialTheme.typography.titleSmall,
+                    maxLines = 2, overflow = TextOverflow.Ellipsis)
+                Text(formatTime(note.updatedAt), color = muted, style = MaterialTheme.typography.labelSmall)
+            }
+            if (selecting) Checkbox(checked = isSelected, onCheckedChange = null)
+            else MonologIcon(Glyph.ARROW, Modifier.size(14.dp), PaperAccentBlue)
+        }
+        return
+    }
 
     Column(
-        Modifier
-            .fillMaxWidth()
-            .heightIn(min = 140.dp)
-            .glassSurface(20, GlassAccent.LAVENDER)
-            .clickable(onClick = onClick)
-            .padding(12.dp),
+        Modifier.heightIn(min = 140.dp).then(tile),
         verticalArrangement = Arrangement.SpaceBetween
     ) {
         Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
@@ -1108,7 +1258,6 @@ private fun NoteTile(
                         .fillMaxWidth()
                         .height(148.dp)
                         .clip(RoundedCornerShape(14.dp))
-                        .clickable { onPhotoClick?.invoke(photos.first().id) ?: onClick() }
                 ) {
                     JournalPhotoImage(
                         JournalPhoto.Saved(photos.first().id),
@@ -1148,7 +1297,8 @@ private fun NoteTile(
             } else if (audio != null) {
                 Box(Modifier.fillMaxWidth().height(106.dp).glassSurface(17, GlassAccent.LAVENDER),
                     contentAlignment = Alignment.Center) {
-                    VoiceNotePlayback(audio, "Play voice note")
+                    if (selecting) MonologIcon(Glyph.MIC)
+                    else VoiceNotePlayback(audio, "Play voice note", onLongClick = onSelect)
                 }
             }
             Text(
@@ -1201,10 +1351,12 @@ private fun NoteTile(
         ) {
             Text(
                 if (photos.isNotEmpty()) "${photos.size} photo" else formatTime(note.updatedAt),
+                modifier = Modifier.weight(1f),
                 color = if (photos.isNotEmpty()) PaperAccentBlue else muted,
                 style = MaterialTheme.typography.labelSmall
             )
-            MonologIcon(Glyph.ARROW, Modifier.size(14.dp), PaperAccentBlue)
+            if (selecting) Checkbox(checked = isSelected, onCheckedChange = null)
+            else MonologIcon(Glyph.ARROW, Modifier.size(14.dp), PaperAccentBlue)
         }
     }
 }
@@ -1253,6 +1405,7 @@ private fun rememberEditorFocusRequester(): FocusRequester {
 }
 
 @Composable
+@OptIn(ExperimentalLayoutApi::class)
 private fun NoteEditor(initial: Note?, savedPhotos: List<NotePhotoRef>, onCancel: () -> Unit) {
     val context = LocalContext.current
     val focusManager = LocalFocusManager.current
@@ -1283,79 +1436,118 @@ private fun NoteEditor(initial: Note?, savedPhotos: List<NotePhotoRef>, onCancel
         error = if (next.size > freeSlots) "You can attach up to ${PhotoCodec.MAX_ATTACHMENTS} photos per entry." else null
     }
     val cancel = { if (!saving) onCancel() }
+    val editorFieldColors = TextFieldDefaults.colors(
+        focusedContainerColor = Color.Transparent,
+        unfocusedContainerColor = Color.Transparent,
+        focusedIndicatorColor = Color.Transparent,
+        unfocusedIndicatorColor = Color.Transparent
+    )
     Screen(if (initial == null) "New note" else "Edit note", onBack = cancel) {
         Column(
-            Modifier.fillMaxWidth().glassSurface(24, GlassAccent.LAVENDER).padding(12.dp),
-            verticalArrangement = Arrangement.spacedBy(8.dp)
+            Modifier.fillMaxWidth().glassSurface(24).padding(vertical = 8.dp)
         ) {
-            OutlinedTextField(
-                value = title, onValueChange = { title = it }, label = { Text("Title") },
-                modifier = Modifier.fillMaxWidth().focusRequester(titleFocus), singleLine = true, shape = RoundedCornerShape(12.dp)
+            TextField(
+                value = title,
+                onValueChange = { title = it },
+                placeholder = { Text("Title", color = muted) },
+                modifier = Modifier.fillMaxWidth().focusRequester(titleFocus).semantics { contentDescription = "Title" },
+                singleLine = true,
+                textStyle = MaterialTheme.typography.headlineSmall.copy(fontWeight = FontWeight.SemiBold),
+                colors = editorFieldColors
             )
-            if (!isCapture) Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                FilterChip(!preview, { preview = false }, { Text("Write") })
-                FilterChip(preview, {
-                    focusManager.clearFocus()
-                    keyboard?.hide()
-                    preview = true
-                }, { Text("Preview") })
-            }
-            VoiceNoteControl(enabled = !saving, onPermission = { micPermission.launch(android.Manifest.permission.RECORD_AUDIO) },
-                onBusy = { voiceBusy = it }, onVoice = { voice ->
-                    if (isCapture) captureAudio = voice.audio else voiceAudio = voice.audio
-                    val text = listOf(body.text, voice.transcript).filter(String::isNotBlank).joinToString("\n\n")
-                    body = TextFieldValue(text, TextRange(text.length))
-                    preview = false
-                })
-            (if (isCapture) captureAudio else voiceAudio)?.let { VoiceNotePlayback(it) }
-            if (preview) {
-                if (body.text.isBlank()) Text("Your formatted entry will appear here.", color = muted)
-                else JournalMarkdown(body.text, Modifier.fillMaxWidth().padding(4.dp))
-            } else {
-                if (!isCapture) TextButton(onClick = { formatting = !formatting }) {
-                    Text(if (formatting) "Hide formatting" else "Formatting")
+            HorizontalDivider(Modifier.padding(horizontal = 16.dp), color = PaperPillBorder)
+            if (!isCapture) {
+                FlowRow(
+                    Modifier.padding(horizontal = 16.dp),
+                    horizontalArrangement = Arrangement.spacedBy(8.dp)
+                ) {
+                    FilterChip(!preview, { preview = false }, { Text("Write") },
+                        modifier = Modifier.align(Alignment.CenterVertically), shape = CircleShape)
+                    FilterChip(preview, {
+                        focusManager.clearFocus()
+                        keyboard?.hide()
+                        preview = true
+                    }, { Text("Preview") }, modifier = Modifier.align(Alignment.CenterVertically), shape = CircleShape)
+                    if (!preview) TextButton(
+                        onClick = { formatting = !formatting },
+                        modifier = Modifier.align(Alignment.CenterVertically)
+                    ) {
+                        Text(if (formatting) "Hide formatting" else "Formatting")
+                    }
                 }
-                if (!isCapture && formatting) Row(horizontalArrangement = Arrangement.spacedBy(4.dp)) {
+            }
+            if (preview) {
+                Box(Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 12.dp)) {
+                    if (body.text.isBlank()) Text("Your formatted entry will appear here.", color = muted)
+                    else JournalMarkdown(body.text, Modifier.fillMaxWidth())
+                }
+            } else {
+                if (!isCapture && formatting) FlowRow(
+                    Modifier.padding(horizontal = 8.dp),
+                    horizontalArrangement = Arrangement.spacedBy(4.dp)
+                ) {
                     TextButton(onClick = { body = formatSelection(body, "\n## ", "", "Heading") }) { Text("Heading") }
                     TextButton(onClick = { body = formatSelection(body, "**", "**", "Bold text") }) { Text("Bold", fontWeight = FontWeight.Bold) }
                     TextButton(onClick = { body = formatSelection(body, "\n- ", "", "List item") }) { Text("List") }
                 }
-                OutlinedTextField(
-                    value = body, onValueChange = { body = it }, label = { Text("Your note") }, placeholder = { Text("What would you like to remember?") },
-                    modifier = Modifier.fillMaxWidth(), minLines = 5, maxLines = 12, shape = RoundedCornerShape(12.dp)
+                TextField(
+                    value = body,
+                    onValueChange = { body = it },
+                    placeholder = { Text("What would you like to remember?", color = muted) },
+                    modifier = Modifier.fillMaxWidth().semantics { contentDescription = "Your note" },
+                    minLines = 5,
+                    maxLines = 12,
+                    textStyle = MaterialTheme.typography.bodyLarge,
+                    colors = editorFieldColors
                 )
             }
-            if (isCapture && capture.tags.isNotEmpty()) {
-                Text("Pinned notes", color = ink, style = MaterialTheme.typography.titleSmall)
-                capture.tags.forEach { tag ->
-                    Row(Modifier.fillMaxWidth().glassSurface(16).padding(12.dp),
-                        horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-                        MonologIcon(if (tag.isVoice) Glyph.MIC else Glyph.PIN, Modifier.size(18.dp))
-                        Text(tag.text, color = ink, modifier = Modifier.weight(1f))
-                    }
-                }
-                Text("Open the photo from its saved entry to edit pinned notes.", color = muted,
-                    style = MaterialTheme.typography.bodySmall)
-            }
-            if (photos.isNotEmpty()) {
-                JournalPhotoStrip(photos) { photo ->
-                    when (photo) {
-                        is JournalPhoto.Saved -> removed = ArrayList(removed + photo.id)
-                        is JournalPhoto.Picked -> picked = ArrayList(picked - photo.uri)
-                    }
-                }
-            }
-            OutlinedButton(
-                onClick = {
-                    focusManager.clearFocus()
-                    keyboard?.hide()
-                    picker.launch(PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.ImageOnly))
-                },
-                enabled = photos.size < PhotoCodec.MAX_ATTACHMENTS && !saving
+            Column(
+                Modifier.fillMaxWidth().padding(horizontal = 16.dp),
+                verticalArrangement = Arrangement.spacedBy(8.dp)
             ) {
-                MonologIcon(Glyph.PHOTO, Modifier.size(16.dp), PaperAccentBlue)
-                Spacer(Modifier.width(8.dp))
-                Text(if (photos.isEmpty()) "Add photos" else "Add photos (${photos.size}/${PhotoCodec.MAX_ATTACHMENTS})")
+                if (isCapture && capture.tags.isNotEmpty()) {
+                    Text("Pinned notes", color = ink, style = MaterialTheme.typography.titleSmall)
+                    capture.tags.forEach { tag ->
+                        Row(Modifier.fillMaxWidth().glassSurface(16).padding(12.dp),
+                            horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                            MonologIcon(if (tag.isVoice) Glyph.MIC else Glyph.PIN, Modifier.size(18.dp))
+                            Text(tag.text, color = ink, modifier = Modifier.weight(1f))
+                        }
+                    }
+                    Text("Open the photo from its saved entry to edit pinned notes.", color = muted,
+                        style = MaterialTheme.typography.bodySmall)
+                }
+                if (photos.isNotEmpty()) {
+                    JournalPhotoStrip(photos) { photo ->
+                        when (photo) {
+                            is JournalPhoto.Saved -> removed = ArrayList(removed + photo.id)
+                            is JournalPhoto.Picked -> picked = ArrayList(picked - photo.uri)
+                        }
+                    }
+                }
+            }
+            HorizontalDivider(Modifier.padding(horizontal = 16.dp), color = PaperPillBorder)
+            FlowRow(
+                Modifier.fillMaxWidth().padding(horizontal = 8.dp),
+                horizontalArrangement = Arrangement.spacedBy(4.dp)
+            ) {
+                TextButton(
+                    onClick = {
+                        focusManager.clearFocus()
+                        keyboard?.hide()
+                        picker.launch(PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.ImageOnly))
+                    },
+                    enabled = photos.size < PhotoCodec.MAX_ATTACHMENTS && !saving
+                ) {
+                    MonologIcon(Glyph.PHOTO, Modifier.size(18.dp), PaperAccentBlue)
+                    Spacer(Modifier.width(8.dp))
+                    Text(if (photos.isEmpty()) "Add photos" else "Add photos (${photos.size}/${PhotoCodec.MAX_ATTACHMENTS})")
+                }
+                VoiceNoteControl(enabled = !saving, onPermission = { micPermission.launch(android.Manifest.permission.RECORD_AUDIO) },
+                    onBusy = { voiceBusy = it }, audioOnly = true, onVoice = { voice ->
+                        if (isCapture) captureAudio = voice.audio else voiceAudio = voice.audio
+                    })
+                (if (isCapture) captureAudio else voiceAudio)?.let { VoiceNotePlayback(it) }
             }
         }
         error?.let { Text(it, color = MaterialTheme.colorScheme.error, modifier = Modifier.padding(top = 8.dp)) }

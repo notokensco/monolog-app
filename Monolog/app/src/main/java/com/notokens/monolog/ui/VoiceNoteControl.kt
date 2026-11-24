@@ -5,13 +5,19 @@ import android.content.pm.PackageManager
 import android.media.MediaDataSource
 import android.media.MediaPlayer
 import android.util.Base64
+import androidx.compose.foundation.ExperimentalFoundationApi
+import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.layout.*
+import androidx.compose.foundation.shape.CircleShape
+import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.unit.dp
 import androidx.core.content.ContextCompat
 import com.notokens.monolog.ai.KeyboardLanguage
@@ -33,7 +39,8 @@ internal fun VoiceNoteControl(
     enabled: Boolean,
     onPermission: () -> Unit,
     onVoice: (RecordedVoice) -> Unit,
-    onBusy: (Boolean) -> Unit = {}
+    onBusy: (Boolean) -> Unit = {},
+    audioOnly: Boolean = false
 ) {
     val context = LocalContext.current
     val settings = remember { SettingsStore(context.applicationContext) }
@@ -76,10 +83,11 @@ internal fun VoiceNoteControl(
         processing = true
         saving = scope.launch {
             try {
-                val voice = vox.finishNote()
+                val voice = vox.finishNote(includeTranscript = !audioOnly)
                 if (!settings.incognito.first()) {
                     if (voice.audio != null || voice.transcript.isNotBlank()) {
                         error = when {
+                            audioOnly -> ""
                             voice.transcript.isBlank() -> "Audio ready. No captions were available."
                             voice.audio == null -> "Transcript ready. Audio was unavailable."
                             else -> ""
@@ -113,9 +121,13 @@ internal fun VoiceNoteControl(
                 onPermission()
             } else {
                 error = ""
-                vox.clearTranscript()
-                val selected = KeyboardLanguage.of(language)
-                vox.startListening(selected.speechTag, selected.label)
+                if (audioOnly) {
+                    vox.startNoteRecording()
+                } else {
+                    vox.clearTranscript()
+                    val selected = KeyboardLanguage.of(language)
+                    vox.startListening(selected.speechTag, selected.label)
+                }
                 recording = captions.status == VoxStatus.LISTENING ||
                     captions.status == VoxStatus.PROCESSING || captions.status == VoxStatus.PREPARING
                 if (recording) busyCallback(true) else error = captions.errorMessage ?: "Microphone unavailable."
@@ -126,11 +138,12 @@ internal fun VoiceNoteControl(
             Text(when {
                 recording -> "Stop recording"
                 processing -> "Finishing voice note…"
+                audioOnly -> "Record voice note"
                 else -> "Vox voice note"
             })
         }
         val caption = listOf(captions.transcript, captions.partialTranscript).filter(String::isNotBlank).joinToString(" ")
-        if ((recording || processing) && caption.isNotBlank()) {
+        if (!audioOnly && (recording || processing) && caption.isNotBlank()) {
             Text(caption, Modifier.padding(horizontal = 8.dp, vertical = 4.dp),
                 color = PaperKeySubText)
         }
@@ -140,15 +153,16 @@ internal fun VoiceNoteControl(
 }
 
 @Composable
-internal fun VoiceNotePlayback(audio: String, label: String = "Play voice note") {
+@OptIn(ExperimentalFoundationApi::class)
+internal fun VoiceNotePlayback(audio: String, label: String = "Play voice note", onLongClick: (() -> Unit)? = null) {
     var player by remember(audio) { mutableStateOf<MediaPlayer?>(null) }
     val active = rememberUpdatedState(player)
     DisposableEffect(audio) { onDispose { active.value?.release() } }
-    TextButton(onClick = {
+    val togglePlayback: () -> Unit = toggle@{
         if (player != null) {
             player?.release()
             player = null
-            return@TextButton
+            return@toggle
         }
         val handle = MediaPlayer()
         try {
@@ -172,11 +186,23 @@ internal fun VoiceNotePlayback(audio: String, label: String = "Play voice note")
             handle.release()
             player = null
         }
-    }) {
+    }
+    val playbackContent: @Composable () -> Unit = {
         Row(verticalAlignment = Alignment.CenterVertically) {
             MonologIcon(Glyph.MIC, Modifier.size(17.dp))
             Spacer(Modifier.width(6.dp))
-            Text(if (player != null) "Stop audio" else label)
+            Text(if (player != null) "Stop audio" else label, color = MaterialTheme.colorScheme.primary,
+                style = MaterialTheme.typography.labelLarge)
         }
+    }
+    if (onLongClick == null) {
+        TextButton(onClick = togglePlayback) { playbackContent() }
+    } else {
+        Box(
+            Modifier.heightIn(min = 48.dp).clip(CircleShape)
+                .combinedClickable(role = Role.Button, onClick = togglePlayback, onLongClickLabel = "Select item", onLongClick = onLongClick)
+                .padding(horizontal = 12.dp),
+            contentAlignment = Alignment.Center
+        ) { playbackContent() }
     }
 }

@@ -85,6 +85,7 @@ interface NoteDao {
     @Insert suspend fun insert(note: Note): Long
     @Update suspend fun update(note: Note): Int
     @Delete suspend fun delete(note: Note)
+    @Delete suspend fun delete(notes: List<Note>)
 }
 
 @Dao

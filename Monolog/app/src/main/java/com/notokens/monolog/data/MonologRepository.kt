@@ -23,6 +23,7 @@ interface MonologRepository {
     suspend fun photoImage(id: Long): ByteArray?
     suspend fun saveNote(title: String, body: String, existing: Note? = null, photos: NotePhotoChanges? = null): Long
     suspend fun deleteNote(note: Note)
+    suspend fun deleteNotes(notes: List<Note>)
     suspend fun saveReminder(title: String, dueAt: Long, existing: Reminder? = null): Long
     suspend fun deleteReminder(reminder: Reminder)
     suspend fun rescheduleFutureReminders()
@@ -82,6 +83,7 @@ class RoomMonologRepository(private val context: Context) : MonologRepository {
     }
 
     override suspend fun deleteNote(note: Note) = database.notes().delete(note)
+    override suspend fun deleteNotes(notes: List<Note>) = database.notes().delete(notes)
 
     override suspend fun saveReminder(title: String, dueAt: Long, existing: Reminder?): Long {
         require(title.isNotBlank())
