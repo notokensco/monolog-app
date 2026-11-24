@@ -142,8 +142,8 @@ android {
         applicationId = "com.notokens.monolog"
         minSdk = 35
         targetSdk = 36
-        versionCode = 8
-        versionName = "0.1.0-alpha.4"
+        versionCode = 9
+        versionName = "0.1.0-alpha.5"
         buildConfigField("boolean", "MONOLOG_HAS_GGUF", (llamaSource != null).toString())
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
         val webEndpoint = providers.gradleProperty("monologWebEndpoint").orElse("").get()
@@ -153,6 +153,9 @@ android {
         buildConfigField("String", "MONOLOG_WEB_ENDPOINT", "\"$webEndpoint\"")
         val serviceAddress = Regex("https://[A-Za-z0-9.-]+(?::[0-9]{1,5})?(?:/[A-Za-z0-9._/-]*)?")
         val searchEndpoint = providers.gradleProperty("monologDuckDuckGoEndpoint").orElse("").get()
+        val braveEndpoint = providers.gradleProperty("monologBraveSearchEndpoint").orElse("").get()
+        require(braveEndpoint.isBlank() || braveEndpoint.matches(serviceAddress)) { "Use an HTTPS Brave Search endpoint." }
+        buildConfigField("String", "MONOLOG_BRAVE_SEARCH_ENDPOINT", "\"$braveEndpoint\"")
         val klipyEndpoint = providers.gradleProperty("monologKlipyEndpoint").orElse("").get()
         require(searchEndpoint.isBlank() || searchEndpoint.matches(serviceAddress)) { "Use an HTTPS DuckDuckGo search endpoint." }
         require(klipyEndpoint.isBlank() || klipyEndpoint.matches(serviceAddress)) { "Use an HTTPS KLIPY endpoint." }
@@ -247,6 +250,7 @@ dependencies {
     implementation(files(moonshineRuntimeAar))
     // A local AAR has no Maven metadata. WorkManager is already declared below.
     implementation("androidx.appcompat:appcompat:1.6.1")
+    implementation("androidx.autofill:autofill:1.3.0")
     implementation("com.google.android.material:material:1.10.0")
     implementation("com.squareup.okhttp3:okhttp:4.12.0")
     implementation("androidx.credentials:credentials:1.5.0")

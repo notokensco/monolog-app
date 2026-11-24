@@ -208,7 +208,7 @@ internal fun VoiceInputSettings(settings: SettingsStore, onRequestMicPermission:
 internal fun KeyboardUsageSettings(settings: SettingsStore) {
     val profile by settings.typingProfile.collectAsState(com.notokens.monolog.data.TypingProfile())
     val manualWords by settings.personalWords.collectAsState(emptySet())
-    SettingsCard("Usage statistics") {
+    SettingsCard("Keyboard activity") {
         Text("Counts exclude incognito and protected fields. Enable Keyboard profile in Account & backup to include them in Drive backups.",
             style = MaterialTheme.typography.bodySmall, color = PaperKeySubText)
         for (metric in com.notokens.monolog.data.TypingMetric.entries) {

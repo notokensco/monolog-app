@@ -143,6 +143,19 @@ mod android {
     }
 
     #[no_mangle]
+    pub extern "system" fn Java_com_notokens_monolog_ime_NativeTyping_rankPersonalTransitions(
+        mut env: JNIEnv<'_>,
+        _: JObject<'_>,
+        records: JString<'_>,
+    ) -> jstring {
+        let mut compute = || -> jni::errors::Result<jstring> {
+            let records: String = env.get_string(&records)?.into();
+            Ok(env.new_string(phrases::rank_personal_transitions(&records))?.into_raw())
+        };
+        compute().unwrap_or(null_mut())
+    }
+
+    #[no_mangle]
     pub extern "system" fn Java_com_notokens_monolog_ime_NativeTyping_decodePcm(
         env: JNIEnv<'_>,
         _: JObject<'_>,

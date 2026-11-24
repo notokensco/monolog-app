@@ -4,17 +4,21 @@ import androidx.compose.foundation.clickable
 import androidx.compose.foundation.gestures.detectDragGestures
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
+import androidx.compose.ui.draw.shadow
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.layout.boundsInWindow
 import androidx.compose.ui.layout.onGloballyPositioned
 import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
@@ -30,7 +34,7 @@ import com.notokens.monolog.ui.MonologIcon
 import com.notokens.monolog.ui.theme.PaperKeyText
 import kotlin.math.roundToInt
 
-internal enum class KeyboardPanel { EDIT_TEXT, LANGUAGES, TRANSLATE }
+internal enum class KeyboardPanel { EDIT_TEXT, LANGUAGES }
 internal enum class EditorCommand(val label: String) {
     LEFT("←"), RIGHT("→"), UP("↑"), DOWN("↓"), SELECT("Select"),
     ALL("Select all"), CUT("Cut"), COPY("Copy"), PASTE("Paste"),
@@ -136,9 +140,12 @@ internal fun KeyboardPosition(
     placement: KeyboardPlacement,
     bodyHeight: Dp,
     onFloatingBounds: (android.graphics.Rect?) -> Unit,
+    onDock: () -> Unit,
     content: @Composable (Modifier, Float, @Composable () -> Unit) -> Unit
 ) {
     val onBounds by rememberUpdatedState(onFloatingBounds)
+    var scale by remember { mutableFloatStateOf(.82f) }
+    var displacement by remember { mutableStateOf(Offset.Zero) }
     DisposableEffect(placement) {
         onBounds(null)
         onDispose { onBounds(null) }
@@ -154,40 +161,45 @@ internal fun KeyboardPosition(
             Box(Modifier.align(alignment).width(maxWidth * .79f)) { content(Modifier, 1f) {} }
         } else {
             val density = LocalDensity.current
-            var scale by remember { mutableFloatStateOf(.82f) }
-            var displacement by remember { mutableStateOf(Offset.Zero) }
-            val pad = 72.dp
+            val pad = (LocalConfiguration.current.screenHeightDp.dp * .22f).coerceIn(68.dp, 180.dp)
             val panelWidth = maxWidth * scale
-            val limitX = with(density) { ((maxWidth - panelWidth) / 2).toPx() }
+            val limitX = with(density) { ((maxWidth - panelWidth) / 2 - 4.dp).coerceAtLeast(0.dp).toPx() }
             val limitY = with(density) { pad.toPx() }
             val windowWidth = with(density) { maxWidth.toPx() }.coerceAtLeast(1f)
-            Box(Modifier.fillMaxWidth().height(bodyHeight + 78.dp + pad), contentAlignment = Alignment.BottomCenter) {
-                Box(Modifier.offset {
+            val dragLimit by rememberUpdatedState(limitX)
+            val shape = RoundedCornerShape(23.dp)
+            Box(Modifier.fillMaxWidth().navigationBarsPadding().padding(bottom = 5.dp)
+                .height(bodyHeight + 106.dp + pad), contentAlignment = Alignment.BottomCenter) {
+                Box(Modifier.absoluteOffset {
                     IntOffset(displacement.x.coerceIn(-limitX, limitX).roundToInt(),
                         displacement.y.coerceIn(-limitY, 0f).roundToInt())
                 }.width(panelWidth).onGloballyPositioned {
                     val r = it.boundsInWindow()
-                    onBounds(android.graphics.Rect(r.left.roundToInt(), r.top.roundToInt(), r.right.roundToInt(), r.bottom.roundToInt()))
-                }) {
+                    if (!r.isEmpty) onBounds(android.graphics.Rect(
+                        r.left.roundToInt(), r.top.roundToInt(), r.right.roundToInt(), r.bottom.roundToInt()
+                    ))
+                }.shadow(6.dp, shape, clip = false).clip(shape)) {
                     content(Modifier, scale) {
-                        Row(Modifier.fillMaxWidth().height(26.dp), verticalAlignment = Alignment.CenterVertically) {
-                            Box(Modifier.weight(1f).fillMaxHeight().pointerInput(limitX, limitY) {
+                        Row(Modifier.fillMaxWidth().height(48.dp), verticalAlignment = Alignment.CenterVertically) {
+                            Box(Modifier.weight(1f).fillMaxHeight().pointerInput(limitY) {
                                 detectDragGestures { change, delta ->
                                     change.consume()
-                                    displacement = Offset((displacement.x + delta.x).coerceIn(-limitX, limitX),
+                                    displacement = Offset((displacement.x + delta.x).coerceIn(-dragLimit, dragLimit),
                                         (displacement.y + delta.y).coerceIn(-limitY, 0f))
                                 }
                             }.semantics { contentDescription = "Drag floating keyboard" }, contentAlignment = Alignment.Center) {
                                 MonologIcon(Glyph.DRAG_HANDLE, Modifier.size(18.dp), PaperKeyText)
                             }
-                            Box(Modifier.width(42.dp).fillMaxHeight().pointerInput(windowWidth) {
+                            Box(Modifier.size(48.dp).pointerInput(windowWidth) {
                                 detectDragGestures { change, delta ->
                                     change.consume()
                                     val outward = if (kotlin.math.abs(delta.x) >= kotlin.math.abs(delta.y)) delta.x else -delta.y
                                     scale = (scale + outward * 2 / windowWidth).coerceIn(.66f, .96f)
                                 }
-                            }.semantics { contentDescription = "Drag to resize keyboard" }, contentAlignment = Alignment.Center) {
-                                MonologIcon(Glyph.EXPAND, Modifier.size(16.dp), PaperKeyText)
+                            }.clickable(role = Role.Button, onClickLabel = "Dock keyboard", onClick = onDock)
+                                .semantics { contentDescription = "Expand keyboard. Drag to resize." },
+                                contentAlignment = Alignment.Center) {
+                                MonologIcon(Glyph.EXPAND, Modifier.size(19.dp), PaperKeyText)
                             }
                         }
                     }

@@ -15,6 +15,7 @@ import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.fillMaxHeight
+import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.sizeIn
@@ -26,6 +27,7 @@ import androidx.compose.material3.IconButton
 import androidx.compose.material3.DropdownMenu
 import androidx.compose.runtime.*
 import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
@@ -48,6 +50,7 @@ import com.notokens.monolog.ai.KeyboardLanguage
 import com.notokens.monolog.ai.RewriteStyle
 import com.notokens.monolog.ime.ImeAi
 import com.notokens.monolog.ime.WordSuggestion
+import com.notokens.monolog.ime.shortcuts.ShortcutPage
 import com.notokens.monolog.ui.glassSurface
 import com.notokens.monolog.ui.MonologIcon
 import com.notokens.monolog.ui.Glyph
@@ -82,7 +85,21 @@ internal fun KeyboardSuggestionStrip(
             }
             return@Row
         }
-        if (!ai.rewriteOpen && ai.inlineBusy) {
+        val shortcut = ai.shortcutSuggestion
+        if (shortcut != null && !ai.rewriteOpen) {
+            Row(Modifier.weight(1f).height(48.dp).glassSurface(13)
+                .clickable(role = Role.Button) { onShortcut(shortcut) }.padding(horizontal = 8.dp),
+                horizontalArrangement = Arrangement.spacedBy(6.dp), verticalAlignment = Alignment.CenterVertically) {
+                val glyph = when (shortcut.page) {
+                    ShortcutPage.ALARM -> Glyph.ALARM
+                    ShortcutPage.REMINDER -> Glyph.BELL
+                    else -> Glyph.BOOK
+                }
+                MonologIcon(glyph, Modifier.size(18.dp), MaterialTheme.colorScheme.primary)
+                Text(shortcut.prompt, color = PaperKeyText, fontSize = 15.sp, lineHeight = 18.sp,
+                    fontWeight = FontWeight.SemiBold, maxLines = 2, overflow = TextOverflow.Ellipsis)
+            }
+        } else if (!ai.rewriteOpen && ai.inlineBusy) {
             Box(Modifier.weight(1f), contentAlignment = Alignment.Center) { com.notokens.monolog.ui.ProcessingDots() }
         } else if (!ai.rewriteOpen && ai.toolbar == null && actions.isNotEmpty()) {
             Row(Modifier.weight(1f), horizontalArrangement = androidx.compose.foundation.layout.Arrangement.Center) {
@@ -90,21 +107,12 @@ internal fun KeyboardSuggestionStrip(
             }
         } else if (!ai.rewriteOpen && ai.toolbar == null) {
             Row(Modifier.weight(1f).height(40.dp), verticalAlignment = Alignment.CenterVertically) {
-                ai.shortcutSuggestion?.let { shortcut ->
-                    Text(shortcut.label, Modifier.widthIn(max = 98.dp)
-                        .clickable { onShortcut(shortcut) }.padding(horizontal = 5.dp),
-                        color = PaperKeyText, style = MaterialTheme.typography.labelMedium,
-                        maxLines = 1, overflow = TextOverflow.Ellipsis)
-                }
-                SuggestionChoices(Modifier.weight(1f), ai.suggestions, emojis, ai::applyWord, onEmoji,
+                SuggestionChoices(Modifier.weight(1f), ai.suggestions, emojis, ai.hasDraft, ai::applyWord, onEmoji,
                     if (ai.dictionaryActionsAllowed) ai::requestSuggestionRemoval else null)
             }
         } else {
             Row(Modifier.weight(1f).horizontalScroll(rememberScrollState()),
                 verticalAlignment = Alignment.CenterVertically) {
-                if (!ai.rewriteOpen) ai.shortcutSuggestion?.let { suggestion ->
-                    ToolbarAction(suggestion.label) { onShortcut(suggestion) }
-                }
                 if (ai.rewriteOpen) {
                     val styles = if (language.isEnglish || language.translationCode != null) RewriteStyle.entries
                         else listOf(RewriteStyle.POLISH)
@@ -147,6 +155,7 @@ private fun SuggestionChoices(
     modifier: Modifier,
     suggestions: List<WordSuggestion>,
     emojis: List<Emoji>,
+    rewriteVisible: Boolean,
     onWord: (WordSuggestion) -> Unit,
     onEmoji: (Emoji) -> Unit,
     onRemove: ((WordSuggestion) -> Unit)?
@@ -167,9 +176,24 @@ private fun SuggestionChoices(
         }
         val primary = preferred?.takeIf { widths.getValue(it) <= width }
             ?: unique.firstOrNull { widths.getValue(it) <= width }
-        val mainWidth = primary?.let(widths::getValue) ?: 0
+            ?: preferred
+        val mainWidth = primary?.let(widths::getValue)?.coerceAtMost(width) ?: 0
         val other = unique.filter { it != primary }.sortedBy { !it.nextWord }
             .firstOrNull { widths.getValue(it) + mainWidth <= width }
+        if (primary != null && other == null) {
+            val centerInset = if (rewriteVisible) minOf(36.dp, maxWidth / 4) else 0.dp
+            val leadingSpace = (width - with(density) { centerInset.roundToPx() } - mainWidth) / 2
+            val sideEmojis = minOf(emojis.size, 3, leadingSpace.coerceAtLeast(0) / emojiWidth.coerceAtLeast(1))
+            Box(Modifier.fillMaxSize().padding(start = centerInset), contentAlignment = Alignment.Center) {
+                if (sideEmojis >= 2 || sideEmojis == 1 && emojis.size == 1) {
+                    Box(Modifier.align(Alignment.CenterStart)) {
+                        EmojiShortcutStrip(emptyList(), emojis.take(sideEmojis), compact = true, onPick = onEmoji)
+                    }
+                }
+                SuggestionWord(primary, if (primary == preferred) bold else style, onWord, onRemove)
+            }
+            return@BoxWithConstraints
+        }
         val used = mainWidth + (other?.let(widths::getValue) ?: 0)
         val spare = width - used
         val emojiCount = minOf(emojis.size, 3, spare / emojiWidth.coerceAtLeast(1))
@@ -185,7 +209,7 @@ private fun SuggestionChoices(
             else -> listOfNotNull(other, primary)
         }
         Row(Modifier.fillMaxWidth().fillMaxHeight(), verticalAlignment = Alignment.CenterVertically,
-            horizontalArrangement = if (slots.size == 1) Arrangement.End else Arrangement.SpaceEvenly) {
+            horizontalArrangement = Arrangement.SpaceEvenly) {
             if (slots.isEmpty() && emojiCount > 0) {
                 EmojiShortcutStrip(emptyList(), emojis.take(emojiCount), compact = true, onPick = onEmoji)
             }
@@ -193,19 +217,29 @@ private fun SuggestionChoices(
                 if (word == null) {
                     EmojiShortcutStrip(emptyList(), emojis.take(emojiCount), compact = true, onPick = onEmoji)
                 } else {
-                    Box(Modifier.fillMaxHeight().combinedClickable(
-                        onClick = { onWord(word) },
-                        onLongClick = if (onRemove != null && com.notokens.monolog.data.dictionaryWord(word.label) != null)
-                            ({ onRemove(word) }) else null,
-                        onLongClickLabel = "Remove suggestion"
-                    ).padding(horizontal = 6.dp),
-                        contentAlignment = Alignment.Center) {
-                        Text(word.label, color = PaperKeyText, style = if (word == preferred) bold else style,
-                            textAlign = TextAlign.Center, maxLines = 1, softWrap = false, overflow = TextOverflow.Clip)
-                    }
+                    SuggestionWord(word, if (word == preferred) bold else style, onWord, onRemove)
                 }
             }
         }
+    }
+}
+
+@OptIn(ExperimentalFoundationApi::class)
+@Composable
+private fun SuggestionWord(
+    word: WordSuggestion,
+    style: androidx.compose.ui.text.TextStyle,
+    onWord: (WordSuggestion) -> Unit,
+    onRemove: ((WordSuggestion) -> Unit)?
+) {
+    Box(Modifier.fillMaxHeight().combinedClickable(
+        onClick = { onWord(word) },
+        onLongClick = if (onRemove != null && com.notokens.monolog.data.dictionaryWord(word.label) != null)
+            ({ onRemove(word) }) else null,
+        onLongClickLabel = "Remove suggestion"
+    ).padding(horizontal = 6.dp), contentAlignment = Alignment.Center) {
+        Text(word.label, color = PaperKeyText, style = style, textAlign = TextAlign.Center,
+            maxLines = 1, softWrap = false, overflow = TextOverflow.Ellipsis)
     }
 }
 

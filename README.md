@@ -27,14 +27,18 @@ or `./gradlew :app:signingReport` on macOS or Linux to check the certificate.
   search terms or caching responses. Keep ads disabled for this key until the
   partner ad agreement and isolated rendering have been verified. The keyboard
   streams selected GIFs and stickers to compatible editors without retaining a media file.
-- **Web**. Ask searches [DuckDuckGo](https://duckduckgo.com/) in the browser by default.
-  Safe Search starts on and can be changed while Web is enabled. To enable compact
-  in-keyboard results, set `monologDuckDuckGoEndpoint` to an HTTPS service authorized
-  to deliver DuckDuckGo results that honors both Safe Search modes. It accepts a JSON
-  POST with `query` and boolean `safeSearch`. Return `engine: "duckduckgo"`, the boolean
-  `safeSearch` actually applied, and a `results` array of `title`, `url`, and `content`.
-  The app discards responses that fail to confirm the requested setting.
-  `monologWebEndpoint` is the separate forecast service.
+- **Web**. Ask AI can show web and image results from [Brave Search](https://brave.com/search/api/).
+  Deploy `Monolog/tools/brave-search-relay.mjs` as a Cloudflare Worker with a
+  `BRAVE_SEARCH_API_KEY` secret. Set `monologBraveSearchEndpoint` to its public
+  HTTPS URL ending in `/search`. Bind a Cloudflare rate limiter named
+  `SEARCH_RATE_LIMITER` and configure a spending limit before sharing the endpoint.
+  Disable request logs containing search terms. Safe Search starts on and can be
+  changed while Web is enabled. More in browser opens DuckDuckGo.
+  An authorized DuckDuckGo result service can be configured with
+  `monologDuckDuckGoEndpoint`. Its JSON POST accepts `query`, `kind`, and boolean
+  `safeSearch`, and returns `engine: "duckduckgo"`, the `kind` and `safeSearch`
+  applied, and a `results` array with `title`, `url`, `content`, and optional `thumbnail`.
+  `monologWebEndpoint` configures the separate forecast service.
 - **Translation**. The keyboard uses Google’s on-device ML Kit translation API.
   Release descriptions should credit Google Translate and link the
   [translation service](https://cloud.google.com/translate).

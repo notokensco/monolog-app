@@ -34,6 +34,10 @@ internal class IndicLexicon(
 
     fun suggestNativeNext(previous: String): List<String> = continuations[previous].orEmpty()
 
+    val commonWords: List<String> by lazy {
+        frequency.entries.sortedByDescending { it.value }.take(8).map { it.key }
+    }
+
     fun suggestRoman(word: String, previous: String? = null): List<String> {
         val exact = rankedRoman(word, previous).map { it.native }
         if (exact.size >= 3) return exact.take(3)
@@ -113,6 +117,8 @@ internal class IndicTyping(private val context: Context) {
     fun nextAfter(word: String, language: KeyboardLanguage): List<String> =
         lexicon(language)?.suggestNativeNext(Normalizer.normalize(word.lowercase(Locale.ROOT),
             Normalizer.Form.NFC)).orEmpty()
+
+    fun commonWords(language: KeyboardLanguage): List<String> = lexicon(language)?.commonWords.orEmpty()
 
     private fun lexicon(language: KeyboardLanguage): IndicLexicon? {
         val native = language.transliterationTarget?.let(KeyboardLanguage::of) ?: language

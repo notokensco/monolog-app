@@ -1,8 +1,25 @@
 package com.notokens.monolog.ime.ui
 
-import android.graphics.Bitmap
-import android.graphics.BitmapFactory
-import androidx.compose.foundation.Image
+import android.graphics.ImageDecoder
+import android.graphics.drawable.AnimatedImageDrawable
+import android.graphics.drawable.Drawable
+import android.widget.ImageView
+import androidx.compose.foundation.background
+import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.lazy.LazyRow
+import androidx.compose.foundation.lazy.items
+import androidx.compose.ui.draw.clip
+import androidx.compose.ui.platform.LocalView
+import androidx.compose.ui.semantics.Role
+import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.selected
+import androidx.compose.ui.semantics.semantics
+import androidx.compose.ui.text.font.FontFamily
+import androidx.compose.ui.viewinterop.AndroidView
+import com.notokens.monolog.ui.Glyph
+import com.notokens.monolog.ui.IconControl
+import com.notokens.monolog.ui.MonologIcon
+import java.nio.ByteBuffer
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.grid.GridCells
@@ -14,8 +31,6 @@ import androidx.compose.material3.TextButton
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.graphics.asImageBitmap
-import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.notokens.monolog.BuildConfig
@@ -66,7 +81,7 @@ internal object KeyboardMedia {
             if (entry.optString("type") == "ad") return@mapNotNull null
             val sizes = entry.optJSONObject("file") ?: return@mapNotNull null
             fun find(sizesInOrder: List<String>, formats: List<String>): Pair<String, String>? {
-                for (size in sizesInOrder) for (format in formats) {
+                for (format in formats) for (size in sizesInOrder) {
                     val url = sizes.optJSONObject(size)?.optJSONObject(format)?.optString("url").orEmpty()
                     val host = url.toHttpUrlOrNull()?.takeIf { it.isHttps }?.host
                     if (host == "static.klipy.com" || host?.endsWith(".klipy.com") == true) return url to format
@@ -75,7 +90,8 @@ internal object KeyboardMedia {
             }
             val formats = if (tab == KeyboardMediaTab.GIFS) listOf("gif") else listOf("webp", "png", "gif")
             val (file, extension) = find(listOf("hd", "md", "sm", "xs"), formats) ?: return@mapNotNull null
-            val preview = find(listOf("xs", "sm", "md", "hd"), listOf("jpg", "webp", "png", "gif"))?.first ?: file
+            val preview = find(listOf("xs", "sm", "md"), listOf("gif", "webp"))?.first
+                ?: find(listOf("xs", "sm", "md"), listOf("jpg", "png"))?.first ?: file
             val creator = entry.optJSONObject("user")?.optString("username")
                 ?: entry.optJSONObject("creator")?.optString("username") ?: entry.optString("username")
             val credit = creator.ifBlank { entry.optString("source") }.trim().take(64)
@@ -84,13 +100,12 @@ internal object KeyboardMedia {
         }.distinctBy { it.id }
     }
 
-    suspend fun preview(item: Item): Bitmap? = withContext(Dispatchers.IO) {
+    suspend fun preview(item: Item): Drawable = withContext(Dispatchers.IO) {
         val bytes = fetch(item.thumbnail, 2 * 1024 * 1024)
-        val bounds = BitmapFactory.Options().apply { inJustDecodeBounds = true }
-        BitmapFactory.decodeByteArray(bytes, 0, bytes.size, bounds)
-        var sample = 1
-        while (maxOf(bounds.outWidth, bounds.outHeight) / sample > 360) sample *= 2
-        BitmapFactory.decodeByteArray(bytes, 0, bytes.size, BitmapFactory.Options().apply { inSampleSize = sample })
+        ImageDecoder.decodeDrawable(ImageDecoder.createSource(ByteBuffer.wrap(bytes))) { decoder, info, _ ->
+            val dimension = maxOf(info.size.width, info.size.height)
+            decoder.setTargetSampleSize((dimension / 240).coerceAtLeast(1))
+        }
     }
 
     fun stream(item: Item, output: java.io.OutputStream) {
@@ -134,31 +149,109 @@ internal object KeyboardMedia {
     }
 }
 
-private val emoticons = listOf(":)", ":-)", ":D", ";)", ":P", ":(", ":o", ":/", "<3", "¯\\_(ツ)_/¯",
-    "(•‿•)", "(╯°□°)╯︵ ┻━┻", "ʕ•ᴥ•ʔ", "(ง •̀_•́)ง", "(づ｡◕‿‿◕｡)づ", "(⌐■_■)")
+private data class EmoticonGroup(val label: String, val entries: List<String>)
+
+private val emoticons = listOf(
+    EmoticonGroup("Classic", listOf(":)", ":-)", ":D", ":-D", ";)", ";-)", ":P", ":-P", ":(", ":-(",
+        ":O", ":-O", ":/", ":-/", ":|", ":')", ":'(", "<3", "</3", "B)", "XD", "^_^", "-_-", "o_O")),
+    EmoticonGroup("Happy", listOf("(•‿•)", "(*^▽^*)", "(＾▽＾)", "(≧▽≦)", "(◠‿◠)", "(✿◠‿◠)",
+        "٩(◕‿◕｡)۶", "\\(^o^)/", "(⌒‿⌒)", "(´▽`)", "(๑˃̵ᴗ˂̵)", "(•̀ᴗ•́)و")),
+    EmoticonGroup("Affection", listOf("(づ｡◕‿‿◕｡)づ", "(っ˘з(˘⌣˘ )", "(♡‿♡)", "(´꒳`♡)",
+        "(´ε` )♡", "(｡♥‿♥｡)", "(づ￣ ³￣)づ", "<(^_^<)", "ヽ(♡‿♡)ノ", "(◕ᴗ◕✿)")),
+    EmoticonGroup("Surprised", listOf("(⊙_⊙)", "(°o°)", "(O_O)", "(・o・)", "(・_・;)", "(・・?)",
+        "(⊙_☉)", "(☉_☉)", "Σ(°△°)", "(゜゜)", "(*_*)", "(ʘᗩʘ’)")),
+    EmoticonGroup("Sad", listOf("(╥﹏╥)", "(T_T)", "(；ω；)", "(｡•́︿•̀｡)", "(´-ω-｀)", "(._.)",
+        "(ಥ_ಥ)", "(︶︹︶)", "(つ﹏⊂)", "(╯︵╰)")),
+    EmoticonGroup("Gestures", listOf("¯\\_(ツ)_/¯", "(•̀ᴗ•́)و", "(ง •̀_•́)ง", "(⌐■_■)", "(•_•)>⌐■-■",
+        "(╯°□°)╯︵ ┻━┻", "┬─┬ ノ( ゜-゜ノ)", "(シ_ _)シ", "m(_ _)m", "(￣^￣)ゞ")),
+    EmoticonGroup("Animals", listOf("ʕ•ᴥ•ʔ", "(=^･ω･^=)", "ฅ^•ﻌ•^ฅ", "(=ↀωↀ=)", "(ᵔᴥᵔ)",
+        "U・ᴥ・U", "(・ө・)", "(◉ω◉)", "(ᵒ˙ᴥ˙ᵒ)", "૮ ˶ᵔ ᵕ ᵔ˶ ა"))
+)
+
+@Composable
+private fun EmoticonPicker(query: String, onSearch: () -> Unit, onClearSearch: () -> Unit, onPick: (String) -> Unit) {
+    var category by remember { mutableIntStateOf(0) }
+    val view = LocalView.current
+    val vibration = LocalVibrationHaptics.current
+    val entries = remember(query, category) {
+        if (query.isBlank()) emoticons[category].entries
+        else emoticons.flatMap { group ->
+            if (group.label.contains(query, ignoreCase = true)) group.entries
+            else group.entries.filter { it.contains(query, ignoreCase = true) }
+        }.distinct()
+    }
+    Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+        LazyRow(Modifier.weight(1f), contentPadding = PaddingValues(horizontal = 4.dp),
+            horizontalArrangement = Arrangement.spacedBy(3.dp)) {
+            items(emoticons.indices.toList()) { index ->
+                PickerTab(emoticons[index].label, category == index && query.isBlank()) {
+                    onClearSearch()
+                    category = index
+                }
+            }
+        }
+        PickerSearch(query.ifBlank { "Search emoticons" }, onSearch)
+    }
+    if (query.isNotBlank()) Text(query, Modifier.padding(start = 6.dp), color = PaperKeySubText, fontSize = 11.sp)
+    if (entries.isEmpty()) Text("No matching emoticons", Modifier.padding(8.dp), color = PaperKeySubText)
+    else LazyVerticalGrid(GridCells.Adaptive(84.dp), Modifier.fillMaxWidth(),
+        contentPadding = PaddingValues(4.dp), horizontalArrangement = Arrangement.spacedBy(4.dp),
+        verticalArrangement = Arrangement.spacedBy(4.dp)) {
+        items(entries, key = { it }) { text ->
+            Box(Modifier.height(36.dp).clip(RoundedCornerShape(8.dp))
+                .background(MaterialTheme.colorScheme.surfaceVariant.copy(alpha = .52f))
+                .clickable(role = Role.Button) {
+                    triggerHapticFeedback(view, enabled = vibration)
+                    onPick(text)
+                }, contentAlignment = Alignment.Center) {
+                Text(text, Modifier.padding(horizontal = 3.dp), color = PaperKeyText,
+                    fontFamily = FontFamily.Monospace, maxLines = 1, softWrap = false,
+                    fontSize = if (text.length > 11) 11.sp else 15.sp)
+            }
+        }
+    }
+}
+
+@Composable
+internal fun PickerTab(label: String, active: Boolean, modifier: Modifier = Modifier, enabled: Boolean = true, onClick: () -> Unit) {
+    Box(modifier.height(34.dp).clip(RoundedCornerShape(10.dp))
+        .background(if (active) MaterialTheme.colorScheme.primaryContainer else MaterialTheme.colorScheme.surface.copy(alpha = 0f))
+        .clickable(enabled = enabled, role = Role.Tab, onClick = onClick)
+        .semantics { selected = active }.padding(horizontal = 5.dp),
+        contentAlignment = Alignment.Center) {
+        Text(label, color = if (active) MaterialTheme.colorScheme.onPrimaryContainer
+            else if (enabled) PaperKeyText else PaperKeySubText.copy(alpha = .55f),
+            fontSize = 11.sp, maxLines = 1)
+    }
+}
+
+@Composable
+internal fun PickerSearch(label: String, onClick: () -> Unit) {
+    Box(Modifier.size(36.dp).clickable(role = Role.Button, onClick = onClick)
+        .semantics { contentDescription = label }, contentAlignment = Alignment.Center) {
+        MonologIcon(Glyph.SEARCH, Modifier.size(19.dp), PaperKeyText)
+    }
+}
 
 @Composable
 internal fun KeyboardMediaPicker(
     tab: KeyboardMediaTab, onTab: (KeyboardMediaTab) -> Unit, height: androidx.compose.ui.unit.Dp,
     recent: List<Emoji>, mediaAllowed: Boolean, mediaOptIn: Boolean, query: String,
-    onSearch: () -> Unit, onEnable: () -> Unit, onEmoji: (Emoji) -> Unit, onText: (String) -> Unit,
+    onSearch: () -> Unit, onClearSearch: () -> Unit, onEnable: () -> Unit, onEmoji: (Emoji) -> Unit, onText: (String) -> Unit,
     onMedia: (KeyboardMedia.Item) -> Boolean
 ) {
     Column(Modifier.fillMaxWidth().height(height)) {
-        Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceEvenly) {
+        Row(Modifier.fillMaxWidth().padding(horizontal = 4.dp).clip(RoundedCornerShape(12.dp))
+            .background(MaterialTheme.colorScheme.surfaceVariant.copy(alpha = .45f)).padding(2.dp),
+            horizontalArrangement = Arrangement.spacedBy(2.dp)) {
             for (choice in KeyboardMediaTab.entries) {
                 val enabled = mediaAllowed || choice == KeyboardMediaTab.EMOJI || choice == KeyboardMediaTab.EMOTICONS
-                Text(choice.label, Modifier.clickable(enabled = enabled) { onTab(choice) }.padding(7.dp),
-                    fontSize = 12.sp, color = if (choice == tab) MaterialTheme.colorScheme.primary else PaperKeySubText)
+                PickerTab(choice.label, choice == tab, Modifier.weight(1f), enabled) { onTab(choice) }
             }
         }
         when (tab) {
-            KeyboardMediaTab.EMOJI -> EmojiPicker((height - 31.dp).coerceAtLeast(45.dp), recent, onEmoji)
-            KeyboardMediaTab.EMOTICONS -> LazyVerticalGrid(GridCells.Adaptive(68.dp), Modifier.weight(1f)) {
-                items(emoticons) { text ->
-                    Text(text, Modifier.clickable { onText(text) }.padding(7.dp), color = PaperKeyText, fontSize = 14.sp)
-                }
-            }
+            KeyboardMediaTab.EMOJI -> EmojiPicker((height - 38.dp).coerceAtLeast(45.dp), recent, query, onSearch, onClearSearch, onEmoji)
+            KeyboardMediaTab.EMOTICONS -> EmoticonPicker(query, onSearch, onClearSearch, onText)
             else -> when {
                 !mediaAllowed -> Text("Online media is unavailable in this field.", color = PaperKeySubText)
                 !KeyboardMedia.configured -> Text("KLIPY is awaiting setup.", Modifier.padding(8.dp), color = PaperKeySubText)
@@ -167,14 +260,15 @@ internal fun KeyboardMediaPicker(
                         color = PaperKeySubText, style = MaterialTheme.typography.bodySmall)
                     TextButton(onEnable) { Text("Enable online media") }
                 }
-                else -> KlipyResults(tab, query, onSearch, onMedia)
+                else -> KlipyResults(tab, query, onSearch, onClearSearch, onMedia)
             }
         }
     }
 }
 
 @Composable
-private fun KlipyResults(tab: KeyboardMediaTab, query: String, onSearch: () -> Unit, onMedia: (KeyboardMedia.Item) -> Boolean) {
+private fun KlipyResults(tab: KeyboardMediaTab, query: String, onSearch: () -> Unit,
+    onClearSearch: () -> Unit, onMedia: (KeyboardMedia.Item) -> Boolean) {
     var issue by remember(tab, query) { mutableStateOf("") }
     val results by produceState<List<KeyboardMedia.Item>?>(null, tab, query) {
         value = null
@@ -186,6 +280,7 @@ private fun KlipyResults(tab: KeyboardMediaTab, query: String, onSearch: () -> U
         verticalAlignment = Alignment.CenterVertically) {
         Text(query.ifBlank { "Search KLIPY" }, Modifier.weight(1f).clickable(onClick = onSearch).padding(5.dp),
             color = PaperKeyText, maxLines = 1)
+        if (query.isNotBlank()) IconControl(Glyph.CLOSE, "Clear media search", onClearSearch)
         Text("Powered by KLIPY", Modifier.padding(end = 5.dp), color = PaperKeySubText, fontSize = 10.sp)
     }
     if (issue.isNotBlank()) Text(issue, color = PaperKeySubText, fontSize = 11.sp)
@@ -195,7 +290,7 @@ private fun KlipyResults(tab: KeyboardMediaTab, query: String, onSearch: () -> U
     else LazyVerticalGrid(GridCells.Adaptive(66.dp), Modifier.fillMaxWidth(),
         horizontalArrangement = Arrangement.spacedBy(4.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
         items(entries, key = { it.id }) { item ->
-            val bitmap by produceState<Bitmap?>(null, item.thumbnail) {
+            val preview by produceState<Drawable?>(null, item.thumbnail) {
                 value = try { KeyboardMedia.preview(item) }
                 catch (cancelled: CancellationException) { throw cancelled }
                 catch (_: Exception) { null }
@@ -204,8 +299,8 @@ private fun KlipyResults(tab: KeyboardMediaTab, query: String, onSearch: () -> U
                 if (!onMedia(item)) issue = "This field doesn’t accept this media."
             }) {
                 Box(Modifier.fillMaxWidth().height(56.dp), contentAlignment = Alignment.Center) {
-                    val image = bitmap
-                    if (image != null) Image(image.asImageBitmap(), item.name, Modifier.fillMaxSize(), contentScale = ContentScale.Crop)
+                    val image = preview
+                    if (image != null) AnimatedMediaPreview(image, item.name)
                     else Text(item.name, color = PaperKeySubText, fontSize = 10.sp, maxLines = 2)
                 }
                 item.attribution?.let { credit ->
@@ -214,4 +309,26 @@ private fun KlipyResults(tab: KeyboardMediaTab, query: String, onSearch: () -> U
             }
         }
     }
+}
+
+@Composable
+private fun AnimatedMediaPreview(drawable: Drawable, label: String) {
+    AndroidView(
+        factory = { context -> ImageView(context).apply { scaleType = ImageView.ScaleType.FIT_CENTER } },
+        modifier = Modifier.fillMaxSize().semantics { contentDescription = label },
+        update = { view ->
+            if (view.drawable !== drawable) {
+                (view.drawable as? AnimatedImageDrawable)?.stop()
+                view.setImageDrawable(drawable)
+                (drawable as? AnimatedImageDrawable)?.apply {
+                    repeatCount = AnimatedImageDrawable.REPEAT_INFINITE
+                    start()
+                }
+            }
+        },
+        onRelease = { view ->
+            (view.drawable as? AnimatedImageDrawable)?.stop()
+            view.setImageDrawable(null)
+        }
+    )
 }

@@ -11,12 +11,14 @@ class ShortcutSuggestionTest {
         val suggestion = ShortcutSuggestions.detect("Remind me to call Sam at 5 pm", now)!!
         assertEquals(ShortcutPage.REMINDER, suggestion.page)
         assertEquals("call Sam at 5 pm", suggestion.title)
+        assertEquals("Set a reminder to call Sam at 5 pm?", suggestion.prompt)
         assertEquals(now.withHour(17).toInstant().toEpochMilli(), suggestion.dueAt)
     }
 
     @Test fun alarmAndRelativeAlertsAreRecognized() {
         val alarm = ShortcutSuggestions.detect("Set an alarm at 7:30 am tomorrow", now)!!
         assertEquals(ShortcutPage.ALARM, alarm.page)
+        assertEquals("Set an alarm at 7:30 am tomorrow?", alarm.prompt)
         assertEquals(now.plusDays(1).withHour(7).withMinute(30).toInstant().toEpochMilli(), alarm.dueAt)
         assertEquals(now.plusMinutes(20).toInstant().toEpochMilli(),
             ShortcutSuggestions.detect("Alert me in 20 minutes", now)!!.dueAt)

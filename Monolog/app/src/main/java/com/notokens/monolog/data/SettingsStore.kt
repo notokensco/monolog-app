@@ -65,14 +65,16 @@ class SettingsStore(private val context: Context) {
         return TypingProfile.decode(JSONObject(JournalCipher.open(cipher, "keyboard-typing-profile")))
     }
 
-    internal suspend fun recordTyping(tokens: Map<String, Int>, counters: Map<TypingMetric, Long>) {
-        if (tokens.isEmpty() && counters.isEmpty()) return
+    internal suspend fun recordTyping(tokens: Map<String, Int>, counters: Map<TypingMetric, Long>,
+        transitions: Map<String, Int>) {
+        if (tokens.isEmpty() && counters.isEmpty() && transitions.isEmpty()) return
         context.monologSettings.edit { values ->
             val profile = readTypingProfile(values)
             val device = values[statsDeviceKey] ?: UUID.randomUUID().toString().also { values[statsDeviceKey] = it }
             val counts = profile.usage[device].orEmpty().toMutableMap()
             counters.forEach { (metric, delta) -> counts[metric] = ((counts[metric] ?: 0L) + delta).coerceAtMost(1_000_000_000_000L) }
             val words = profile.words.toMutableMap()
+            val pairs = profile.transitions.toMutableMap()
             if (values[learningKey] != false) {
                 val now = System.currentTimeMillis()
                 tokens.forEach { (input, count) ->
@@ -82,8 +84,14 @@ class SettingsStore(private val context: Context) {
                     words[key] = LearnedWord(previous?.text ?: word, ((previous?.uses ?: 0) + count).coerceAtMost(9999),
                         maxOf(now, (previous?.at ?: 0L) + 1))
                 }
+                for ((pair, count) in transitions) {
+                    val previous = pairs[pair]
+                    pairs[pair] = LearnedTransition(((previous?.uses ?: 0) + count).coerceAtMost(255),
+                        maxOf(now, (previous?.at ?: 0L) + 1))
+                }
             }
-            val updated = TypingProfile(TypingProfile.limit(words), profile.usage + (device to counts))
+            val updated = TypingProfile(TypingProfile.limit(words), profile.usage + (device to counts),
+                TypingProfile.limitTransitions(pairs))
             values[typingProfileKey] = JournalCipher.seal(updated.encode().toString(), "keyboard-typing-profile")
         }
     }
@@ -333,7 +341,9 @@ class SettingsStore(private val context: Context) {
             val profile = readTypingProfile(values)
             val at = maxOf(System.currentTimeMillis(), (profile.words[key]?.at ?: 0L) + 1)
             val words = TypingProfile.limit(profile.words + (key to LearnedWord(text, 0, at)))
-            values[typingProfileKey] = JournalCipher.seal(profile.copy(words = words).encode().toString(), "keyboard-typing-profile")
+            val transitions = profile.transitions.filterKeys { it.substringAfter(' ') != key && it.substringBefore(' ') != key }
+            values[typingProfileKey] = JournalCipher.seal(profile.copy(words = words, transitions = transitions)
+                .encode().toString(), "keyboard-typing-profile")
         }
     }
 

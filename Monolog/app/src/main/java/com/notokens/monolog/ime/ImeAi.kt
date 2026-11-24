@@ -15,7 +15,7 @@ import com.notokens.monolog.ai.ModelState
 import com.notokens.monolog.ai.ModelStore
 import com.notokens.monolog.ai.RewritePipeline
 import com.notokens.monolog.ai.RewriteStyle
-import com.notokens.monolog.ai.WebAnswer
+import com.notokens.monolog.ai.WebSearchKind
 import com.notokens.monolog.ai.WebLookup
 import com.notokens.monolog.data.MonologData
 import com.notokens.monolog.data.SettingsStore
@@ -66,6 +66,7 @@ internal class ImeAi(
     private data class Draft(val text: String, val selected: Boolean, val afterCursor: Int = 0)
     var toolbarInput by mutableStateOf("")
         private set
+    private var liveInput: String? = null
     var hasDraft by mutableStateOf(false)
         private set
     private var wordSuggestions by mutableStateOf(emptyList<WordSuggestion>())
@@ -171,6 +172,7 @@ internal class ImeAi(
     fun reset(initialCursor: Int = -1) {
         closePanel()
         clearDraft()
+        if (initialCursor == 0) liveInput = ""
         web = false
         cursor = initialCursor
         deleteUntil = 0L
@@ -190,14 +192,15 @@ internal class ImeAi(
         askOpen = true
     }
 
-    fun clearDraft(clearToolbarInput: Boolean = true) {
+    fun clearDraft(clearToolbarInput: Boolean = true, keepWordSuggestions: Boolean = false) {
         expectedCursor = null
+        liveInput = null
         suggestionJob?.cancel()
         if (clearToolbarInput) {
             toolbarInput = ""
             hasDraft = false
         }
-        wordSuggestions = emptyList()
+        if (!keepWordSuggestions) wordSuggestions = emptyList()
         swipeAlternatives = emptyList()
         selectedDictionaryWord = null
         suggestionToRemove = null
@@ -216,7 +219,7 @@ internal class ImeAi(
             return
         }
         if (start == end && end == cursor) return
-        clearDraft(clearToolbarInput = false)
+        clearDraft(keepWordSuggestions = start == end && android.os.SystemClock.uptimeMillis() < deleteUntil)
         if (rewriteOpen) closePanel() else abortAction()
         cursor = end
         refreshDraft()
@@ -232,6 +235,22 @@ internal class ImeAi(
         }
         if (cursor >= 0) expectedCursor = (expectedCursor ?: cursor) + value.length
         if (value.isNotBlank()) hasDraft = true
+        val previousWord = if (value == " ") liveInput?.let(dictionary::typedCandidate)?.typed else null
+        if (previousWord != null) {
+            val continuations = suggestions.filter {
+                it.nextWord && it.typed == previousWord && it.replacement == "$previousWord " + it.label + " "
+            }
+            if (continuations.isNotEmpty()) {
+                wordSuggestions = continuations.map { WordSuggestion("", it.label + " ") }
+            }
+        }
+        val updatedInput = liveInput?.let { (it + value).takeLast(96) }
+        liveInput = updatedInput
+        if (canUse() && value.isNotBlank() && updatedInput != null) {
+            dictionary.typedCandidate(updatedInput)?.takeIf { it.typed.length < 96 }?.let {
+                wordSuggestions = listOf(it)
+            }
+        }
         toolbar = null
         toolbarDraft = null
         swipeAlternatives = emptyList()
@@ -242,7 +261,7 @@ internal class ImeAi(
     fun backspaceStarted() {
         deleteUntil = android.os.SystemClock.uptimeMillis() + 100
         closePanel()
-        clearDraft(clearToolbarInput = false)
+        clearDraft(clearToolbarInput = false, keepWordSuggestions = true)
     }
 
     fun refreshDraft(typing: Boolean = false) {
@@ -274,6 +293,7 @@ internal class ImeAi(
                     !dictionary.inPersonalDictionary(it)
             }
             if (typing) suggestionToRemove = null
+            liveInput = before.takeLast(96)
             toolbarInput = if (selected.isEmpty()) before.takeLast(96) else " "
             hasDraft = visibleText.isNotBlank()
             inlineActions = if (phoneActionsEnabled() && typedActionsAllowed()) {
@@ -288,7 +308,11 @@ internal class ImeAi(
             if (typing && selected.isEmpty()) suggest(before.substringAfterLast('\n'), replaceTypedDraft = true)
             val language = settings.keyboardLanguage.first()
             wordSuggestions = if (selected.isEmpty()) {
-                dictionary.suggest(before, language, typingProfileAllowed())
+                val personalize = typingProfileAllowed()
+                val ranked = dictionary.suggest(before, language, personalize)
+                if (personalize && ranked.none { !dictionary.hidesSuggestion(it.label) }) {
+                    listOfNotNull(dictionary.typedCandidate(before))
+                } else ranked
             } else emptyList()
             if (typing && selected.isEmpty() && personalizationAllowed() && settings.systemSpellChecker.first()) {
                 delay(220)
@@ -397,14 +421,6 @@ internal class ImeAi(
         }
     }
 
-    private suspend fun webPreview(question: String, result: WebAnswer): AiPreview {
-        val prompt = AiText.answerPrompt(question, result.text)
-        val summary = RewritePipeline.gemma(context, prompt, 96)?.let { AiText.checkedAnswer(question, it, result.text) }
-        val answer = summary ?: result.text.takeIf { AiText.usesReplyScript(question, it) }
-        return AiPreview(answer ?: "The selected model couldn’t answer from these sources in the question’s language.",
-            generatedLocally = summary != null, sources = result.sources, insertable = answer != null)
-    }
-
     fun toggleWeb() {
         abortAction()
         cancelLookup()
@@ -429,24 +445,24 @@ internal class ImeAi(
         pendingDraft = null
     }
 
-    fun searchWeb(query: String) {
+    fun searchWeb(query: String, kind: WebSearchKind = WebSearchKind.WEB) {
         checkDraftPrivacy(query)
         if (!canUse() || !web || !webAllowed || query.isBlank()) return
         abortAction()
-        if (!WebLookup.openSearchApp(context, query, safeSearch)) {
+        if (!WebLookup.openSearchApp(context, query, safeSearch, kind)) {
             preview = AiPreview("No browser is available to open DuckDuckGo.")
         }
     }
 
-    fun ask(query: String) {
+    fun ask(query: String, kind: WebSearchKind = WebSearchKind.WEB) {
         if (!canUse() || query.isBlank()) return
-        if (web && !WebLookup.searchConfigured) {
-            searchWeb(query)
+        val requestedWeb = web
+        checkDraftPrivacy(query)
+        if (requestedWeb) {
+            if (web && webAllowed) askWeb(query, kind)
             return
         }
-        checkDraftPrivacy(query)
-        val useWeb = web && webAllowed
-        if (!useWeb && !personal && phoneActionsEnabled() && personalizationAllowed()) {
+        if (!personal && phoneActionsEnabled() && personalizationAllowed()) {
             val choices = DeviceActions.detect(query, automaticNetworkAllowed(), explicit = true)
             if (choices.isNotEmpty()) {
                 abortAction()
@@ -454,21 +470,43 @@ internal class ImeAi(
                 return
             }
         }
-        val filter = safeSearch
         launchRequest {
-            if (useWeb) {
-                try {
-                    webPreview(query, WebLookup.ask(query, filter))
-                } catch (error: CancellationException) {
-                    throw error
-                } catch (_: Exception) {
-                    AiPreview("DuckDuckGo results are unavailable here. Try opening DuckDuckGo in your browser.")
-                }
-            } else if (personal && personalAllowed) {
-                personalAnswer(query)
-            } else {
-                RewritePipeline.respondOffline(context, query)
+            if (personal && personalAllowed) personalAnswer(query) else RewritePipeline.respondOffline(context, query)
+        }
+    }
+
+    private fun askWeb(query: String, kind: WebSearchKind) {
+        if (WebLookup.searchProvider == null) {
+            abortAction()
+            preview = AiPreview("In-keyboard web search is awaiting provider setup.", webKind = kind)
+            return
+        }
+        val filter = safeSearch
+        val version = actionVersion + 1
+        launchRequest {
+            val result = try {
+                WebLookup.ask(query, filter, kind)
+            } catch (error: CancellationException) {
+                throw error
+            } catch (_: Exception) {
+                return@launchRequest AiPreview("Couldn’t load results. Try again or open in browser.", webKind = kind)
             }
+            val empty = if (kind == WebSearchKind.IMAGES) "No images found." else "No results found."
+            val cards = AiPreview(if (result.sources.isEmpty()) empty else "", sources = result.sources, webKind = kind)
+            if (kind == WebSearchKind.IMAGES || result.sources.isEmpty() || ModelStore.get(context).state.value !is ModelState.Ready) {
+                return@launchRequest cards
+            }
+            if (version != actionVersion || !canUse() || !web || !webAllowed) return@launchRequest cards
+            preview = cards
+            val summary = try {
+                val prompt = AiText.answerPrompt(query, result.text)
+                RewritePipeline.gemma(context, prompt, 96)?.let { AiText.checkedAnswer(query, it, result.text) }
+            } catch (cancelled: CancellationException) {
+                throw cancelled
+            } catch (_: Exception) {
+                null
+            }
+            if (summary.isNullOrBlank()) cards else cards.copy(text = summary, generatedLocally = true, insertable = true)
         }
     }
 

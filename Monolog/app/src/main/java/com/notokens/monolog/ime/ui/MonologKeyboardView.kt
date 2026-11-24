@@ -101,6 +101,7 @@ internal fun MonologKeyboardView(
     onCloseSearch: () -> Unit,
     ai: ImeAi,
     aiAllowed: Boolean,
+    systemAutofillSuggestions: List<android.view.inputmethod.InlineSuggestion> = emptyList(),
     swipeAllowed: Boolean,
     language: KeyboardLanguage,
     onOpenSettings: () -> Unit,
@@ -133,7 +134,8 @@ internal fun MonologKeyboardView(
     onCloseKeyboard: () -> Unit,
     onToggleIncognito: () -> Unit,
     longPressCharacters: Boolean = true,
-    modifier: Modifier = Modifier
+    modifier: Modifier = Modifier,
+    voxLanguageLabel: String = voxLanguage.title
 ) {
     val configuration = LocalConfiguration.current
     val isLandscape = configuration.orientation == Configuration.ORIENTATION_LANDSCAPE
@@ -202,12 +204,20 @@ internal fun MonologKeyboardView(
     var dashboardOpen by remember(layoutSession) { mutableStateOf(false) }
     var dashboardClips by remember(layoutSession) { mutableStateOf(false) }
     var panel by remember(layoutSession) { mutableStateOf<KeyboardPanel?>(null) }
+    var showTranslation by remember(layoutSession) { mutableStateOf(false) }
+    fun closeTranslation() {
+        if (!showTranslation) return
+        translation.close()
+        showTranslation = false
+    }
     var mediaTab by remember(layoutSession) { mutableStateOf(KeyboardMediaTab.EMOJI) }
     val mediaOptIn by settings.onlineMedia.collectAsState(false)
     var mediaSearch by remember(layoutSession) { mutableStateOf(false) }
     var mediaQuery by remember(layoutSession, mediaTab) { mutableStateOf("") }
     var submittedMediaQuery by remember(layoutSession, mediaTab) { mutableStateOf("") }
-    val searchingMedia = mediaSearch && keyboardState.layer == KeyboardLayer.EMOJI && !privateMode && !editorContext.isRestrictedField
+    val remoteMediaSearch = mediaTab == KeyboardMediaTab.GIFS || mediaTab == KeyboardMediaTab.STICKERS
+    val searchingMedia = mediaSearch && keyboardState.layer == KeyboardLayer.EMOJI &&
+        (!remoteMediaSearch || !privateMode && !editorContext.isRestrictedField)
     fun finishMediaSearch() { submittedMediaQuery = mediaQuery.trim(); mediaSearch = false }
     fun typeMediaQuery(value: String) { mediaQuery = (mediaQuery + value).take(80) }
     var userPinned by remember(layoutSession) { mutableStateOf(false) }
@@ -229,7 +239,14 @@ internal fun MonologKeyboardView(
             DashboardTile.EDIT_TEXT -> { dashboardOpen = false; panel = KeyboardPanel.EDIT_TEXT }
             DashboardTile.LANGUAGE -> { dashboardOpen = false; panel = KeyboardPanel.LANGUAGES }
             DashboardTile.APPEARANCE -> onAppearance()
-            DashboardTile.TRANSLATE -> { dashboardOpen = false; panel = KeyboardPanel.TRANSLATE }
+            DashboardTile.TRANSLATE -> {
+                if (editorContext.isNumber) return
+                dashboardOpen = false
+                panel = null
+                numberPadOpen = false
+                if (keyboardState.layer != KeyboardLayer.LETTERS) onToggleSymbols()
+                showTranslation = true
+            }
             DashboardTile.GIFS, DashboardTile.STICKERS -> {
                 dashboardOpen = false
                 mediaTab = if (tile == DashboardTile.GIFS) KeyboardMediaTab.GIFS else KeyboardMediaTab.STICKERS
@@ -237,7 +254,11 @@ internal fun MonologKeyboardView(
             }
             DashboardTile.UNDO -> onEditorCommand(EditorCommand.UNDO)
             DashboardTile.REDO -> onEditorCommand(EditorCommand.REDO)
-            DashboardTile.AUTOFILL -> onEditorCommand(EditorCommand.AUTOFILL)
+            DashboardTile.AUTOFILL -> {
+                dashboardOpen = false
+                closeTranslation()
+                onEditorCommand(EditorCommand.AUTOFILL)
+            }
             else -> keyboardScope.launch { toggleDashboardSetting(tile, settings) }
         }
     }
@@ -249,7 +270,7 @@ internal fun MonologKeyboardView(
             mediaSearch = false
             mediaQuery = ""
             submittedMediaQuery = ""
-            if (panel == KeyboardPanel.TRANSLATE) panel = null
+            closeTranslation()
             if (mediaTab == KeyboardMediaTab.GIFS || mediaTab == KeyboardMediaTab.STICKERS) mediaTab = KeyboardMediaTab.EMOJI
         }
     }
@@ -258,14 +279,17 @@ internal fun MonologKeyboardView(
             dashboardOpen = false
             placementMenu = false
             panel = null
-            translation.close()
+            closeTranslation()
         }
     }
     val overlayHeight = (configuration.screenHeightDp.dp - with(density) { keyboardHeightPx.toDp() })
         .coerceAtLeast(100.dp)
 
-    val activePlacement = if (isVoxOpen || isAiActive || isShortcutsOpen) KeyboardPlacement.FULL else placement
-    KeyboardPosition(activePlacement, preferredRowHeight * 4 + 24.dp, onFloatingBounds) { positionModifier, scale, placementControls ->
+    val activePlacement = if (isVoxOpen || isAiActive || isShortcutsOpen ||
+        showTranslation && placement == KeyboardPlacement.FLOATING) KeyboardPlacement.FULL else placement
+    KeyboardPosition(activePlacement, preferredRowHeight * 4 + 24.dp, onFloatingBounds,
+        onDock = { keyboardScope.launch { settings.setKeyboardPlacement(KeyboardPlacement.FULL) } }
+    ) { positionModifier, scale, placementControls ->
     val rowHeight = (preferredRowHeight * scale).coerceAtLeast(30.dp)
     val bodyHeight = rowHeight * 4 + 24.dp
     KeyPreviewHost(!dashboardOpen && !isVoxOpen && !placementMenu && panel != KeyboardPanel.EDIT_TEXT) {
@@ -278,14 +302,15 @@ internal fun MonologKeyboardView(
         LocalSplitKeys provides (activePlacement == KeyboardPlacement.SPLIT)
     ) {
     Column(positionModifier.then(modifier).fillMaxWidth()
-        .then(if (isVoxOpen) Modifier else Modifier.monologBackdrop(keyboard = true)).navigationBarsPadding()
+        .then(if (isVoxOpen) Modifier else Modifier.monologBackdrop(keyboard = true))
+        .then(if (activePlacement == KeyboardPlacement.FLOATING) Modifier else Modifier.navigationBarsPadding())
         .onSizeChanged { keyboardHeightPx = it.height }) {
         placementControls()
         // If Vox mode is open, render the full Vox Panel
         if (isVoxOpen) {
             VoxPanel(
                 voxState = voxState,
-                language = voxLanguage,
+                language = voxLanguageLabel,
                 languages = voxLanguages,
                 onLanguage = onVoxLanguage,
                 onStartListening = onStartListening,
@@ -327,7 +352,7 @@ internal fun MonologKeyboardView(
                         dashboardClips = false
                         userPinned = false
                         placementMenu = false
-                        if (panel == KeyboardPanel.TRANSLATE) translation.close()
+                        closeTranslation()
                         panel = null
                     },
                     onHoldDashboard = if (pinnedTiles.isEmpty() || dashboardOpen || searchQuery != null || isShortcutsOpen) null
@@ -338,7 +363,7 @@ internal fun MonologKeyboardView(
                     toolbarAi = swapVoxAndAi,
                     isContextActive = !editorContext.isIncognito && (isShortcutsOpen || ScreenCaptureService.isReady),
                     suggestions = {
-                        if (!dashboardOpen && !isShortcutsOpen && searchQuery == null) {
+                        if (!dashboardOpen && !isShortcutsOpen && !showTranslation && searchQuery == null) {
                             val localActions = ai.inlineActions.ifEmpty { if (!hasInput) copiedActions else emptyList() }
                             val match = emojiMatches
                             val predictionsVisible = aiAllowed && (ai.suggestions.isNotEmpty() || ai.shortcutSuggestion != null)
@@ -346,8 +371,16 @@ internal fun MonologKeyboardView(
                             val idle = !ai.inlineBusy && ai.toolbar == null && !ai.rewriteOpen &&
                                 localActions.isEmpty() && !predictionsVisible && !mediaVisible && match?.entries.isNullOrEmpty()
                             when {
+                                systemAutofillSuggestions.isNotEmpty() && !searchingMedia ->
+                                    SystemAutofillStrip(systemAutofillSuggestions)
                                 searchingMedia -> Row(verticalAlignment = Alignment.CenterVertically) {
-                                    Text(mediaQuery.ifEmpty { "Search KLIPY" }, Modifier.weight(1f),
+                                    Text(mediaQuery.ifEmpty {
+                                        when (mediaTab) {
+                                            KeyboardMediaTab.EMOJI -> "Search emoji"
+                                            KeyboardMediaTab.EMOTICONS -> "Search emoticons"
+                                            else -> "Search KLIPY"
+                                        }
+                                    }, Modifier.weight(1f),
                                         color = PaperKeyText, maxLines = 1)
                                     IconControl(Glyph.SEARCH, "Submit media search", ::finishMediaSearch)
                                     IconControl(Glyph.CLOSE, "Cancel media search", {
@@ -355,16 +388,8 @@ internal fun MonologKeyboardView(
                                         mediaSearch = false
                                     })
                                 }
-                                userPinned || (idle && !translation.active && shortcode == null && pinnedTiles.isNotEmpty()) ->
+                                userPinned || (idle && shortcode == null && pinnedTiles.isNotEmpty()) ->
                                     PinnedKeyboardWidgets(pinnedTiles, if (userPinned) ({ userPinned = false }) else null, ::activate)
-                                translation.active -> Row(verticalAlignment = Alignment.CenterVertically) {
-                                    Column(Modifier.weight(1f)) {
-                                        Text(translation.status, color = PaperKeyText, fontSize = 12.sp,
-                                            maxLines = 1, overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis)
-                                        GoogleTranslationAttribution()
-                                    }
-                                    IconControl(Glyph.CLOSE, "Stop translating", translation::close)
-                                }
                                 aiAllowed && ai.dictionaryActionsAllowed &&
                                     (ai.selectedDictionaryWord != null || ai.suggestionToRemove != null) ->
                                     KeyboardSuggestionStrip(ai, language, onSuggestedShortcut)
@@ -372,7 +397,7 @@ internal fun MonologKeyboardView(
                                     if (privateMode) emptyList() else recentEmoji,
                                     if (shortcode == ":") null else match?.entries.orEmpty()
                                 ) { emoji -> replaceEmoji(shortcode, emoji) }
-                                aiAllowed && (ai.inlineBusy || ai.toolbar != null || ai.rewriteOpen) ->
+                                aiAllowed && (ai.shortcutSuggestion != null || ai.inlineBusy || ai.toolbar != null || ai.rewriteOpen) ->
                                     KeyboardSuggestionStrip(ai, language, onSuggestedShortcut, copiedActions)
                                 localActions.isNotEmpty() -> Row(Modifier.fillMaxWidth(),
                                     horizontalArrangement = androidx.compose.foundation.layout.Arrangement.Center) {
@@ -422,9 +447,12 @@ internal fun MonologKeyboardView(
                 }
             }
 
+            if (showTranslation) KeyboardTranslationBar(translation, ::closeTranslation)
+
             Box(Modifier.fillMaxWidth().height(bodyHeight)) {
                 Crossfade(dashboardOpen, modifier = Modifier.fillMaxSize(), animationSpec = tween(105),
                     label = "Keyboard dashboard") { showDashboard ->
+                    val workspace = panel
                     if (showDashboard) {
                         KeyboardDashboard(
                             settings = settings,
@@ -445,15 +473,13 @@ internal fun MonologKeyboardView(
                         KeyboardPlacementPicker(placement, onClose = { placementMenu = false }) {
                             keyboardScope.launch { settings.setKeyboardPlacement(it); placementMenu = false }
                         }
-                    } else if (panel != null) {
+                    } else if (workspace != null) {
                         fun closePanel() { panel = null }
-                        when (panel) {
+                        when (workspace) {
                             KeyboardPanel.EDIT_TEXT -> KeyboardEditorTools(onEditorCommand, ::closePanel)
                             KeyboardPanel.LANGUAGES -> KeyboardLanguagePicker(language, {
                                 keyboardScope.launch { settings.setKeyboardLanguage(it.id); closePanel() }
                             }, ::closePanel)
-                            KeyboardPanel.TRANSLATE -> KeyboardTranslationPicker(translation, ::closePanel)
-                            null -> Unit
                         }
                     } else Column(
                         modifier = Modifier
@@ -468,7 +494,8 @@ internal fun MonologKeyboardView(
                                 language = language,
                                 onCharTyped = if (searchingMedia) ::typeMediaQuery else ({ userPinned = false; onCharTyped(it) }),
                                 onLetterTyped = if (searchingMedia) ::typeMediaQuery else ({ userPinned = false; onLetterTyped(it) }),
-                                swipeEnabled = !searchingMedia && swipeAllowed && !translation.active && language.supportsLatinSwipe && (!isShortcutsOpen || shortcutDraft.isEditing),
+                                swipeEnabled = !searchingMedia && swipeAllowed && !showTranslation &&
+                                    language.supportsLatinSwipe && (!isShortcutsOpen || shortcutDraft.isEditing),
                                 longPressCharacters = longPressCharacters,
                                 onSwipe = { userPinned = false; onSwipe(it) },
                                 onShiftClick = onShiftClick,
@@ -511,6 +538,7 @@ internal fun MonologKeyboardView(
                                 mediaOptIn = mediaOptIn,
                                 mediaQuery = submittedMediaQuery,
                                 onMediaSearch = { mediaSearch = true },
+                                onClearMediaSearch = { mediaQuery = ""; submittedMediaQuery = "" },
                                 onEnableMedia = { keyboardScope.launch { settings.setOnlineMedia(true) } },
                                 onMedia = onPasteMedia,
                                 rowHeight = rowHeight,
@@ -824,8 +852,9 @@ private fun DigitsGrid(
             SymbolKey(Modifier.weight(.8f), left[row], canHold, onCharTyped)
             digits.forEach { digit ->
                 val value = digit.toString()
-                val letters = t9[digit.digitToInt()]
-                val options = if (canHold) symbolAlternates[value].orEmpty() else emptyList()
+                val letters = if (canHold && !editorContext.isNumber) t9[digit.digitToInt()] else ""
+                val options = if (canHold) letters.map(Char::toString) + symbolAlternates[value].orEmpty()
+                    else emptyList()
                 KeyButton(Modifier.weight(1.15f), previewText = value,
                     label = listOf(value, letters).filter(String::isNotEmpty).joinToString(" "),
                     alternates = options, onAlternate = onCharTyped, onClick = { onCharTyped(value) }) {
@@ -895,6 +924,7 @@ private fun EmojiLayout(
     mediaOptIn: Boolean,
     mediaQuery: String,
     onMediaSearch: () -> Unit,
+    onClearMediaSearch: () -> Unit,
     onEnableMedia: () -> Unit,
     onMedia: (KeyboardMedia.Item) -> Boolean,
     rowHeight: Dp,
@@ -912,7 +942,7 @@ private fun EmojiLayout(
     onAction: () -> Unit
 ) {
     KeyboardMediaPicker(mediaTab, onMediaTab, rowHeight * 3, recent, mediaAllowed, mediaOptIn,
-        mediaQuery, onMediaSearch, onEnableMedia, onEmojiPicked, onCharTyped, onMedia)
+        mediaQuery, onMediaSearch, onClearMediaSearch, onEnableMedia, onEmojiPicked, onCharTyped, onMedia)
     BottomRow(
         rowHeight = rowHeight,
         modeLabel = "ABC",

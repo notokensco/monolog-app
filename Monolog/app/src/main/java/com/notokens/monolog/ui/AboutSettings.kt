@@ -67,7 +67,7 @@ private val credits = listOf(
 )
 
 @Composable
-internal fun AboutSettings() {
+internal fun AboutSettings(onOpenUsageStatistics: () -> Unit) {
     val context = LocalContext.current
     val browser = LocalUriHandler.current
     var selected by rememberSaveable { mutableStateOf<String?>(null) }
@@ -110,6 +110,7 @@ internal fun AboutSettings() {
                 Text("Version ${BuildConfig.VERSION_NAME}", color = PaperKeySubText, style = MaterialTheme.typography.bodySmall)
             }
         }
+        TextButton(onOpenUsageStatistics) { Text("Usage statistics") }
         TextButton({ browser.openUri("https://notokens.co") }) { Text("NoTokens") }
         TextButton({ browser.openUri("https://monolog.notokens.co") }) { Text("Official Monolog website") }
         TextButton({ browser.openUri("mailto:monolog@notokens.co") }) { Text("Contact support") }
@@ -120,14 +121,22 @@ internal fun AboutSettings() {
         TextButton({ browser.openUri("https://klipy.com/support/terms-services") }) { Text("KLIPY terms of service") }
         TextButton({ browser.openUri("https://monolog.notokens.co/privacy") }) { Text("Latest privacy policy online") }
     }
+    SettingsCard("Keyboard translation") {
+        Text("Google Translate powers this optional feature. Choosing Translate with Google may download language packs over Wi-Fi. " +
+            "Your text and translations are processed on your device. The feature can reach Google for language packs and updates. " +
+            "Review automatic translations before sending them.",
+            color = PaperKeySubText, style = MaterialTheme.typography.bodySmall)
+        TextButton({ browser.openUri("https://cloud.google.com/translate") }) { Text("Google Translate") }
+        TextButton({ browser.openUri("https://docs.cloud.google.com/translate/attribution#disclaimer") }) {
+            Text("Google translation disclaimer")
+        }
+        TextButton({ browser.openUri("https://developers.google.com/ml-kit/terms") }) { Text("Google ML Kit privacy and terms") }
+    }
     SettingsCard("Ownership and licenses") {
         Text("NoTokens owns Monolog’s branding, original app design, code, and authored content. " +
             "Third-party data, models, fonts, and libraries are available under their respective terms.",
             color = PaperKeySubText, style = MaterialTheme.typography.bodySmall)
         credits.forEach { item -> TextButton({ selected = item.asset }) { Text(item.title) } }
-        Text("Keyboard translation uses Google Translate with downloaded on-device models.",
-            color = PaperKeySubText, style = MaterialTheme.typography.bodySmall)
-        TextButton({ browser.openUri("https://cloud.google.com/translate") }) { Text("Google Translate attribution") }
         TextButton({ browser.openUri("https://docs.api.met.no/doc/License.html") }) { Text("Weather data license") }
     }
 }

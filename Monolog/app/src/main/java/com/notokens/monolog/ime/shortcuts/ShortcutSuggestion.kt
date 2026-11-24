@@ -7,15 +7,33 @@ internal data class ShortcutSuggestion(
     val title: String,
     val body: String = "",
     val dueAt: Long,
-    val label: String
-)
+    val usesInfinitive: Boolean = false
+) {
+    val prompt: String
+        get() {
+            val action = when (page) {
+                ShortcutPage.ALARM -> "Set an alarm"
+                ShortcutPage.REMINDER -> "Set a reminder"
+                else -> "Save a note"
+            }
+            val detail = title.trim().trimEnd('.', '?', '!', ',')
+            if (detail.isBlank() || detail.equals(page.name, ignoreCase = true)) return "$action?"
+            val connector = when {
+                detail.startsWith("at ", true) || detail.startsWith("in ", true) || detail.startsWith("for ", true) -> " "
+                page == ShortcutPage.NOTE -> " about "
+                usesInfinitive -> " to "
+                else -> " for "
+            }
+            return "$action$connector$detail?"
+        }
+}
 
 /** Keyword matching stays local; a suggestion only opens a draft and never saves it. */
 internal object ShortcutSuggestions {
     private val alarm = Regex("\\b(alarm|wake me|wake up)\\b", RegexOption.IGNORE_CASE)
     private val reminder = Regex("\\b(remind(?:er|ers)?|remember|alerts?|don['’]t forget|do not forget|meeting|appointment|deadline)\\b", RegexOption.IGNORE_CASE)
     private val note = Regex("\\b(note|notes|jot down|save this|journal)\\b", RegexOption.IGNORE_CASE)
-    private val command = Regex("^(?:(?:please\\s+)?(?:remind me(?:\\s+to)?|remember(?:\\s+to)?|set (?:an? |the )?(?:reminder|alarm|alert)(?:\\s+to)?|don['’]t forget(?:\\s+to)?|(?:save |make |take )?(?:a )?note(?:\\s+to)?|jot down|save this|journal))\\s*[:,-]?\\s*", RegexOption.IGNORE_CASE)
+    private val command = Regex("^(?:please\\s+)?(?:remind me(?:\\s+to)?|remember(?:\\s+to)?|(?:set\\s+(?:an? |the )?)?(?:reminder|alarm|alert)(?:\\s+(?:to|for))?|wake (?:me(?: up)?|up)|don['’]t forget(?:\\s+to)?|(?:save |make |take )?(?:a )?note(?:\\s+to)?|jot down|save this|journal)\\b\\s*[:,-]?\\s*", RegexOption.IGNORE_CASE)
     private val relative = Regex("\\bin\\s+(\\d{1,3})\\s*(minutes?|mins?|hours?|hrs?|days?)\\b", RegexOption.IGNORE_CASE)
     private val clock = Regex("\\b(?:(?:at\\s+)?(0?[1-9]|1[0-2])(?::([0-5]\\d))?\\s*([ap])\\.?m\\.?|(?:at\\s+)?([01]?\\d|2[0-3]):([0-5]\\d)|at\\s+([1-9]|1[0-2]))(?!\\w|:\\d)", RegexOption.IGNORE_CASE)
 
@@ -29,7 +47,9 @@ internal object ShortcutSuggestions {
             note.containsMatchIn(input) -> ShortcutPage.NOTE
             else -> return null
         }
-        val content = input.replaceFirst(command, "").trim()
+        val prefix = command.find(input)?.value.orEmpty()
+        val usesInfinitive = prefix.trim().trimEnd(':', ',', '-').trimEnd().endsWith(" to", ignoreCase = true)
+        val content = input.drop(prefix.length).trim()
         val due = relative.find(input)?.let { match ->
             val amount = match.groupValues[1].toLong()
             when {
@@ -57,17 +77,13 @@ internal object ShortcutSuggestions {
         val event = clock.replace(relative.replace(content, ""), "").trim().trimEnd('.', ',', '?')
         val title = when {
             page == ShortcutPage.NOTE -> content
-            event.any(Char::isLetter) && (reminder.containsMatchIn(input) || alarm.containsMatchIn(input)) -> content
+            content.isNotBlank() && (reminder.containsMatchIn(input) || alarm.containsMatchIn(input)) -> content
             else -> event
                 .replace(Regex("^(?:i have|i need to|i am going to|i will)\\s+", RegexOption.IGNORE_CASE), "")
                 .trim().removeSuffix(" at").ifBlank { if (page == ShortcutPage.ALARM) "Alarm" else "Reminder" }
                 .replaceFirstChar { it.titlecase() }
         }
         return ShortcutSuggestion(page, title.take(80), if (page == ShortcutPage.NOTE) content else "",
-            due.toInstant().toEpochMilli(), when (page) {
-                ShortcutPage.NOTE -> "Save note"
-                ShortcutPage.ALARM -> "Set alarm"
-                else -> "Set reminder"
-            })
+            due.toInstant().toEpochMilli(), usesInfinitive)
     }
 }

@@ -146,13 +146,14 @@ fun KeyButton(
 
     val baseBg = when {
         isAccent -> PaperAccentBlue
+        tracing && !appearance.borders -> PaperPillBackground
         isActive -> PaperKeyActive
         isPill -> PaperPillBackground
         isPressed -> PaperKeyActive.copy(alpha = 0.8f)
         else -> Color.Transparent
     }
 
-    val finalBg = if (isPressed && !isAccent) {
+    val finalBg = if (isPressed && !isAccent && !(tracing && !appearance.borders)) {
         PaperKeyActive
     } else if (appearance.borders && !isPill && baseBg == Color.Transparent) {
         PaperPillBackground
@@ -167,7 +168,7 @@ fun KeyButton(
         else -> PaperKeyText
     }
 
-    val pillModifier = if (isPill && !appearance.borders) {
+    val pillModifier = if (isPill && !appearance.borders && !tracing) {
         Modifier.border(if (isActive) 2.dp else 1.dp,
             if (isActive) MaterialTheme.colorScheme.primary else PaperPillBorder, RoundedCornerShape(24.dp))
     } else {

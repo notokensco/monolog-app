@@ -99,7 +99,7 @@ import com.notokens.monolog.ui.theme.PaperPillBackground
 @Composable
 fun VoxPanel(
     voxState: VoxState,
-    language: VoxLanguage,
+    language: String,
     languages: List<VoxLanguage>,
     onLanguage: (VoxLanguage) -> Unit,
     onStartListening: () -> Unit,
@@ -180,7 +180,6 @@ fun VoxPanel(
             .padding(8.dp)
             .glassSurface(24, GlassAccent.LAVENDER)
             .heightIn(max = (LocalConfiguration.current.screenHeightDp * .47f).dp)
-            .verticalScroll(rememberScrollState())
             .padding(horizontal = 12.dp, vertical = 8.dp),
         horizontalAlignment = Alignment.CenterHorizontally
     ) {
@@ -201,130 +200,142 @@ fun VoxPanel(
             }
         }
 
-        Spacer(modifier = Modifier.height(8.dp))
+        Column(
+            Modifier.weight(1f, fill = false).fillMaxWidth().verticalScroll(rememberScrollState()),
+            horizontalAlignment = Alignment.CenterHorizontally
+        ) {
+            Spacer(modifier = Modifier.height(8.dp))
 
-        // State indicator
-        when (voxState.status) {
-            VoxStatus.LISTENING -> {
-                Row(verticalAlignment = Alignment.CenterVertically) {
-                    Box(
-                        modifier = Modifier
-                            .size(7.dp)
-                            .clip(CircleShape)
-                            .background(PaperAccentBlue)
-                    )
-                    Spacer(modifier = Modifier.width(6.dp))
+            // State indicator
+            when (voxState.status) {
+                VoxStatus.LISTENING -> {
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        Box(
+                            modifier = Modifier
+                                .size(7.dp)
+                                .clip(CircleShape)
+                                .background(PaperAccentBlue)
+                        )
+                        Spacer(modifier = Modifier.width(6.dp))
+                        Text(
+                            text = "Listening…",
+                            fontSize = 13.sp,
+                            fontWeight = FontWeight.Medium,
+                            color = PaperAccentBlue
+                        )
+                    }
+                }
+                VoxStatus.PAUSED -> {
                     Text(
-                        text = "Listening…",
-                        fontSize = 13.sp,
+                        text = "Paused",
+                        fontSize = 12.sp,
+                        fontWeight = FontWeight.Medium,
+                        color = PaperKeySubText
+                    )
+                }
+                VoxStatus.PREPARING -> {
+                    Text("Preparing voice model…", fontSize = 12.sp, color = PaperKeySubText)
+                }
+                VoxStatus.PROCESSING -> {
+                    Text(
+                        text = "• Processing speech…",
+                        fontSize = 12.sp,
                         fontWeight = FontWeight.Medium,
                         color = PaperAccentBlue
                     )
                 }
-            }
-            VoxStatus.PAUSED -> {
-                Text(
-                    text = "Paused",
-                    fontSize = 12.sp,
-                    fontWeight = FontWeight.Medium,
-                    color = PaperKeySubText
-                )
-            }
-            VoxStatus.PREPARING -> {
-                Text("Preparing voice model…", fontSize = 12.sp, color = PaperKeySubText)
-            }
-            VoxStatus.PROCESSING -> {
-                Text(
-                    text = "• Processing speech…",
-                    fontSize = 12.sp,
-                    fontWeight = FontWeight.Medium,
-                    color = PaperAccentBlue
-                )
-            }
-            VoxStatus.PERMISSION_REQUIRED -> {
-                Row(verticalAlignment = Alignment.CenterVertically) {
-                    Text(
-                        text = "Microphone permission needed",
-                        fontSize = 12.sp,
-                        fontWeight = FontWeight.SemiBold,
-                        color = MonologIncognitoShield,
-                        modifier = Modifier.weight(1f, fill = false)
-                    )
-                    Spacer(modifier = Modifier.width(8.dp))
-                    Button(
-                        onClick = onRequestPermission,
-                        colors = ButtonDefaults.buttonColors(containerColor = PaperAccentBlue),
-                        shape = RoundedCornerShape(12.dp)
-                    ) {
-                        Text(text = "Grant", fontSize = 11.sp)
-                    }
-                }
-            }
-            VoxStatus.ERROR, VoxStatus.UNAVAILABLE -> {
-                Text(
-                    text = voxState.errorMessage ?: "Speech error. Tap play to retry.",
-                    fontSize = 12.sp,
-                    fontWeight = FontWeight.Medium,
-                    color = MaterialTheme.colorScheme.error,
-                    textAlign = TextAlign.Center
-                )
-                if (voxState.status == VoxStatus.UNAVAILABLE) {
-                    TextButton(onOpenModels) { Text("Open Monolog settings") }
-                }
-            }
-            else -> {
-                Text(
-                    text = "Tap play to start speaking",
-                    fontSize = 12.sp,
-                    color = PaperKeySubText
-                )
-            }
-        }
-
-        Spacer(modifier = Modifier.height(6.dp))
-
-        VoxTranscriptStage(
-            transcript = fullTranscript,
-            isListening = isListening,
-            rmsLevel = voxState.rmsLevel
-        )
-
-        if (voxState.status == VoxStatus.PAUSED) {
-            voxState.errorMessage?.let {
-                Text(it, color = MaterialTheme.colorScheme.error, fontSize = 12.sp)
-            }
-        }
-
-        Spacer(modifier = Modifier.height(10.dp))
-
-        BoxWithConstraints(Modifier.fillMaxWidth().height(56.dp)) {
-            if (languages.isNotEmpty()) {
-                Box(Modifier.align(Alignment.CenterStart).widthIn(max = (maxWidth - 58.dp) / 2)) {
-                    Column(
-                        Modifier.clip(RoundedCornerShape(13.dp))
-                            .background(MaterialTheme.colorScheme.primaryContainer)
-                            .clickable(onClickLabel = "Change speech language") {
-                                triggerHapticFeedback(view, enabled = vibration)
-                                languagesOpen = true
-                            }.padding(horizontal = 9.dp, vertical = 5.dp)
-                    ) {
-                        Text("Speech language", fontSize = 10.sp, maxLines = 1,
-                            color = MaterialTheme.colorScheme.onPrimaryContainer)
-                        Text(language.title + " \u25be", fontSize = 13.sp, fontWeight = FontWeight.SemiBold,
-                            color = MaterialTheme.colorScheme.onPrimaryContainer, maxLines = 1,
-                            overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis)
-                    }
-                    DropdownMenu(languagesOpen, { languagesOpen = false }, Modifier.heightIn(max = 320.dp)) {
-                        languages.forEach { choice ->
-                            DropdownMenuItem(
-                                text = { Text(choice.title) },
-                                onClick = {
-                                    languagesOpen = false
-                                    if (language != choice) onLanguage(choice)
-                                }
-                            )
+                VoxStatus.PERMISSION_REQUIRED -> {
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        Text(
+                            text = "Microphone permission needed",
+                            fontSize = 12.sp,
+                            fontWeight = FontWeight.SemiBold,
+                            color = MonologIncognitoShield,
+                            modifier = Modifier.weight(1f, fill = false)
+                        )
+                        Spacer(modifier = Modifier.width(8.dp))
+                        Button(
+                            onClick = onRequestPermission,
+                            colors = ButtonDefaults.buttonColors(containerColor = PaperAccentBlue),
+                            shape = RoundedCornerShape(12.dp)
+                        ) {
+                            Text(text = "Grant", fontSize = 11.sp)
                         }
                     }
+                }
+                VoxStatus.ERROR, VoxStatus.UNAVAILABLE -> {
+                    Text(
+                        text = voxState.errorMessage ?: "Speech error. Tap play to retry.",
+                        fontSize = 12.sp,
+                        fontWeight = FontWeight.Medium,
+                        color = MaterialTheme.colorScheme.error,
+                        textAlign = TextAlign.Center
+                    )
+                    if (voxState.status == VoxStatus.UNAVAILABLE) {
+                        TextButton(onOpenModels) { Text("Open Monolog settings") }
+                    }
+                }
+                else -> {
+                    Text(
+                        text = "Tap play to start speaking",
+                        fontSize = 12.sp,
+                        color = PaperKeySubText
+                    )
+                }
+            }
+
+            Spacer(modifier = Modifier.height(6.dp))
+
+            VoxTranscriptStage(
+                transcript = fullTranscript,
+                isListening = isListening,
+                rmsLevel = voxState.rmsLevel
+            )
+
+            if (voxState.status == VoxStatus.PAUSED) {
+                voxState.errorMessage?.let {
+                    Text(it, color = MaterialTheme.colorScheme.error, fontSize = 12.sp)
+                }
+            }
+
+            Spacer(modifier = Modifier.height(10.dp))
+        }
+
+        BoxWithConstraints(Modifier.fillMaxWidth().height(56.dp)) {
+            Box(Modifier.align(Alignment.CenterStart).widthIn(max = (maxWidth - 58.dp) / 2)) {
+                Column(
+                    Modifier.clip(RoundedCornerShape(13.dp))
+                        .background(MaterialTheme.colorScheme.primaryContainer)
+                        .clickable(onClickLabel = "Change speech language") {
+                            triggerHapticFeedback(view, enabled = vibration)
+                            languagesOpen = true
+                        }.padding(horizontal = 9.dp, vertical = 5.dp)
+                ) {
+                    Text("Speech language", fontSize = 10.sp, maxLines = 1,
+                        color = MaterialTheme.colorScheme.onPrimaryContainer)
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        Text(language, Modifier.weight(1f, fill = false), fontSize = 13.sp, fontWeight = FontWeight.SemiBold,
+                            color = MaterialTheme.colorScheme.onPrimaryContainer, maxLines = 1,
+                            overflow = TextOverflow.Ellipsis)
+                        MonologIcon(Glyph.DOWN, Modifier.padding(start = 3.dp).size(12.dp),
+                            MaterialTheme.colorScheme.onPrimaryContainer)
+                    }
+                }
+                DropdownMenu(languagesOpen, { languagesOpen = false }, Modifier.heightIn(max = 320.dp)) {
+                    languages.forEach { choice ->
+                        DropdownMenuItem(
+                            text = { Text(choice.title) },
+                            trailingIcon = if (language == choice.title) ({ Text("✓") }) else null,
+                            onClick = {
+                                languagesOpen = false
+                                if (language != choice.title) onLanguage(choice)
+                            }
+                        )
+                    }
+                    DropdownMenuItem(text = { Text("Voice engines & language packs") }, onClick = {
+                        languagesOpen = false
+                        onOpenModels()
+                    })
                 }
             }
             Box(

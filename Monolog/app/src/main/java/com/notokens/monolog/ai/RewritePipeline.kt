@@ -7,7 +7,8 @@ internal data class AiPreview(
     val generatedLocally: Boolean = false,
     val sources: List<WebSource> = emptyList(),
     val insertable: Boolean = false,
-    val detail: String? = null
+    val detail: String? = null,
+    val webKind: WebSearchKind? = null
 )
 
 internal object RewritePipeline {

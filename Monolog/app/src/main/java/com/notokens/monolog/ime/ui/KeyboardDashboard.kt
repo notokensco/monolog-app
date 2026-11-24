@@ -149,7 +149,7 @@ internal suspend fun toggleDashboardSetting(tile: DashboardTile, settings: Setti
     }
 }
 
-@OptIn(ExperimentalFoundationApi::class)
+@OptIn(ExperimentalFoundationApi::class, ExperimentalLayoutApi::class)
 @Composable
 internal fun KeyboardDashboard(
     settings: SettingsStore,
@@ -284,25 +284,36 @@ internal fun KeyboardDashboard(
                         if (pins.isEmpty() && recent.isEmpty() && images.items.isEmpty()) Text("Nothing copied yet.",
                             Modifier.padding(10.dp), color = PaperKeySubText)
                         for (pinned in listOf(true, false)) {
-                            val group = (if (pinned) pins else recent).map { it as Any } +
-                                images.items.filter { images.pinned(it) == pinned }
-                            if (group.isNotEmpty()) Text(if (pinned) "Pinned" else "Recent",
+                            val textItems = if (pinned) pins else recent
+                            val imageItems = images.items.filter { images.pinned(it) == pinned }
+                            if (textItems.isNotEmpty() || imageItems.isNotEmpty()) Text(if (pinned) "Pinned" else "Recent",
                                 Modifier.padding(start = 4.dp, top = 5.dp), color = PaperKeySubText, fontSize = 12.sp)
-                            group.chunked(2).forEach { row ->
+                            textItems.chunked(2).forEach { row ->
                                 Row(Modifier.fillMaxWidth().padding(vertical = 2.dp), horizontalArrangement = Arrangement.spacedBy(5.dp)) {
                                     row.forEach { item ->
                                         val shape = RoundedCornerShape(10.dp)
                                         Box(Modifier.weight(1f).height(62.dp).clip(shape).background(PaperPillBackground)
                                             .border(1.dp, PaperPillBorder, shape).combinedClickable(
-                                                onClick = { if (item is String) onPaste(item) else onPasteImage(item as ClipboardImage) },
-                                                onLongClick = { if (item is String) expandedText = item else expandedImage = item as ClipboardImage }
+                                                onClick = { onPaste(item) },
+                                                onLongClick = { expandedText = item }
                                             ).padding(horizontal = 7.dp), contentAlignment = Alignment.CenterStart) {
-                                            if (item is String) Text(item, maxLines = 2, overflow = TextOverflow.Ellipsis,
+                                            Text(item, maxLines = 2, overflow = TextOverflow.Ellipsis,
                                                 fontSize = 13.sp, color = PaperKeyText)
-                                            else ClipboardImagePreview(item as ClipboardImage, expanded = false)
                                         }
                                     }
                                     if (row.size == 1) Spacer(Modifier.weight(1f))
+                                }
+                            }
+                            if (imageItems.isNotEmpty()) FlowRow(Modifier.fillMaxWidth().padding(vertical = 3.dp),
+                                horizontalArrangement = Arrangement.spacedBy(5.dp),
+                                verticalArrangement = Arrangement.spacedBy(5.dp)) {
+                                imageItems.forEach { item ->
+                                    key(item.file) {
+                                        ClipboardImagePreview(item, expanded = false, modifier = Modifier.combinedClickable(
+                                            onClickLabel = "Paste image", onClick = { onPasteImage(item) },
+                                            onLongClickLabel = "Image options", onLongClick = { expandedImage = item }
+                                        ))
+                                    }
                                 }
                             }
                         }

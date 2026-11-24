@@ -3,6 +3,7 @@ package com.notokens.monolog.ime
 import android.content.Context
 import androidx.annotation.Keep
 import com.notokens.monolog.ai.KeyboardLanguage
+import com.notokens.monolog.data.LearnedTransition
 
 @Keep
 internal object NativeTyping {
@@ -110,6 +111,25 @@ internal object NativeTyping {
         if (available) rankNext(if (hinglish) 1 else 0, before.takeLast(128).lowercase(java.util.Locale.ROOT))
             ?.words().orEmpty() else emptyList()
 
+    fun personalContinuations(pairs: Map<String, LearnedTransition>): Map<String, List<String>> {
+        if (pairs.isEmpty()) return emptyMap()
+        if (available) {
+            val encoded = pairs.entries.joinToString("\n") { (pair, record) ->
+                pair.replace(' ', '\t') + "\t" + record.uses + "\t" + record.at
+            }
+            val ranked = try { rankPersonalTransitions(encoded) } catch (_: UnsatisfiedLinkError) { null }
+            if (ranked != null) return ranked.lineSequence().filter(String::isNotEmpty).associate { row ->
+                val words = row.split('\t')
+                words.first() to words.drop(1)
+            }
+        }
+        return pairs.entries.groupBy { it.key.substringBefore(' ') }.mapValues { (_, words) ->
+            words.sortedWith(compareByDescending<Map.Entry<String, LearnedTransition>> { it.value.uses }
+                .thenByDescending { it.value.at }.thenBy { it.key })
+                .take(4).map { it.key.substringAfter(' ') }
+        }
+    }
+
     fun voiceSamples(pcm: ByteArray): FloatArray =
         (if (available) decodePcm(pcm) else null) ?: FloatArray(pcm.size / 2) { pcmSample(pcm, it) }
 
@@ -128,6 +148,7 @@ internal object NativeTyping {
         ((pcm[i * 2].toInt() and 0xff) or (pcm[i * 2 + 1].toInt() shl 8)).toShort() / 32768f
 
     private external fun rankNext(mode: Int, context: String): String?
+    private external fun rankPersonalTransitions(records: String): String?
     private external fun decodePcm(pcm: ByteArray): FloatArray?
     private external fun measurePcm(pcm: ByteArray, count: Int): Float
 

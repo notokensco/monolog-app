@@ -1,5 +1,7 @@
 package com.notokens.monolog.ime.ui
 
+import com.notokens.monolog.ui.theme.PaperKeyText
+
 import android.content.res.AssetManager
 import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.background
@@ -13,7 +15,6 @@ import androidx.compose.foundation.lazy.grid.LazyVerticalGrid
 import androidx.compose.foundation.lazy.grid.items
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.CircleShape
-import androidx.compose.material3.FilterChip
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.runtime.*
@@ -171,7 +172,8 @@ internal fun EmojiShortcutStrip(recent: List<Emoji>, matches: List<Emoji>? = nul
 
 @Composable
 @OptIn(ExperimentalFoundationApi::class)
-internal fun EmojiPicker(height: Dp, recent: List<Emoji>, onPick: (Emoji) -> Unit) {
+internal fun EmojiPicker(height: Dp, recent: List<Emoji>, query: String, onSearch: () -> Unit,
+    onClearSearch: () -> Unit, onPick: (Emoji) -> Unit) {
     val context = LocalContext.current
     val view = LocalView.current
     val vibration = LocalVibrationHaptics.current
@@ -183,7 +185,12 @@ internal fun EmojiPicker(height: Dp, recent: List<Emoji>, onPick: (Emoji) -> Uni
     var toneFor by remember { mutableStateOf<Emoji?>(null) }
     val group = groups.firstOrNull { it.name == category }
     val tone = toneFor
+    val searchResults = remember(groups, query) {
+        if (query.isBlank()) emptyList() else groups.asSequence().flatMap { it.entries.asSequence() }
+            .filter { it.label.contains(query, ignoreCase = true) || it.text == query }.take(96).toList()
+    }
     val entries = when {
+        query.isNotBlank() -> searchResults
         tone != null -> listOf(tone) + group?.variants?.get(tone.label).orEmpty()
         category == "Recent" -> recent
         else -> group?.entries.orEmpty()
@@ -196,24 +203,37 @@ internal fun EmojiPicker(height: Dp, recent: List<Emoji>, onPick: (Emoji) -> Uni
                 Text(tone.label, style = MaterialTheme.typography.labelLarge)
             }
         } else {
-            LazyRow(
-                contentPadding = PaddingValues(horizontal = 6.dp),
-                horizontalArrangement = Arrangement.spacedBy(6.dp)
-            ) {
-                items(listOf("Recent") + groups.map { it.name }) { name ->
-                    FilterChip(selected = category == name, onClick = { category = name }, label = { Text(name) })
+            Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+                LazyRow(
+                    Modifier.weight(1f),
+                    contentPadding = PaddingValues(horizontal = 4.dp),
+                    horizontalArrangement = Arrangement.spacedBy(3.dp)
+                ) {
+                    items(listOf("Recent") + groups.map { it.name }) { name ->
+                        PickerTab(name, category == name && query.isBlank()) {
+                            onClearSearch()
+                            category = name
+                        }
+                    }
                 }
+                PickerSearch(query.ifBlank { "Search emoji" }, onSearch)
             }
         }
+        if (query.isNotBlank()) Text(query, Modifier.padding(start = 6.dp), color = PaperKeyText, fontSize = 11.sp)
         if (entries.isEmpty()) {
             Box(Modifier.fillMaxWidth().weight(1f), contentAlignment = Alignment.Center) {
-                Text(if (category == "Recent") "Recently used emoji appear here." else "Loading emoji…", style = MaterialTheme.typography.bodySmall)
+                Text(when {
+                    catalog == null -> "Loading emoji…"
+                    query.isNotBlank() -> "No matching emoji"
+                    category == "Recent" -> "Recently used emoji appear here."
+                    else -> "No emoji available"
+                }, style = MaterialTheme.typography.bodySmall)
             }
         } else {
-            key(category, tone?.text) {
+            key(category, tone?.text, query) {
                 LazyVerticalGrid(columns = GridCells.Adaptive(42.dp), modifier = Modifier.fillMaxWidth().weight(1f)) {
                     items(entries, key = { it.text }) { emoji ->
-                        val hasTones = tone == null && group?.variants?.containsKey(emoji.label) == true
+                        val hasTones = query.isBlank() && tone == null && group?.variants?.containsKey(emoji.label) == true
                         Box(
                             Modifier.height(44.dp).semantics { contentDescription = emoji.label }
                                 .combinedClickable(

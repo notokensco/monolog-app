@@ -4,19 +4,24 @@ import android.content.ClipDescription
 import android.content.ClipboardManager
 import android.content.Context
 import android.graphics.Bitmap
-import android.graphics.BitmapFactory
+import android.graphics.ImageDecoder
 import android.net.Uri
 import androidx.compose.foundation.Image
-import androidx.compose.foundation.layout.heightIn
+import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.Text
 import androidx.compose.runtime.*
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.asImageBitmap
+import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.dp
 import androidx.core.content.FileProvider
+import com.notokens.monolog.ui.theme.PaperPillBackground
 import java.io.File
+import kotlin.math.roundToInt
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
@@ -169,18 +174,33 @@ internal fun rememberClipboardImages(enabled: Boolean, privateMode: Boolean, vis
 }
 
 @Composable
-internal fun ClipboardImagePreview(clip: ClipboardImage, expanded: Boolean) {
-    val maximum = if (expanded) 640 else 128
+internal fun ClipboardImagePreview(clip: ClipboardImage, expanded: Boolean, modifier: Modifier = Modifier) {
+    val maximum = if (expanded) 640 else 288
     val bitmap by produceState<Bitmap?>(null, clip.file, maximum) {
         value = withContext(Dispatchers.IO) {
-            val bounds = BitmapFactory.Options().apply { inJustDecodeBounds = true }
-            BitmapFactory.decodeFile(clip.file.path, bounds)
-            var sample = 1
-            while (maxOf(bounds.outWidth, bounds.outHeight) / sample > maximum * 2) sample *= 2
-            BitmapFactory.decodeFile(clip.file.path, BitmapFactory.Options().apply { inSampleSize = sample })
+            try {
+                ImageDecoder.decodeBitmap(ImageDecoder.createSource(clip.file)) { decoder, info, _ ->
+                    val size = info.size
+                    val scale = (maximum.toFloat() / maxOf(size.width, size.height)).coerceAtMost(1f)
+                    decoder.setTargetSize((size.width * scale).roundToInt().coerceAtLeast(1),
+                        (size.height * scale).roundToInt().coerceAtLeast(1))
+                }
+            } catch (_: java.io.IOException) {
+                null
+            }
         }
     }
     val image = bitmap
-    if (image == null) Text("Image", Modifier.heightIn(min = 44.dp))
-    else Image(image.asImageBitmap(), "Copied image", Modifier.size(if (expanded) 146.dp else 62.dp))
+    val shape = RoundedCornerShape(9.dp)
+    if (image == null) {
+        Text("Image", Modifier.size(55.dp).clip(shape).background(PaperPillBackground).then(modifier))
+    } else {
+        val maxWidth = if (expanded) 220f else 94f
+        val maxHeight = if (expanded) 142f else 58f
+        val scale = minOf(maxWidth / image.width, maxHeight / image.height)
+        val width = (image.width * scale).coerceAtLeast(1f).dp
+        val height = (image.height * scale).coerceAtLeast(1f).dp
+        Image(image.asImageBitmap(), "Copied image",
+            Modifier.size(width, height).clip(shape).then(modifier), contentScale = ContentScale.Fit)
+    }
 }

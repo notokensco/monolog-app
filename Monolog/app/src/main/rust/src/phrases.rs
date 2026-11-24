@@ -111,9 +111,48 @@ pub(crate) fn next(mode: usize, text: &str) -> String {
     candidates.join("\n")
 }
 
+pub(crate) fn rank_personal_transitions(records: &str) -> String {
+    let mut by_predecessor = std::collections::BTreeMap::<_, Vec<_>>::new();
+    for line in records.lines().take(256) {
+        let mut fields = line.split('\t');
+        let (Some(previous), Some(next), Some(uses), Some(last_used)) =
+            (fields.next(), fields.next(), fields.next(), fields.next())
+        else {
+            continue;
+        };
+        let (Ok(uses), Ok(last_used)) = (uses.parse::<u8>(), last_used.parse::<u64>()) else {
+            continue;
+        };
+        if uses > 0 && !previous.is_empty() && !next.is_empty() {
+            by_predecessor.entry(previous).or_default().push((next, uses, last_used));
+        }
+    }
+    let mut ranked = String::new();
+    for (previous, mut candidates) in by_predecessor {
+        candidates.sort_unstable_by(|(a, a_uses, a_time), (b, b_uses, b_time)| {
+            b_uses.cmp(a_uses).then_with(|| b_time.cmp(a_time)).then_with(|| a.cmp(b))
+        });
+        ranked.push_str(previous);
+        for (next, _, _) in candidates.into_iter().take(4) {
+            ranked.push('\t');
+            ranked.push_str(next);
+        }
+        ranked.push('\n');
+    }
+    ranked
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn personal_transitions_prioritize_frequency_then_recency() {
+        let actual = rank_personal_transitions(
+            "call\tsam\t1\t40\ncall\tsamia\t3\t25\ncall\tsamira\t3\t30\nbook\tcab\t1\t50",
+        );
+        assert_eq!(actual, "book\tcab\ncall\tsamira\tsamia\tsam\n");
+    }
 
     #[test]
     fn ranks_english_and_code_switched_phrases() {

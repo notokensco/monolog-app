@@ -654,7 +654,8 @@ fun CompanionApp(
                         Screen(page.title, onBack = navigateBack) {
                             Column(verticalArrangement = Arrangement.spacedBy(14.dp)) {
                                 when (page) {
-                                    SettingsPage.ABOUT -> AboutSettings()
+                                    SettingsPage.ABOUT -> AboutSettings { nav.navigate(SettingsPage.USAGE.route) }
+                                    SettingsPage.USAGE -> KeyboardUsageSettings(settings)
                                     SettingsPage.ACCOUNT -> AccountBackupSettings()
                                     SettingsPage.MEMORY -> MemorySettings()
                                     SettingsPage.APPEARANCE -> {
@@ -784,7 +785,6 @@ fun CompanionApp(
                                         }
                                         KeyboardBehaviorSettings(settings)
                                         PersonalDictionarySettings(settings)
-                                        KeyboardUsageSettings(settings)
                                         val tapOpensShortcuts by settings.tapOpensShortcuts.collectAsState(false)
                                         val holdMs by settings.shortcutHoldMs.collectAsState(initial = 500)
                                         val shortcutHaptics by settings.shortcutHaptics.collectAsState(initial = true)
@@ -897,7 +897,8 @@ private enum class SettingsPage(val id: String, val title: String, val summary: 
     MODELS("models", "On-device AI", "Offline text model downloads", Glyph.BOLT),
     CAPTURE("capture", "Quick Capture", "Screenshot border color", Glyph.CAPTURE),
     PRIVACY("privacy", "Privacy & data", "Incognito, Web suggestions, and storage", Glyph.SHIELD),
-    ABOUT("about", "About Monolog", "NoTokens, policy, terms, and acknowledgments", Glyph.INFO);
+    ABOUT("about", "About Monolog", "NoTokens, usage, policy, and acknowledgments", Glyph.INFO),
+    USAGE("usage", "Usage statistics", "Keyboard activity and dictionary counts", Glyph.INFO);
 
     val route get() = "settings/$id"
 }

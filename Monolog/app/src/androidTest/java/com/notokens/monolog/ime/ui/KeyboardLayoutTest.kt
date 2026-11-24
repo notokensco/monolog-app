@@ -85,21 +85,22 @@ class KeyboardLayoutTest {
             }
             compose.runOnIdle { ai.refreshDraft() }
             compose.waitUntil(3_000) { ai.shortcutSuggestion != null }
-            compose.onNodeWithText("Set reminder").assertIsDisplayed()
-            compose.onNodeWithText("Rewrite").assertIsDisplayed()
+            val reminderPrompt = "Set a reminder to call Sam at 5 pm?"
+            compose.onNodeWithText(reminderPrompt).assertIsDisplayed()
+            compose.onNodeWithContentDescription("Rewrite").assertIsDisplayed()
             compose.onNodeWithText("Quick shortcuts").assertDoesNotExist()
             compose.onNodeWithContentDescription("Comma").performTouchInput { click() }
             compose.onNodeWithContentDescription("Open emoji picker").assertIsDisplayed()
             compose.onNodeWithContentDescription("Period, incognito off").performTouchInput { click() }
             compose.runOnIdle { assertEquals(listOf(",", "."), typed) }
             capture("keyboard-normal.png", context.getExternalFilesDir(null)!!)
-            compose.onNodeWithText("Set reminder").performClick()
+            compose.onNodeWithText(reminderPrompt).performClick()
             compose.onNodeWithText("New reminder").assertIsDisplayed()
             compose.onNodeWithText("call Sam at 5 pm").assertIsDisplayed()
             compose.onNodeWithContentDescription("Cancel draft").performClick()
             compose.onNodeWithContentDescription("Period, incognito off").performTouchInput { longClick() }
             compose.onNodeWithText("Incognito is on").assertIsDisplayed()
-            compose.onNodeWithText("Set reminder").assertDoesNotExist()
+            compose.onNodeWithText(reminderPrompt).assertDoesNotExist()
             compose.runOnIdle { assertEquals(listOf(",", "."), typed) }
             capture("keyboard-incognito.png", context.getExternalFilesDir(null)!!)
         } finally { scope.cancel() }

@@ -9,7 +9,7 @@ When Monolog is your active keyboard, it receives the text you type. Android may
 
 If Journal memory is on, Monolog can save summaries of eligible drafts, including text you have not sent. Use Settings → Journal memory to control this. Incognito and protected fields limit what Monolog saves and which features can use the current text. Your saved notes, media, reminders and personal dictionary stay on your device unless you choose to share, export or back up content. NoTokens does not use your typing, voice recordings or journal content to train models.
 
-You can turn keyboard word learning off in Settings. Monolog can keep individual words you use and their frequency on your device, plus aggregate counts such as key presses and accepted suggestions. Incognito and protected fields are excluded. Enabling the optional Keyboard profile in Account & backup includes your dictionary, counts and keyboard preferences in encrypted Google Drive backups.
+You can turn keyboard word learning off in Settings. Monolog can keep individual words you use, frequently used word pairs learned from your typing corrections, and aggregate counts such as key presses and accepted suggestions. Incognito and protected fields are excluded. Enabling the optional Keyboard profile in Account & backup includes your dictionary, learned word pairs, counts and keyboard preferences in encrypted Google Drive backups.
 
 Microphone, screenshots and clipboard
 
@@ -21,11 +21,13 @@ Clipboard history is optional and off by default. Clipboard history uses copied 
 
 Online services
 
-If you request web results, Monolog opens your submitted query in DuckDuckGo. If in-keyboard results are available, Monolog sends that query and the Safe Search setting through its configured DuckDuckGo search service. If you enable GIFs and stickers, opening their tabs loads KLIPY content and submitting a media search sends that query to the provider. Advertising may involve additional device, network and interaction information when it is enabled. See the KLIPY media and ads notice in About for details. If you open an action or search in another app, Monolog passes information needed for that action, such as a search term, phone number or email address. The receiving app handles that information under its own privacy practices.
+When you submit a web or image search in Ask AI, Monolog sends your query and Safe Search setting through its configured search service. The service name appears beside the Safe Search control. Preview images load from the search provider. Choosing More in browser opens your query in DuckDuckGo. If you enable GIFs and stickers, opening their tabs loads KLIPY content and submitting a media search sends that query to the provider. Advertising may involve additional device, network and interaction information when it is enabled. See the KLIPY media and ads notice in About for details. If you open an action or search in another app, Monolog passes information needed for that action, such as a search term, phone number or email address. The receiving app handles that information under its own privacy practices.
 
 If you enable local weather, Android supplies location information while Monolog is in use. Rounded coordinates are sent to MET Norway for the forecast and can be used by Android's place-name service. MET Norway logs the request, including the coordinates and IP address. You can disable weather or revoke location permission.
 
 Model and language-pack providers receive ordinary network information, including your IP address, when you download assets. Google's on-device image recognition, translation and summarization components process content on your device. They can contact Google for model or service updates. The current Android build disables the upload channel these components use for usage and performance diagnostics. Earlier test builds may send those diagnostics to Google.
+
+Keyboard translation is optional. Choosing Translate with Google can download the selected language packs. With the packs installed, translations run offline. Google does not receive the text entered for translation or the translated output. The source draft stays in the translation panel while you use it. The translated text goes into the active app's text field, where that app's privacy practices apply.
 
 Optional Google Drive backup
 

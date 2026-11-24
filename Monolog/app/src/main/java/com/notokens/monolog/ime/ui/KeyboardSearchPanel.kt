@@ -42,6 +42,7 @@ import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import com.notokens.monolog.ime.ImeAi
 import com.notokens.monolog.ai.WebLookup
+import com.notokens.monolog.ai.WebSearchKind
 import com.notokens.monolog.ui.GlassAccent
 import com.notokens.monolog.ui.Glyph
 import com.notokens.monolog.ui.IconControl
@@ -120,7 +121,7 @@ internal fun KeyboardSearchPanel(
                 Text(if (ai.web) "Web on" else "Web off")
             }
             TextButton({ ai.ask(query.text) }, enabled = query.text.isNotBlank() && !ai.busy) {
-                Text(if (!ai.web) "Ask" else if (WebLookup.searchConfigured) "Search & answer" else "Search DuckDuckGo")
+                Text(if (ai.web) "Search" else "Ask")
             }
         }
         if (ai.busy) com.notokens.monolog.ui.ProcessingDots()
@@ -129,24 +130,32 @@ internal fun KeyboardSearchPanel(
             Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
                 Column(Modifier.weight(1f)) {
                     Text("Safe Search", style = MaterialTheme.typography.labelLarge, color = PaperKeyText)
-                    Text(if (WebLookup.searchConfigured) "DuckDuckGo via Monolog’s search service"
-                        else "DuckDuckGo opens in your browser",
+                    Text(WebLookup.searchProvider?.label ?: "In-keyboard search unavailable",
                         style = MaterialTheme.typography.labelSmall, color = PaperKeySubText)
                 }
                 Switch(checked = ai.safeSearch, onCheckedChange = ai::setWebSafeSearch,
                     modifier = Modifier.semantics { contentDescription = "Safe Search" })
             }
-            if (WebLookup.searchConfigured) TextButton({ ai.searchWeb(query.text) }, enabled = query.text.isNotBlank()) {
-                Text("Open DuckDuckGo in browser")
+            Row(horizontalArrangement = Arrangement.spacedBy(4.dp)) {
+                if (WebLookup.searchProvider != null) {
+                    TextButton({ ai.ask(query.text, WebSearchKind.IMAGES) }, enabled = query.text.isNotBlank() && !ai.busy) {
+                        Text("Images")
+                    }
+                }
+                TextButton({ ai.searchWeb(query.text, ai.preview?.webKind ?: WebSearchKind.WEB) },
+                    enabled = query.text.isNotBlank()) { Text("More in browser") }
             }
         }
-        ai.preview?.let { AiResultCard(it, ai::apply) }
+        ai.preview?.let { result ->
+            if (result.webKind == null) AiResultCard(result, ai::apply)
+            else if (ai.web && ai.webAllowed) AskWebResults(result, ai::apply)
+        }
         if (ai.webAllowed && !ai.web && !ai.personal && ai.preview?.text == com.notokens.monolog.ai.AiText.UNKNOWN_ANSWER) {
             TextButton({
                 ai.toggleWeb()
                 ai.ask(query.text)
             }, enabled = query.text.isNotBlank() && !ai.busy) {
-                Text("Search DuckDuckGo")
+                Text("Search web")
             }
         }
         if (ai.personal && ai.personalAllowed) {
