@@ -62,6 +62,7 @@ import com.notokens.monolog.ime.KeyboardAction
 import com.notokens.monolog.ime.KeyboardLayer
 import com.notokens.monolog.ime.KeyboardState
 import com.notokens.monolog.ime.QwertyLayout
+import com.notokens.monolog.ime.SensitiveDraft
 import com.notokens.monolog.ime.ShiftState
 import com.notokens.monolog.ime.SwipePoint
 import com.notokens.monolog.ime.shortcuts.QuickShortcutsMenu
@@ -215,13 +216,40 @@ internal fun MonologKeyboardView(
     var mediaSearch by remember(layoutSession) { mutableStateOf(false) }
     var mediaQuery by remember(layoutSession, mediaTab) { mutableStateOf("") }
     var submittedMediaQuery by remember(layoutSession, mediaTab) { mutableStateOf("") }
-    val remoteMediaSearch = mediaTab == KeyboardMediaTab.GIFS || mediaTab == KeyboardMediaTab.STICKERS
-    val searchingMedia = mediaSearch && keyboardState.layer == KeyboardLayer.EMOJI &&
-        (!remoteMediaSearch || !privateMode && !editorContext.isRestrictedField)
-    fun finishMediaSearch() { submittedMediaQuery = mediaQuery.trim(); mediaSearch = false }
+    var mediaSearchLayer by remember(layoutSession) { mutableStateOf(KeyboardLayer.LETTERS) }
+    var mediaNumberPad by remember(layoutSession) { mutableStateOf(false) }
+    var mediaShift by remember(layoutSession) { mutableStateOf(ShiftState.OFF) }
     fun typeMediaQuery(value: String) { mediaQuery = (mediaQuery + value).take(80) }
     var userPinned by remember(layoutSession) { mutableStateOf(false) }
     var placementMenu by remember(layoutSession) { mutableStateOf(false) }
+    val mediaAllowed = !privateMode && !editorContext.isRestrictedField
+    val mediaWorkspace = keyboardState.layer == KeyboardLayer.EMOJI &&
+        !dashboardOpen && !placementMenu && panel == null && !isShortcutsOpen && !isVoxOpen && !isAiActive
+    val canSearchMedia = !mediaTab.online || mediaAllowed && mediaOptIn && KeyboardMedia.configured
+    val searchingMedia = mediaWorkspace && mediaSearch && canSearchMedia
+    val sensitiveMediaSearch = remember(customTriggers) { SensitiveDraft().apply { setWords(customTriggers) } }
+    fun showMediaResults(query: String) {
+        submittedMediaQuery = query.trim()
+        mediaQuery = submittedMediaQuery
+        mediaSearch = false
+    }
+    fun submitMediaSearch(query: String) {
+        if (!canSearchMedia) return
+        val term = query.trim()
+        if (mediaTab.online && term.isNotEmpty() && !sensitiveMediaSearch.matches(term)) {
+            val stickers = mediaTab == KeyboardMediaTab.STICKERS
+            keyboardScope.launch { settings.rememberMediaSearch(stickers, term) }
+        }
+        showMediaResults(term)
+    }
+    fun finishMediaSearch() = submitMediaSearch(mediaQuery)
+    fun editMediaSearch() {
+        mediaQuery = submittedMediaQuery
+        mediaSearchLayer = KeyboardLayer.LETTERS
+        mediaNumberPad = false
+        mediaShift = ShiftState.OFF
+        mediaSearch = true
+    }
     val tiles = visibleDashboardTiles(settings)
     val toolbarPins by settings.dashboardPins.collectAsState(emptyList())
     val pinnedTiles = toolbarPins.mapNotNull { id ->
@@ -249,6 +277,7 @@ internal fun MonologKeyboardView(
             }
             DashboardTile.GIFS, DashboardTile.STICKERS -> {
                 dashboardOpen = false
+                mediaSearch = false
                 mediaTab = if (tile == DashboardTile.GIFS) KeyboardMediaTab.GIFS else KeyboardMediaTab.STICKERS
                 if (keyboardState.layer != KeyboardLayer.EMOJI) onToggleEmoji()
             }
@@ -271,7 +300,7 @@ internal fun MonologKeyboardView(
             mediaQuery = ""
             submittedMediaQuery = ""
             closeTranslation()
-            if (mediaTab == KeyboardMediaTab.GIFS || mediaTab == KeyboardMediaTab.STICKERS) mediaTab = KeyboardMediaTab.EMOJI
+            if (mediaTab.online) mediaTab = KeyboardMediaTab.EMOJI
         }
     }
     LaunchedEffect(isShortcutsOpen, isVoxOpen, isAiActive) {
@@ -287,18 +316,40 @@ internal fun MonologKeyboardView(
 
     val activePlacement = if (isVoxOpen || isAiActive || isShortcutsOpen ||
         showTranslation && placement == KeyboardPlacement.FLOATING) KeyboardPlacement.FULL else placement
-    KeyboardPosition(activePlacement, preferredRowHeight * 4 + 24.dp, onFloatingBounds,
+    val mediaBrowsing = mediaWorkspace && !searchingMedia
+    // Leave room between the picker controls and the system keyboard controls.
+    val mediaBottomPadding = if (activePlacement == KeyboardPlacement.FLOATING) 6.dp else 20.dp
+    val mediaMaxHeight = if (mediaBrowsing) (if (mediaTab.online) 86.dp else 58.dp) + mediaBottomPadding + 3.dp else 0.dp
+    val mediaHeightLimit = configuration.screenHeightDp.dp * .63f - 49.dp
+    KeyboardPosition(activePlacement, preferredRowHeight * 4 + 24.dp + mediaMaxHeight, onFloatingBounds,
         onDock = { keyboardScope.launch { settings.setKeyboardPlacement(KeyboardPlacement.FULL) } }
     ) { positionModifier, scale, placementControls ->
     val rowHeight = (preferredRowHeight * scale).coerceAtLeast(30.dp)
-    val bodyHeight = rowHeight * 4 + 24.dp
+    val standardBodyHeight = rowHeight * 4 + 24.dp
+    val bodyHeight = standardBodyHeight + (mediaHeightLimit - standardBodyHeight).coerceIn(0.dp, mediaMaxHeight)
+    val displayedLayer = if (searchingMedia) mediaSearchLayer else keyboardState.layer
+    val displayedEditor = if (searchingMedia) editorContext.copy(action = KeyboardAction.SEARCH) else editorContext
+    val typeCharacter: (String) -> Unit = if (searchingMedia) ::typeMediaQuery else ({ userPinned = false; onCharTyped(it) })
+    val backspaceAction: () -> Unit = if (searchingMedia) ({
+        val end = Character.offsetByCodePoints(mediaQuery, mediaQuery.length, if (mediaQuery.isEmpty()) 0 else -1)
+        mediaQuery = mediaQuery.take(end)
+    }) else ({ userPinned = false; onBackspace() })
+    val spaceAction: () -> Unit = if (searchingMedia) ({ typeMediaQuery(" ") }) else ({ userPinned = false; onSpace() })
+    val enterAction: () -> Unit = if (searchingMedia) ::finishMediaSearch else ({ userPinned = false; onAction() })
+    val symbolAction: () -> Unit = if (searchingMedia) ({
+        mediaSearchLayer = if (mediaSearchLayer == KeyboardLayer.LETTERS) KeyboardLayer.SYMBOLS else KeyboardLayer.LETTERS
+    }) else onToggleSymbols
     KeyPreviewHost(!dashboardOpen && !isVoxOpen && !placementMenu && panel != KeyboardPanel.EDIT_TEXT) {
     androidx.compose.runtime.CompositionLocalProvider(
         LocalKeyAppearance provides KeyAppearance(keyBorders, keyPopups, keyPopupMs, vibrationHaptics, keyLongPressMs, swipeTrail, compactKeys),
         LocalVibrationHaptics provides vibrationHaptics,
-        LocalCursorKeys provides CursorKeys(cursorDrag.takeIf { cursorOnSpace }, cursorActive, cursorCharacter),
+        LocalCursorKeys provides CursorKeys(cursorDrag.takeIf { cursorOnSpace && !searchingMedia }, cursorActive && !searchingMedia, cursorCharacter),
         LocalActiveKeyboardLanguage provides language,
-        LocalKeyboardLayoutMenu provides { placementMenu = !placementMenu; panel = null; dashboardOpen = false },
+        LocalKeyboardLayoutMenu provides (if (searchingMedia) null else ({
+            placementMenu = !placementMenu
+            panel = null
+            dashboardOpen = false
+        })),
         LocalSplitKeys provides (activePlacement == KeyboardPlacement.SPLIT)
     ) {
     Column(positionModifier.then(modifier).fillMaxWidth()
@@ -338,12 +389,31 @@ internal fun MonologKeyboardView(
                 )
             }
 
-            if (aiAllowed && !isShortcutsOpen && searchQuery == null) {
+            if (aiAllowed && !isShortcutsOpen && searchQuery == null && !mediaWorkspace) {
                 KeyboardAiControls(ai, language)
             }
 
             BoxWithConstraints(Modifier.fillMaxWidth()) {
-                KeyboardHeader(
+                if (mediaWorkspace) {
+                    val stickers = mediaTab == KeyboardMediaTab.STICKERS
+                    val recentSearches = if (mediaTab.online && canSearchMedia) androidx.compose.runtime.key(mediaTab) {
+                        val history = remember(settings) { settings.recentMediaSearches(stickers) }
+                        history.collectAsState(emptyList()).value
+                    } else emptyList()
+                    KeyboardMediaSearchBar(
+                        tab = mediaTab,
+                        query = if (searchingMedia) mediaQuery else submittedMediaQuery,
+                        editing = searchingMedia,
+                        enabled = canSearchMedia,
+                        recent = recentSearches,
+                        onSearch = ::editMediaSearch,
+                        onClear = { if (searchingMedia) mediaQuery = "" else showMediaResults("") },
+                        onCancel = { showMediaResults(submittedMediaQuery) },
+                        onSubmit = ::finishMediaSearch,
+                        onRepeatSearch = ::submitMediaSearch,
+                        onClearHistory = { keyboardScope.launch { settings.clearRecentMediaSearches(stickers) } }
+                    )
+                } else KeyboardHeader(
                     editorContext = editorContext,
                     onToggleShortcuts = onToggleShortcuts,
                     onCaptureContext = onCaptureContext,
@@ -371,23 +441,8 @@ internal fun MonologKeyboardView(
                             val idle = !ai.inlineBusy && ai.toolbar == null && !ai.rewriteOpen &&
                                 localActions.isEmpty() && !predictionsVisible && !mediaVisible && match?.entries.isNullOrEmpty()
                             when {
-                                systemAutofillSuggestions.isNotEmpty() && !searchingMedia ->
+                                systemAutofillSuggestions.isNotEmpty() ->
                                     SystemAutofillStrip(systemAutofillSuggestions)
-                                searchingMedia -> Row(verticalAlignment = Alignment.CenterVertically) {
-                                    Text(mediaQuery.ifEmpty {
-                                        when (mediaTab) {
-                                            KeyboardMediaTab.EMOJI -> "Search emoji"
-                                            KeyboardMediaTab.EMOTICONS -> "Search emoticons"
-                                            else -> "Search KLIPY"
-                                        }
-                                    }, Modifier.weight(1f),
-                                        color = PaperKeyText, maxLines = 1)
-                                    IconControl(Glyph.SEARCH, "Submit media search", ::finishMediaSearch)
-                                    IconControl(Glyph.CLOSE, "Cancel media search", {
-                                        mediaQuery = submittedMediaQuery
-                                        mediaSearch = false
-                                    })
-                                }
                                 userPinned || (idle && shortcode == null && pinnedTiles.isNotEmpty()) ->
                                     PinnedKeyboardWidgets(pinnedTiles, if (userPinned) ({ userPinned = false }) else null, ::activate)
                                 aiAllowed && ai.dictionaryActionsAllowed &&
@@ -484,76 +539,78 @@ internal fun MonologKeyboardView(
                     } else Column(
                         modifier = Modifier
                             .fillMaxSize()
-                            .padding(start = 3.dp, end = 3.dp, top = 4.dp, bottom = 16.dp)
+                            .padding(start = 3.dp, end = 3.dp, top = 4.dp,
+                                bottom = if (mediaBrowsing) mediaBottomPadding else 16.dp)
                     ) {
-                        when (if (searchingMedia) KeyboardLayer.LETTERS else keyboardState.layer) {
+                        when (displayedLayer) {
                             KeyboardLayer.LETTERS -> LettersLayout(
                                 rowHeight = rowHeight,
-                                shiftState = keyboardState.shiftState,
-                                editorContext = editorContext,
+                                shiftState = if (searchingMedia) mediaShift else keyboardState.shiftState,
+                                editorContext = displayedEditor,
                                 language = language,
-                                onCharTyped = if (searchingMedia) ::typeMediaQuery else ({ userPinned = false; onCharTyped(it) }),
-                                onLetterTyped = if (searchingMedia) ::typeMediaQuery else ({ userPinned = false; onLetterTyped(it) }),
+                                onCharTyped = typeCharacter,
+                                onLetterTyped = if (searchingMedia) ({ letter ->
+                                    typeMediaQuery(if (mediaShift.isUppercase) letter.uppercase() else letter.lowercase())
+                                    if (mediaShift == ShiftState.ONCE) mediaShift = ShiftState.OFF
+                                }) else ({ userPinned = false; onLetterTyped(it) }),
                                 swipeEnabled = !searchingMedia && swipeAllowed && !showTranslation &&
                                     language.supportsLatinSwipe && (!isShortcutsOpen || shortcutDraft.isEditing),
                                 longPressCharacters = longPressCharacters,
                                 onSwipe = { userPinned = false; onSwipe(it) },
-                                onShiftClick = onShiftClick,
-                                onCapsLock = onCapsLock,
-                                onBackspace = if (searchingMedia) ({ mediaQuery = mediaQuery.dropLast(1) }) else ({ userPinned = false; onBackspace() }),
-                                onToggleSymbols = if (searchingMedia) ::finishMediaSearch else onToggleSymbols,
+                                onShiftClick = if (searchingMedia) ({
+                                    mediaShift = if (mediaShift == ShiftState.OFF) ShiftState.ONCE else ShiftState.OFF
+                                }) else onShiftClick,
+                                onCapsLock = if (searchingMedia) ({ mediaShift = ShiftState.CAPS_LOCK }) else onCapsLock,
+                                onBackspace = backspaceAction,
+                                onToggleSymbols = symbolAction,
                                 onToggleEmoji = if (searchingMedia) ::finishMediaSearch else onToggleEmoji,
-                                onSpace = if (searchingMedia) ({ typeMediaQuery(" ") }) else ({ userPinned = false; onSpace() }),
+                                onSpace = spaceAction,
                                 onHoldSpace = if (searchingMedia) ({}) else onHoldSpace,
                                 spacebarVox = swapVoxAndAi,
                                 isAiActive = isAiActive,
                                 onToggleIncognito = onToggleIncognito,
-                                onAction = if (searchingMedia) ::finishMediaSearch else ({ userPinned = false; onAction() })
+                                onAction = enterAction
                             )
 
                             KeyboardLayer.SYMBOLS, KeyboardLayer.MORE_SYMBOLS -> SymbolsLayout(
-                                moreSymbols = keyboardState.layer == KeyboardLayer.MORE_SYMBOLS,
+                                moreSymbols = displayedLayer == KeyboardLayer.MORE_SYMBOLS,
                                 rowHeight = rowHeight,
-                                numberPadOpen = numberPadOpen,
-                                onNumberPad = { numberPadOpen = !numberPadOpen },
+                                numberPadOpen = if (searchingMedia) mediaNumberPad else numberPadOpen,
+                                onNumberPad = { if (searchingMedia) mediaNumberPad = !mediaNumberPad else numberPadOpen = !numberPadOpen },
                                 longPressCharacters = longPressCharacters,
-                                editorContext = editorContext,
-                                onCharTyped = { userPinned = false; onCharTyped(it) },
-                                onToggleMoreSymbols = onToggleMoreSymbols,
-                                onBackspace = { userPinned = false; onBackspace() },
-                                onToggleSymbols = onToggleSymbols,
-                                onToggleEmoji = onToggleEmoji,
-                                onSpace = { userPinned = false; onSpace() },
-                                onHoldSpace = onHoldSpace,
+                                editorContext = displayedEditor,
+                                onCharTyped = typeCharacter,
+                                onToggleMoreSymbols = if (searchingMedia) ({
+                                    mediaSearchLayer = if (displayedLayer == KeyboardLayer.SYMBOLS) {
+                                        KeyboardLayer.MORE_SYMBOLS
+                                    } else KeyboardLayer.SYMBOLS
+                                }) else onToggleMoreSymbols,
+                                onBackspace = backspaceAction,
+                                onToggleSymbols = symbolAction,
+                                onToggleEmoji = if (searchingMedia) ::finishMediaSearch else onToggleEmoji,
+                                onSpace = spaceAction,
+                                onHoldSpace = if (searchingMedia) ({}) else onHoldSpace,
                                 spacebarVox = swapVoxAndAi,
                                 isAiActive = isAiActive,
                                 onToggleIncognito = onToggleIncognito,
-                                onAction = { userPinned = false; onAction() }
+                                onAction = enterAction
                             )
 
-                            KeyboardLayer.EMOJI -> EmojiLayout(
-                                mediaTab = mediaTab,
-                                onMediaTab = { mediaTab = it },
-                                mediaAllowed = !privateMode && !editorContext.isRestrictedField,
+                            KeyboardLayer.EMOJI -> KeyboardMediaPicker(
+                                tab = mediaTab,
+                                onTab = { mediaTab = it; mediaSearch = false },
+                                mediaAllowed = mediaAllowed,
                                 mediaOptIn = mediaOptIn,
-                                mediaQuery = submittedMediaQuery,
-                                onMediaSearch = { mediaSearch = true },
-                                onClearMediaSearch = { mediaQuery = ""; submittedMediaQuery = "" },
-                                onEnableMedia = { keyboardScope.launch { settings.setOnlineMedia(true) } },
+                                query = submittedMediaQuery,
+                                onClearRecentEmoji = if (privateMode) null else ({ keyboardScope.launch { settings.clearRecentEmoji() } }),
+                                onSearch = ::showMediaResults,
+                                onEnable = { keyboardScope.launch { settings.setOnlineMedia(true) } },
                                 onMedia = onPasteMedia,
-                                rowHeight = rowHeight,
-                                recent = if (editorContext.isIncognito) emptyList() else recentEmoji,
-                                onEmojiPicked = ::pickEmoji,
-                                editorContext = editorContext,
-                                onCharTyped = { userPinned = false; onCharTyped(it) },
-                                onBackspace = { userPinned = false; onBackspace() },
-                                onToggleLetters = onToggleEmoji,
-                                onSpace = { userPinned = false; onSpace() },
-                                onHoldSpace = onHoldSpace,
-                                spacebarVox = swapVoxAndAi,
-                                isAiActive = isAiActive,
-                                onToggleIncognito = onToggleIncognito,
-                                onAction = { userPinned = false; onAction() }
+                                recent = if (privateMode) emptyList() else recentEmoji,
+                                onEmoji = ::pickEmoji,
+                                onText = typeCharacter,
+                                onBackspace = backspaceAction,
+                                onLetters = { mediaSearch = false; onToggleEmoji() }
                             )
                         }
                     }
@@ -917,50 +974,6 @@ private fun SymbolKey(modifier: Modifier, symbol: String, canHold: Boolean, onTy
 }
 
 @Composable
-private fun EmojiLayout(
-    mediaTab: KeyboardMediaTab,
-    onMediaTab: (KeyboardMediaTab) -> Unit,
-    mediaAllowed: Boolean,
-    mediaOptIn: Boolean,
-    mediaQuery: String,
-    onMediaSearch: () -> Unit,
-    onClearMediaSearch: () -> Unit,
-    onEnableMedia: () -> Unit,
-    onMedia: (KeyboardMedia.Item) -> Boolean,
-    rowHeight: Dp,
-    recent: List<Emoji>,
-    onEmojiPicked: (Emoji) -> Unit,
-    editorContext: EditorContext,
-    onCharTyped: (String) -> Unit,
-    onBackspace: () -> Unit,
-    onToggleLetters: () -> Unit,
-    onSpace: () -> Unit,
-    onHoldSpace: () -> Unit,
-    spacebarVox: Boolean,
-    isAiActive: Boolean,
-    onToggleIncognito: () -> Unit,
-    onAction: () -> Unit
-) {
-    KeyboardMediaPicker(mediaTab, onMediaTab, rowHeight * 3, recent, mediaAllowed, mediaOptIn,
-        mediaQuery, onMediaSearch, onClearMediaSearch, onEnableMedia, onEmojiPicked, onCharTyped, onMedia)
-    BottomRow(
-        rowHeight = rowHeight,
-        modeLabel = "ABC",
-        editorContext = editorContext,
-        onModeClick = onToggleLetters,
-        onEmojiClick = onToggleLetters,
-        onSpace = onSpace,
-        onHoldSpace = onHoldSpace,
-        spacebarVox = spacebarVox,
-        isAiActive = isAiActive,
-        onToggleIncognito = onToggleIncognito,
-        onAction = onAction,
-        onCharTyped = onCharTyped,
-        onEmojiBackspace = onBackspace
-    )
-}
-
-@Composable
 private fun BottomRow(
     rowHeight: Dp,
     modeLabel: String,
@@ -974,7 +987,6 @@ private fun BottomRow(
     onToggleIncognito: () -> Unit,
     onAction: () -> Unit,
     onCharTyped: (String) -> Unit,
-    onEmojiBackspace: (() -> Unit)? = null,
     onNumberPad: (() -> Unit)? = null
 ) {
     val language = LocalActiveKeyboardLanguage.current
@@ -997,7 +1009,7 @@ private fun BottomRow(
             Modifier.weight(1.15f),
             label = "Comma",
             previewText = ",",
-            longClickLabel = if (onEmojiBackspace == null) "Open emoji picker" else "Return to letters",
+            longClickLabel = "Open emoji picker",
             onLongClick = onEmojiClick,
             onClick = { onCharTyped(",") }
         ) {
@@ -1018,11 +1030,7 @@ private fun BottomRow(
         }
         if (split) Spacer(Modifier.width(13.dp))
         KeyButton(
-            Modifier.weight(when {
-                onNumberPad != null -> 3.9f
-                onEmojiBackspace != null -> 4f
-                else -> 4.9f
-            }),
+            Modifier.weight(if (onNumberPad != null) 3.9f else 4.9f),
             isPill = true,
             isActive = isAiActive,
             glow = false,
@@ -1061,9 +1069,6 @@ private fun BottomRow(
                 MonologIcon(Glyph.PRIVACY, Modifier.size(18.dp))
                 androidx.compose.material3.Text(".", color = PaperKeyText, fontSize = 17.sp, lineHeight = 16.sp)
             }
-        }
-        if (onEmojiBackspace != null) {
-            KeyButton(Modifier.weight(.9f), glyph = Glyph.BACKSPACE, label = "Backspace", onClick = onEmojiBackspace)
         }
         KeyButton(
             Modifier.weight(1.4f),

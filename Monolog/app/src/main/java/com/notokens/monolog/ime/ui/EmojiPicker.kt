@@ -6,20 +6,22 @@ import android.content.res.AssetManager
 import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.background
 import androidx.compose.foundation.combinedClickable
+import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.layout.*
-import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.grid.GridCells
 import androidx.compose.foundation.lazy.grid.LazyVerticalGrid
 import androidx.compose.foundation.lazy.grid.items
-import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.DropdownMenu
+import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.Text
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalView
 import androidx.compose.ui.semantics.clearAndSetSemantics
@@ -28,9 +30,9 @@ import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.font.Font
 import androidx.compose.ui.text.font.FontFamily
-import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import androidx.compose.ui.window.PopupProperties
 import com.notokens.monolog.R
 import com.notokens.monolog.ui.Glyph
 import com.notokens.monolog.ui.IconControl
@@ -172,8 +174,9 @@ internal fun EmojiShortcutStrip(recent: List<Emoji>, matches: List<Emoji>? = nul
 
 @Composable
 @OptIn(ExperimentalFoundationApi::class)
-internal fun EmojiPicker(height: Dp, recent: List<Emoji>, query: String, onSearch: () -> Unit,
-    onClearSearch: () -> Unit, onPick: (Emoji) -> Unit) {
+internal fun EmojiPicker(
+    recent: List<Emoji>, query: String, onClearSearch: () -> Unit, onClearRecents: (() -> Unit)?, onPick: (Emoji) -> Unit
+) {
     val context = LocalContext.current
     val view = LocalView.current
     val vibration = LocalVibrationHaptics.current
@@ -181,8 +184,15 @@ internal fun EmojiPicker(height: Dp, recent: List<Emoji>, query: String, onSearc
         value = withContext(Dispatchers.IO) { EmojiCatalog.read(context.assets) }
     }
     val groups = catalog.orEmpty()
-    var category by remember { mutableStateOf("Faces") }
+    var category by remember { mutableStateOf(if (recent.isEmpty()) "Faces" else "Recent") }
     var toneFor by remember { mutableStateOf<Emoji?>(null) }
+    var showOptions by remember { mutableStateOf(false) }
+    var toneOption by remember { mutableStateOf<Emoji?>(null) }
+    fun openOptions(emoji: Emoji?) {
+        triggerHapticFeedback(view, isLong = true, enabled = vibration)
+        toneOption = emoji
+        showOptions = true
+    }
     val group = groups.firstOrNull { it.name == category }
     val tone = toneFor
     val searchResults = remember(groups, query) {
@@ -196,68 +206,80 @@ internal fun EmojiPicker(height: Dp, recent: List<Emoji>, query: String, onSearc
         else -> group?.entries.orEmpty()
     }
 
-    Column(Modifier.fillMaxWidth().height(height)) {
-        if (tone != null) {
-            Row(verticalAlignment = Alignment.CenterVertically) {
-                IconControl(Glyph.BACK, "Back to emoji categories", { toneFor = null })
-                Text(tone.label, style = MaterialTheme.typography.labelLarge)
-            }
-        } else {
-            Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
-                LazyRow(
-                    Modifier.weight(1f),
-                    contentPadding = PaddingValues(horizontal = 4.dp),
-                    horizontalArrangement = Arrangement.spacedBy(3.dp)
-                ) {
-                    items(listOf("Recent") + groups.map { it.name }) { name ->
-                        PickerTab(name, category == name && query.isBlank()) {
-                            onClearSearch()
-                            category = name
-                        }
-                    }
+    val emptySpace = if (onClearRecents != null) Modifier.pointerInput(vibration) {
+        detectTapGestures(onLongPress = { openOptions(null) })
+    } else Modifier
+    Box(Modifier.fillMaxSize().then(emptySpace)) {
+        Column(Modifier.fillMaxSize()) {
+            if (entries.isEmpty()) {
+                Box(Modifier.fillMaxWidth().weight(1f), contentAlignment = Alignment.Center) {
+                    Text(when {
+                        catalog == null -> "Loading emoji…"
+                        query.isNotBlank() -> "No matching emoji"
+                        category == "Recent" -> "Recently used emoji appear here."
+                        else -> "No emoji available"
+                    }, style = MaterialTheme.typography.bodySmall)
                 }
-                PickerSearch(query.ifBlank { "Search emoji" }, onSearch)
-            }
-        }
-        if (query.isNotBlank()) Text(query, Modifier.padding(start = 6.dp), color = PaperKeyText, fontSize = 11.sp)
-        if (entries.isEmpty()) {
-            Box(Modifier.fillMaxWidth().weight(1f), contentAlignment = Alignment.Center) {
-                Text(when {
-                    catalog == null -> "Loading emoji…"
-                    query.isNotBlank() -> "No matching emoji"
-                    category == "Recent" -> "Recently used emoji appear here."
-                    else -> "No emoji available"
-                }, style = MaterialTheme.typography.bodySmall)
-            }
-        } else {
-            key(category, tone?.text, query) {
-                LazyVerticalGrid(columns = GridCells.Adaptive(42.dp), modifier = Modifier.fillMaxWidth().weight(1f)) {
-                    items(entries, key = { it.text }) { emoji ->
-                        val hasTones = query.isBlank() && tone == null && group?.variants?.containsKey(emoji.label) == true
-                        Box(
-                            Modifier.height(44.dp).semantics { contentDescription = emoji.label }
-                                .combinedClickable(
-                                    role = Role.Button,
-                                    onLongClickLabel = "Choose skin tone",
-                                    onLongClick = if (hasTones) ({ toneFor = emoji }) else null
-                                ) {
-                                    triggerHapticFeedback(view, enabled = vibration)
-                                    onPick(emoji)
-                                    toneFor = null
-                                },
-                            contentAlignment = Alignment.Center
-                        ) {
-                            Text(emoji.text, Modifier.clearAndSetSemantics {}, fontFamily = EmojiFont, fontSize = 23.sp)
-                            if (hasTones) {
-                                Box(
-                                    Modifier.align(Alignment.BottomEnd).padding(6.dp).size(3.dp)
-                                        .background(MaterialTheme.colorScheme.primary, CircleShape)
-                                )
+            } else {
+                key(category, tone?.text, query) {
+                    LazyVerticalGrid(columns = GridCells.Adaptive(42.dp), modifier = Modifier.fillMaxWidth().weight(1f),
+                        contentPadding = PaddingValues(horizontal = 5.dp, vertical = 3.dp)) {
+                        items(entries, key = { it.text }) { emoji ->
+                            val hasTones = query.isBlank() && tone == null && group?.variants?.containsKey(emoji.label) == true
+                            Box(
+                                Modifier.height(44.dp).semantics { contentDescription = emoji.label }
+                                    .combinedClickable(
+                                        role = Role.Button,
+                                        onLongClickLabel = if (onClearRecents != null) "Emoji options" else "Choose skin tone",
+                                        onLongClick = when {
+                                            onClearRecents != null -> ({ openOptions(emoji.takeIf { hasTones }) })
+                                            hasTones -> ({ toneFor = emoji })
+                                            else -> null
+                                        }
+                                    ) {
+                                        triggerHapticFeedback(view, enabled = vibration)
+                                        onPick(emoji)
+                                        toneFor = null
+                                    },
+                                contentAlignment = Alignment.Center
+                            ) {
+                                Text(emoji.text, Modifier.clearAndSetSemantics {}, fontFamily = EmojiFont, fontSize = 23.sp)
+                                if (hasTones) {
+                                    Box(
+                                        Modifier.align(Alignment.BottomEnd).padding(6.dp).size(3.dp)
+                                            .background(MaterialTheme.colorScheme.primary, CircleShape)
+                                    )
+                                }
                             }
                         }
                     }
                 }
             }
+            if (tone != null) {
+                Row(Modifier.fillMaxWidth().height(38.dp), verticalAlignment = Alignment.CenterVertically) {
+                    IconControl(Glyph.BACK, "Back to emoji categories", { toneFor = null }, Modifier.width(42.dp))
+                    Text(tone.label, style = MaterialTheme.typography.labelMedium, color = PaperKeyText)
+                }
+            } else {
+                MediaCategoryRow(listOf("Recent") + groups.map { it.name }, category.takeIf { query.isBlank() },
+                    Modifier.fillMaxWidth()) { name ->
+                    onClearSearch()
+                    category = name
+                }
+            }
+        }
+        DropdownMenu(showOptions && onClearRecents != null, { showOptions = false },
+            properties = PopupProperties(focusable = false)) {
+            toneOption?.let { emoji ->
+                DropdownMenuItem(text = { Text("Choose skin tone") }, onClick = {
+                    toneFor = emoji
+                    showOptions = false
+                })
+            }
+            DropdownMenuItem(text = { Text("Clear recent emoji") }, enabled = recent.isNotEmpty(), onClick = {
+                onClearRecents?.invoke()
+                showOptions = false
+            })
         }
     }
 }

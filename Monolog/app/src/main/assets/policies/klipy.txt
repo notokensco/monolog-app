@@ -5,6 +5,9 @@ catalog items when you open either tab and sends media searches you choose to su
 KLIPY and its media delivery providers may receive those search terms, your network
 address, and a locale. You can turn the feature off under Keyboard & shortcuts.
 
+The GIF and sticker search bars keep separate, encrypted lists of your last ten
+submitted searches on this device. You can clear either list from its search bar.
+
 The KLIPY catalog may contain sponsored items. Any future sponsored items shown in
 Monolog will be labeled. When advertising is active, KLIPY and its advertising
 partners may process device, network, and interaction information to display and

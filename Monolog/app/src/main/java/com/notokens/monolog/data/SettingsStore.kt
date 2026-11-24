@@ -174,6 +174,9 @@ class SettingsStore(private val context: Context) {
                 .take(36).joinToString("\n")
         }
     }
+    suspend fun clearRecentEmoji() {
+        context.monologSettings.edit { it.remove(recentEmojiKey) }
+    }
 
     private val cursorOnSpaceKey = booleanPreferencesKey("keyboard_cursor_on_space")
     val cursorOnSpace = preferences.map { it[cursorOnSpaceKey] ?: false }.distinctUntilChanged()
@@ -187,6 +190,36 @@ class SettingsStore(private val context: Context) {
     private val onlineMediaKey = booleanPreferencesKey("keyboard_online_media")
     val onlineMedia = preferences.map { it[onlineMediaKey] ?: false }.distinctUntilChanged()
     suspend fun setOnlineMedia(enabled: Boolean) { context.monologSettings.edit { it[onlineMediaKey] = enabled } }
+    private val recentGifSearchKey = stringPreferencesKey("keyboard_recent_gif_searches")
+    private val recentStickerSearchKey = stringPreferencesKey("keyboard_recent_sticker_searches")
+
+    private fun mediaSearchKey(stickers: Boolean) = if (stickers) recentStickerSearchKey else recentGifSearchKey
+
+    fun recentMediaSearches(stickers: Boolean) = preferences.map { it[mediaSearchKey(stickers)] }
+        .distinctUntilChanged().map(::decodeMediaSearches).flowOn(Dispatchers.Default)
+
+    suspend fun rememberMediaSearch(stickers: Boolean, search: String) {
+        val query = search.trim().take(80)
+        if (query.isBlank()) return
+        val key = mediaSearchKey(stickers)
+        context.monologSettings.edit { values ->
+            if (values[onlineMediaKey] != true) return@edit
+            val recent = decodeMediaSearches(values[key]).filterNot { it.equals(query, ignoreCase = true) }
+            values[key] = JournalCipher.seal(org.json.JSONArray((listOf(query) + recent).take(10)).toString(),
+                "keyboard-media-history")
+        }
+    }
+
+    suspend fun clearRecentMediaSearches(stickers: Boolean) {
+        context.monologSettings.edit { it.remove(mediaSearchKey(stickers)) }
+    }
+
+    private fun decodeMediaSearches(value: String?): List<String> = if (value == null) emptyList() else runCatching {
+        val history = org.json.JSONArray(JournalCipher.open(value, "keyboard-media-history"))
+        (0 until minOf(history.length(), 10)).mapNotNull {
+            (history.opt(it) as? String)?.takeIf { search -> search.isNotBlank() && search.length <= 80 }
+        }
+    }.getOrDefault(emptyList())
 
     private val compactKeysKey = booleanPreferencesKey("keyboard_compact_keys")
     private val placementKey = stringPreferencesKey("keyboard_placement")
