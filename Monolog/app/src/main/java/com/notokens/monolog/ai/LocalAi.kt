@@ -82,7 +82,7 @@ internal object LocalAi {
         }
     }
 
-    suspend fun request(context: Context, prompt: String, maxTokens: Int): GemmaResult {
+    suspend fun request(context: Context, prompt: String, maxTokens: Int, expectedModel: TextModel? = null): GemmaResult {
         val start = SystemClock.elapsedRealtime()
         val result = if (ModelStore.get(context).state.value !is ModelState.Ready) GemmaResult.Missing else {
             withTimeoutOrNull(30_000L) {
@@ -90,6 +90,7 @@ internal object LocalAi {
                     engineLock.withLock {
                         val store = ModelStore.get(context)
                         val selection = store.active.value ?: return@withLock GemmaResult.Missing
+                        if (expectedModel != null && selection != expectedModel) return@withLock GemmaResult.Missing
                         if (store.state.value !is ModelState.Ready) return@withLock GemmaResult.Missing
                         if (selection.isGguf) {
                             return@withLock try {

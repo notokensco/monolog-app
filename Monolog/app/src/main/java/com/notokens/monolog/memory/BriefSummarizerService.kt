@@ -33,12 +33,12 @@ private const val RESULT = 2
 private const val BODY = "body"
 internal const val BRIEF_INPUT_BYTES = 1_200
 
-private fun hasBriefHeadroom(context: Context): Boolean {
+internal fun hasBriefHeadroom(context: Context, workingBytes: Long = 448L * 1024 * 1024): Boolean {
     val manager = context.getSystemService(ActivityManager::class.java) ?: return false
     if (manager.isLowRamDevice) return false
     val memory = ActivityManager.MemoryInfo().also(manager::getMemoryInfo)
     // Leave the system's low-memory reserve in addition to the model's working memory.
-    return !memory.lowMemory && memory.availMem - memory.threshold >= 448L * 1024 * 1024
+    return !memory.lowMemory && memory.availMem - memory.threshold >= workingBytes
 }
 
 /** Runs MediaPipe in the private :journal_brief process so native failures cannot close the journal. */

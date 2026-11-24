@@ -7,17 +7,29 @@ import androidx.compose.foundation.rememberScrollState
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.runtime.saveable.rememberSaveable
+import androidx.compose.runtime.saveable.rememberSaveableStateHolder
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.semantics
+import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
+import androidx.lifecycle.Lifecycle
+import androidx.lifecycle.compose.LocalLifecycleOwner
+import androidx.lifecycle.repeatOnLifecycle
 import com.notokens.monolog.data.MemoryRecord
 import com.notokens.monolog.data.MonologDatabase
+import com.notokens.monolog.ai.ModelState
+import com.notokens.monolog.ai.ModelStore
 import com.notokens.monolog.memory.*
 import com.notokens.monolog.ui.theme.PaperKeyText
 import com.notokens.monolog.ui.theme.PaperKeySubText
 import java.time.LocalDate
+import java.time.YearMonth
+import java.time.format.DateTimeFormatter
+import java.time.format.FormatStyle
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
@@ -83,9 +95,11 @@ internal fun MemoryJournal(
     onOpenNote: (Long) -> Unit, onOpenReminder: (Long) -> Unit, onNewNote: () -> Unit,
     visibleNotes: List<com.notokens.monolog.data.Note>, photos: Map<Long, List<com.notokens.monolog.data.NotePhotoRef>>,
     query: String, onClearQuery: () -> Unit, onFocusSearch: () -> Unit,
-    askRequest: Int, onAnswering: (Boolean) -> Unit, initialDay: String? = null
+    askRequest: Int, onAnswering: (Boolean) -> Unit, onDayOpened: () -> Unit,
+    initialDay: String? = null
 ) {
     val context = LocalContext.current
+    val lifecycle = LocalLifecycleOwner.current.lifecycle
     val db = remember { MonologDatabase.get(context) }
     val repository = remember { MemoryRepository(context) }
     val search = remember { MemorySearch(context) }
@@ -97,18 +111,26 @@ internal fun MemoryJournal(
     val semanticReady = encoder.ready()
     val records by db.memories().observeAll().collectAsState(initial = emptyList())
     var date by rememberSaveable(initialDay) { mutableStateOf(initialDay ?: LocalDate.now().toString()) }
+    var calendarMonth by rememberSaveable(initialDay) { mutableStateOf(YearMonth.from(LocalDate.parse(date)).toString()) }
     var period by rememberSaveable { mutableStateOf("Day") }
     var showDay by rememberSaveable(initialDay) { mutableStateOf(initialDay != null) }
     val showSearch = query.isNotBlank()
-    val month = remember(date) { java.time.YearMonth.from(LocalDate.parse(date)) }
+    val month = remember(calendarMonth) { YearMonth.parse(calendarMonth) }
+    val timelineState = rememberSaveableStateHolder()
+    val selected = remember(date) { LocalDate.parse(date) }
+    val year = if (showDay) selected.year else month.year
+    val recapPeriod = if (showDay) period else "Day"
+    val showBrief = showDay || !showSearch
+    val textModels = remember { ModelStore.get(context) }
+    val activeModel by textModels.active.collectAsState()
+    val textModelState by textModels.state.collectAsState()
+    val preferredModel = activeModel.takeIf { textModelState == ModelState.Ready }
     var matches by remember { mutableStateOf<List<MemoryMatch>?>(null) }
-    var brief by remember { mutableStateOf<DayBrief?>(null) }
+    var brief by remember(date, recapPeriod, preferredModel) { mutableStateOf<DayBrief?>(null) }
     var answer by remember { mutableStateOf<JournalAnswer?>(null) }
     var editing by remember { mutableStateOf<MemoryRecord?>(null) }
     var error by remember { mutableStateOf("") }
     var busy by remember { mutableStateOf(false) }
-    val selected = runCatching { LocalDate.parse(date) }.getOrNull()
-    val year = selected?.year ?: LocalDate.now().year
     var answerJob by remember { mutableStateOf<kotlinx.coroutines.Job?>(null) }
     var handledAsk by remember { mutableIntStateOf(askRequest) }
     DisposableEffect(Unit) { onDispose { answerJob?.cancel() } }
@@ -140,19 +162,19 @@ internal fun MemoryJournal(
             askJournal()
         }
     }
-    fun includesDay(day: LocalDate): Boolean = when (period) {
-        "Year" -> day.year == year
-        "Month" -> day.toString().startsWith(date.take(7))
-        else -> day.toString() == date
+    fun includesDay(day: LocalDate): Boolean = when (recapPeriod) {
+        "Year" -> day.year == selected.year
+        "Month" -> YearMonth.from(day) == YearMonth.from(selected)
+        else -> day == selected
     }
     val noteIds = remember(visibleNotes) { visibleNotes.mapTo(hashSetOf()) { it.id } }
-    val selectedRecords = remember(records, noteIds, date, period) {
+    val selectedRecords = remember(records, noteIds, selected, recapPeriod) {
         records.filter { row ->
             (row.noteId == null || row.noteId in noteIds) &&
                 LocalDate.parse(row.localDay).let(::includesDay)
         }
     }
-    val selectedNotes = remember(visibleNotes, date, period) {
+    val selectedNotes = remember(visibleNotes, selected, recapPeriod) {
         val zone = java.time.ZoneId.systemDefault()
         visibleNotes.filter { note ->
             includesDay(java.time.Instant.ofEpochMilli(note.createdAt).atZone(zone).toLocalDate())
@@ -161,30 +183,43 @@ internal fun MemoryJournal(
     val hasRecapSources = selectedRecords.isNotEmpty() || selectedNotes.isNotEmpty()
     val summarizer = remember { BriefModelStore.get(context) }
     val modelState by summarizer.state.collectAsState()
-    val modelReady = modelState is com.notokens.monolog.ai.ModelState.Ready
+    val backupReady = modelState == ModelState.Ready
     var refreshRecap by remember { mutableIntStateOf(0) }
     var lastRefresh by remember { mutableIntStateOf(0) }
-    var buildingRecap by remember { mutableStateOf(false) }
+    var buildingRecap by remember(date, recapPeriod, preferredModel) { mutableStateOf(false) }
     LaunchedEffect(Unit) {
         try { repository.backfill() } catch (error: CancellationException) { throw error }
         catch (_: Exception) { /* Existing saved notes stay available in the journal. */ }
         MemoryIndexWork.enqueue(context)
     }
     LaunchedEffect(selectedRecords.map { it.id to it.revision }, selectedNotes.map { it.id to it.updatedAt },
-        date, period, modelReady, refreshRecap, showDay) {
+        date, recapPeriod, preferredModel, backupReady, refreshRecap, showBrief, lifecycle) {
+        if (!showBrief) return@LaunchedEffect
         brief = null
-        if (!showDay) return@LaunchedEffect
-        buildingRecap = hasRecapSources
-        try {
-            val refresh = refreshRecap != lastRefresh
-            lastRefresh = refreshRecap
-            search.brief(selectedRecords, selectedNotes, "$period:$date", refresh).collect { brief = it }
-        } catch (error: CancellationException) {
-            throw error
-        } catch (_: Exception) {
-            error = "The recap is unavailable. Recorded moments are shown below."
-        } finally {
-            buildingRecap = false
+        if (!hasRecapSources) return@LaunchedEffect
+        val periodKey = when (recapPeriod) {
+            "Month" -> YearMonth.from(selected).toString()
+            "Year" -> selected.year.toString()
+            else -> date
+        }
+        lifecycle.repeatOnLifecycle(Lifecycle.State.RESUMED) {
+            while (true) {
+                buildingRecap = true
+                val wait = try {
+                    search.brief(selectedRecords, selectedNotes, "$recapPeriod:$periodKey", preferredModel,
+                        backupReady, refresh = refreshRecap != lastRefresh).collect { brief = it }
+                    lastRefresh = refreshRecap
+                    brief?.updatedAt?.let { (it + BRIEF_REFRESH_MILLIS - System.currentTimeMillis()).coerceIn(1_000L, BRIEF_REFRESH_MILLIS) }
+                        ?: BRIEF_REFRESH_MILLIS
+                } catch (error: CancellationException) {
+                    throw error
+                } catch (_: Exception) {
+                    BRIEF_REFRESH_MILLIS
+                } finally {
+                    buildingRecap = false
+                }
+                delay(wait)
+            }
         }
     }
     LaunchedEffect(query, year, records.map { it.id to it.revision }) {
@@ -198,51 +233,38 @@ internal fun MemoryJournal(
         catch (_: Exception) { matches = emptyList(); error = "Search is unavailable. Your saved moments are kept." }
     }
     Column(Modifier.fillMaxWidth(), verticalArrangement = Arrangement.spacedBy(10.dp)) {
+        if (showBrief) {
+            JournalBriefCard(
+                date = selected,
+                period = recapPeriod,
+                brief = brief,
+                hasSources = hasRecapSources,
+                building = buildingRecap,
+                canRefresh = preferredModel != null || backupReady,
+                backupState = modelState,
+                onRefresh = { refreshRecap++ },
+                onDownload = summarizer::download
+            )
+        }
+        JournalMemoryPrompt()
         if (!showDay && !showSearch) {
-            JournalTimeline(month, records.filter { it.noteId == null || it.noteId in noteIds }, visibleNotes, photos,
-                onMonth = { date = it.atDay(1).toString() },
-                onDay = { date = it.toString(); period = "Day"; showDay = true },
-                onNote = onOpenNote,
-                onSearch = onFocusSearch)
+            timelineState.SaveableStateProvider("timeline") {
+                JournalTimeline(month, records.filter { it.noteId == null || it.noteId in noteIds }, visibleNotes, photos,
+                    onMonth = { calendarMonth = it.toString() },
+                    onDay = {
+                        date = it.toString()
+                        calendarMonth = YearMonth.from(it).toString()
+                        period = "Day"
+                        showDay = true
+                        onDayOpened()
+                    },
+                    onNote = onOpenNote,
+                    onSearch = onFocusSearch)
+            }
         }
         if (showDay || showSearch) {
         TextButton({ showDay = false; onClearQuery(); answerJob?.cancel() }) {
             Text("Back to timeline")
-        }
-        if (showDay) {
-
-        Column(Modifier.fillMaxWidth().glassSurface(24).padding(16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-            Text(when (period) { "Day" -> "Your day in brief"; "Month" -> "Your month in brief"; else -> "$year in brief" },
-                color = PaperKeyText, style = MaterialTheme.typography.titleLarge)
-            Text(brief?.text ?: if (!hasRecapSources) "Save a thought or a meaningful draft to begin."
-                else if (buildingRecap) "Preparing your recap…" else "Recap unavailable.",
-                color = PaperKeyText)
-            if (brief != null && hasRecapSources) {
-                Text(if (brief?.generated == true) "On-device AI summary"
-                    else if (buildingRecap && modelReady) "Preparing the AI summary…"
-                    else "Journal overview",
-                    color = PaperKeySubText, style = MaterialTheme.typography.labelSmall)
-            }
-            if (hasRecapSources && BriefModelStore.supported) {
-                when (val state = modelState) {
-                    com.notokens.monolog.ai.ModelState.Ready -> {
-                        TextButton(enabled = !buildingRecap, onClick = { refreshRecap++ }) { Text("Refresh summary") }
-                    }
-                    is com.notokens.monolog.ai.ModelState.Downloading -> {
-                        LinearProgressIndicator(progress = { state.percent / 100f }, modifier = Modifier.fillMaxWidth())
-                        Text("Downloading summarizer · ${state.percent}%", color = PaperKeySubText,
-                            style = MaterialTheme.typography.labelSmall)
-                    }
-                    else -> {
-                        if (state is com.notokens.monolog.ai.ModelState.Failed) {
-                            Text(state.message, color = PaperKeySubText, style = MaterialTheme.typography.labelSmall)
-                        }
-                        GemmaDownloadButton("Download AI summarizer (118 MB)", download = summarizer::download)
-                    }
-                }
-            }
-
-        }
         }
         Text(if (semanticReady) "On-device search · $year · answers use your matching entries"
             else "Keyword search · $year · $encoderStatus", color = PaperKeySubText,
@@ -260,7 +282,9 @@ internal fun MemoryJournal(
             TextButton(onClick = {
                 val current = LocalDate.parse(date)
                 android.app.DatePickerDialog(context, { _, y, m, d ->
-                    date = LocalDate.of(y, m + 1, d).toString()
+                    val day = LocalDate.of(y, m + 1, d)
+                    date = day.toString()
+                    calendarMonth = YearMonth.from(day).toString()
                 }, current.year, current.monthValue - 1, current.dayOfMonth).show()
             }) {
                 MonologIcon(Glyph.CLOCK, Modifier.size(16.dp))
@@ -336,5 +360,77 @@ internal fun MemoryJournal(
                 scope.launch { repository.edit(row, summary, score, row.pinned); editing = null }
             }) { Text("Save") } },
             dismissButton = { TextButton({ editing = null }) { Text("Cancel") } })
+    }
+}
+
+@Composable
+private fun JournalBriefCard(
+    date: LocalDate,
+    period: String,
+    brief: DayBrief?,
+    hasSources: Boolean,
+    building: Boolean,
+    canRefresh: Boolean,
+    backupState: ModelState,
+    onRefresh: () -> Unit,
+    onDownload: () -> Unit
+) {
+    val dateLabel = when (period) {
+        "Month" -> date.format(DateTimeFormatter.ofPattern("MMMM yyyy"))
+        "Year" -> date.year.toString()
+        else -> date.format(DateTimeFormatter.ofLocalizedDate(FormatStyle.FULL))
+    }
+    Column(
+        Modifier.fillMaxWidth().glassSurface(24, GlassAccent.LAVENDER).padding(horizontal = 18.dp, vertical = 16.dp),
+        verticalArrangement = Arrangement.spacedBy(10.dp)
+    ) {
+        Row(horizontalArrangement = Arrangement.spacedBy(12.dp), verticalAlignment = Alignment.CenterVertically) {
+            Box(Modifier.size(36.dp).glassSurface(12), contentAlignment = Alignment.Center) {
+                MonologIcon(Glyph.BOOK, Modifier.size(19.dp))
+            }
+            Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(2.dp)) {
+                Text(
+                    when (period) { "Month" -> "Your month in brief"; "Year" -> "Your year in brief"; else -> "Your day in brief" },
+                    color = PaperKeyText, style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.SemiBold
+                )
+                Text(dateLabel, color = PaperKeySubText, style = MaterialTheme.typography.labelMedium)
+            }
+            if (hasSources && canRefresh) {
+                IconButton(
+                    onClick = onRefresh,
+                    enabled = !building,
+                    modifier = Modifier.align(Alignment.Top).semantics {
+                        contentDescription = if (building) "Refreshing summary" else "Refresh summary"
+                    }
+                ) {
+                    if (building) CircularProgressIndicator(Modifier.size(18.dp), strokeWidth = 2.dp)
+                    else MonologIcon(Glyph.REFRESH, Modifier.size(20.dp))
+                }
+            }
+        }
+        Text(
+            if (!hasSources) "No journal moments saved for this period yet."
+            else brief?.text ?: if (building) "Preparing your recap…" else "Recap unavailable.",
+            color = if (hasSources) PaperKeyText else PaperKeySubText,
+            style = MaterialTheme.typography.bodyMedium
+        )
+        if (hasSources) {
+            if (!building && brief?.generated == false) {
+                Text("Journal overview", color = PaperKeySubText, style = MaterialTheme.typography.labelSmall)
+            }
+            when {
+                backupState is ModelState.Downloading -> {
+                    LinearProgressIndicator(progress = { backupState.percent / 100f }, modifier = Modifier.fillMaxWidth())
+                    Text("Downloading backup summarizer · ${backupState.percent}%", color = PaperKeySubText,
+                        style = MaterialTheme.typography.labelSmall)
+                }
+                BriefModelStore.supported && backupState != ModelState.Ready && brief?.generated != true && !building -> {
+                    if (backupState is ModelState.Failed) {
+                        Text(backupState.message, color = PaperKeySubText, style = MaterialTheme.typography.labelSmall)
+                    }
+                    GemmaDownloadButton("Download backup summarizer (118 MB)", download = onDownload)
+                }
+            }
+        }
     }
 }

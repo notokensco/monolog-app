@@ -16,6 +16,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.drawWithCache
 import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.geometry.Rect
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.ColorFilter
@@ -36,7 +37,7 @@ import com.notokens.monolog.ui.theme.*
 import kotlin.math.cos
 import kotlin.math.sin
 
-enum class Glyph { INFO, DASHBOARD, CLIPBOARD, DOWN, CLOSE, EXPAND, BOLT, CLOCK, BELL, ALARM, BOOK, LAYERS, PLUS, HOME, SETTINGS, MIC, GLOBE, SMILE, SHIFT, BACKSPACE, ENTER, SEARCH, SHIELD, PRIVACY, ARROW, BACK, DOT, PAPER, INK, PHOTO, CAPTURE, EDIT, REWRITE, DRAG_HANDLE, PIN, SHARE, CHEVRON, DOUBLE_DOWN }
+enum class Glyph { INFO, DASHBOARD, CLIPBOARD, DOWN, CLOSE, EXPAND, BOLT, CLOCK, BELL, ALARM, BOOK, LAYERS, PLUS, HOME, SETTINGS, MIC, GLOBE, SMILE, SHIFT, BACKSPACE, ENTER, SEARCH, SHIELD, PRIVACY, ARROW, BACK, DOT, PAPER, INK, PHOTO, CAPTURE, EDIT, REWRITE, DRAG_HANDLE, PIN, SHARE, CHEVRON, DOUBLE_DOWN, REFRESH }
 
 @Composable
 fun MonologIcon(glyph: Glyph, modifier: Modifier = Modifier, color: Color = PaperKeyText) {
@@ -72,6 +73,10 @@ fun MonologIcon(glyph: Glyph, modifier: Modifier = Modifier, color: Color = Pape
                     line(9f, 17f, 15f, 17f)
                 }
                 Glyph.DOWN -> line(5f, 9f, 12f, 16f, 19f, 9f)
+                Glyph.REFRESH -> {
+                    path.arcTo(Rect(4f, 4f, 20f, 20f), 15f, 300f, forceMoveTo = true)
+                    line(18f, 2.5f, 18f, 7f, 13.5f, 7f)
+                }
                 Glyph.CLOSE -> { line(5f, 5f, 19f, 19f); line(19f, 5f, 5f, 19f) }
                 Glyph.EXPAND -> { line(14f, 4f, 20f, 4f, 20f, 10f); line(20f, 4f, 14f, 10f); line(10f, 20f, 4f, 20f, 4f, 14f); line(4f, 20f, 10f, 14f) }
                 Glyph.BOLT -> line(13f, 2f, 5f, 13f, 11f, 13f, 9f, 22f, 20f, 9f, 13f, 9f, 13f, 2f)

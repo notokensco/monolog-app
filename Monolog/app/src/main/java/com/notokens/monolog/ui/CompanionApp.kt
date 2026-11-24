@@ -20,8 +20,10 @@ import androidx.compose.foundation.text.KeyboardActions
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.LazyListState
 import androidx.compose.foundation.lazy.LazyListScope
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.selection.selectable
 import androidx.compose.foundation.selection.selectableGroup
@@ -54,6 +56,7 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.TextRange
 import androidx.compose.ui.text.input.TextFieldValue
 import androidx.compose.ui.text.input.ImeAction
+import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
@@ -326,6 +329,8 @@ fun CompanionApp(
                         navArgument("day") { type = NavType.StringType; nullable = true; defaultValue = null }
                     )) { journalEntry ->
                         val allNotes by repo.notes.collectAsState(initial = emptyList())
+                        val journalScroll = rememberLazyListState()
+                        val journalScope = rememberCoroutineScope()
                         val notes = visibleBackupYears(allNotes)
                         val photoRefs by repo.notePhotos.collectAsState(initial = emptyList())
                         val photosByNote = remember(photoRefs) { photoRefs.groupBy { it.noteId } }
@@ -339,11 +344,10 @@ fun CompanionApp(
                                 searchField.requestFocus()
                             }
                         }
-                        CollectionScreen("Journal", showWeatherAndDate = true, footer = {
+                        CollectionScreen("Journal", showWeatherAndDate = true, scrollState = journalScroll, footer = {
                             JournalAskBar(query, { query = it }, "Ask about your days\u2026", searchField,
                                 answering, { nav.navigate("note/new") }, { askRequest++ })
                         }) {
-                            item(key = "journal-memory-opt-in") { JournalMemoryPrompt() }
                             item(contentType = "memory") {
                                 MemoryJournal(
                                     onOpenNote = { nav.navigate("note/$it") },
@@ -353,6 +357,7 @@ fun CompanionApp(
                                     query = query, onClearQuery = { query = "" },
                                     onFocusSearch = { searchField.requestFocus(); keyboard?.show() },
                                     askRequest = askRequest, onAnswering = { answering = it },
+                                    onDayOpened = { journalScope.launch { journalScroll.scrollToItem(0) } },
                                     initialDay = journalEntry.arguments?.getString("day")
                                 )
                             }
@@ -1039,6 +1044,7 @@ private fun CollectionScreen(
     title: String,
     showWeatherAndDate: Boolean = false,
     onBack: (() -> Unit)? = null,
+    scrollState: LazyListState = rememberLazyListState(),
     footer: (@Composable () -> Unit)? = null,
     content: LazyListScope.() -> Unit
 ) {
@@ -1046,6 +1052,7 @@ private fun CollectionScreen(
         if (showWeatherAndDate) WeatherDateCard()
         LazyColumn(
             Modifier.weight(1f).fillMaxWidth(),
+            state = scrollState,
             contentPadding = PaddingValues(vertical = 12.dp),
             verticalArrangement = Arrangement.spacedBy(10.dp)
         ) {
@@ -1165,16 +1172,30 @@ private fun EmptyCard(title: String, body: String) {
 }
 
 @Composable
-@OptIn(ExperimentalLayoutApi::class)
 private fun LibraryViewOptions(
     compact: Boolean, onToggleCompact: () -> Unit, sort: LibrarySort, onSort: (LibrarySort) -> Unit, enabled: Boolean
 ) {
     var showSort by remember { mutableStateOf(false) }
-    FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-        FilterChip(compact, onToggleCompact, { Text("Compact view") }, enabled = enabled, shape = CircleShape)
-        Box {
-            OutlinedButton(onClick = { showSort = true }, enabled = enabled) {
-                Text("Sort: ${sort.label}")
+    val padding = PaddingValues(horizontal = 10.dp, vertical = 6.dp)
+    Row(Modifier.fillMaxWidth().height(IntrinsicSize.Min), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+        OutlinedButton(
+            onClick = onToggleCompact,
+            modifier = Modifier.weight(1f).fillMaxHeight().semantics { selected = compact },
+            enabled = enabled,
+            contentPadding = padding,
+            colors = ButtonDefaults.outlinedButtonColors(
+                containerColor = if (compact) MaterialTheme.colorScheme.primaryContainer else Color.Transparent
+            )
+        ) {
+            Text("Compact view", textAlign = TextAlign.Center)
+        }
+        Box(Modifier.weight(1f).fillMaxHeight()) {
+            OutlinedButton(
+                onClick = { showSort = true }, enabled = enabled,
+                modifier = Modifier.fillMaxSize().semantics { contentDescription = "Sort: ${sort.label}" },
+                contentPadding = padding
+            ) {
+                Text(sort.label, textAlign = TextAlign.Center)
                 Spacer(Modifier.width(6.dp))
                 MonologIcon(Glyph.DOWN, Modifier.size(14.dp))
             }
