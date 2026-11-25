@@ -180,9 +180,20 @@ fun CompanionApp(
     if (confirmClear) AlertDialog(
         onDismissRequest = { confirmClear = false },
         title = { Text("Clear local data?") },
-        text = { Text("This deletes all notes, photos, and reminders from this device and cancels their notifications.") },
+        text = { Text("This deletes journal entries, saved context, attachments, reminders, keyboard learning, usage totals, clipboard history, and recent searches from this device. Drive backups can be deleted separately in Account & backup.") },
         confirmButton = { Button(onClick = {
-            scope.launch { repo.clearAllData(); settings.setIncognito(false); confirmClear = false }
+            confirmClear = false
+            scope.launch {
+                com.notokens.monolog.ime.DraftRescue.clear()
+                com.notokens.monolog.ime.ChatAssist.stop()
+                context.stopService(android.content.Intent(context, com.notokens.monolog.ime.ChatAssistService::class.java))
+                com.notokens.monolog.connect.LocalConnect.stop()
+                com.notokens.monolog.connect.DriveConnect(context.applicationContext).discardLocalSession()
+                com.notokens.monolog.ime.ui.clearRecentKeyboardClips()
+                settings.resetLocalContent()
+                com.notokens.monolog.ime.ui.clearClipboardImageStorage(context.applicationContext)
+                repo.clearAllData()
+            }
         }) { Text("Clear data") } },
         dismissButton = { OutlinedButton(onClick = { confirmClear = false }) { Text("Cancel") } }
     )
@@ -721,13 +732,35 @@ fun CompanionApp(
                         }
                     }
                     composable("settings") {
+                        var searching by rememberSaveable { mutableStateOf(false) }
+                        var settingsQuery by rememberSaveable { mutableStateOf("") }
                         Screen("Settings", onBack = navigateBack, scrollState = settingsScroll) {
                             Column(verticalArrangement = Arrangement.spacedBy(14.dp)) {
+                                Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.End) {
+                                    IconControl(if (searching) Glyph.CLOSE else Glyph.SEARCH,
+                                        if (searching) "Close settings search" else "Search settings", {
+                                            searching = !searching
+                                            if (!searching) settingsQuery = ""
+                                        })
+                                }
+                                if (searching) {
+                                    OutlinedTextField(settingsQuery, { settingsQuery = it }, modifier = Modifier.fillMaxWidth(),
+                                        label = { Text("Search settings") }, singleLine = true)
+                                }
+                                if (settingsQuery.isNotBlank()) {
+                                    val query = settingsQuery.trim()
+                                    val matches = SettingsPage.entries.filter {
+                                        "${it.title} ${it.summary}".contains(query, ignoreCase = true)
+                                    }
+                                    if (matches.isEmpty()) Text("No matching settings.", color = muted)
+                                    matches.forEach { page -> SettingsLink(page) { nav.navigate(it.route) } }
+                                } else {
                                 SettingsCard("Personalization") {
                                     TextButton(onClick = { nav.navigate("onboarding") }) { Text("Quick setup") }
                                     SettingsLink(SettingsPage.ACCOUNT) { nav.navigate(it.route) }
                                     SettingsLink(SettingsPage.APPEARANCE) { nav.navigate(it.route) }
                                     SettingsLink(SettingsPage.KEYBOARD) { nav.navigate(it.route) }
+                                    SettingsLink(SettingsPage.KEYBOARD_STYLE) { nav.navigate(it.route) }
                                     SettingsLink(SettingsPage.VOICE) { nav.navigate(it.route) }
                                     SettingsLink(SettingsPage.TONES) { nav.navigate(it.route) }
                                     SettingsLink(SettingsPage.LANGUAGES) { nav.navigate(it.route) }
@@ -741,6 +774,7 @@ fun CompanionApp(
                                 SettingsCard("Monolog") {
                                     SettingsLink(SettingsPage.ABOUT) { nav.navigate(it.route) }
                                 }
+                                }
                             }
                         }
                     }
@@ -753,7 +787,9 @@ fun CompanionApp(
                                     SettingsPage.ABOUT -> AboutSettings { nav.navigate(SettingsPage.USAGE.route) }
                                     SettingsPage.USAGE -> KeyboardUsageSettings(settings)
                                     SettingsPage.ACCOUNT -> AccountBackupSettings()
+                                    SettingsPage.WEB_CONNECT -> WebConnectScreen { nav.navigate(SettingsPage.ACCOUNT.route) }
                                     SettingsPage.MEMORY -> MemorySettings()
+                                    SettingsPage.KEYBOARD_STYLE -> KeyboardStyleSettings(settings)
                                     SettingsPage.APPEARANCE -> {
                                         val borders by settings.keyBorders.collectAsState(false)
                                         val weather by settings.locationWeather.collectAsState(false)
@@ -829,56 +865,6 @@ fun CompanionApp(
                                         }
                                     }
                                     SettingsPage.KEYBOARD -> {
-                                        val autocorrect by settings.autocorrect.collectAsState(initial = true)
-                                        val swipeTyping by settings.swipeTyping.collectAsState(initial = true)
-                                        val longPressCharacters by settings.longPressCharacters.collectAsState(initial = true)
-                                        val vibrationHaptics by settings.vibrationHaptics.collectAsState(initial = true)
-                                        val keyLongPressMs by settings.keyLongPressMs.collectAsState(initial = 350)
-                                        SettingsCard("Typing") {
-                                            Row(verticalAlignment = Alignment.CenterVertically) {
-                                                Column(Modifier.weight(1f)) {
-                                                    Text("Autocorrect", color = ink)
-                                                    Text("Correct English typos on space or punctuation. Backspace immediately to undo. Paused in private fields.", color = muted,
-                                                        style = MaterialTheme.typography.bodySmall)
-                                                }
-                                                Switch(autocorrect, { scope.launch { settings.setAutocorrect(it) } },
-                                                    modifier = Modifier.semantics { contentDescription = "Autocorrect" })
-                                            }
-                                            Row(verticalAlignment = Alignment.CenterVertically) {
-                                                Column(Modifier.weight(1f)) {
-                                                    Text("Swipe to type", color = ink)
-                                                    Text("Glide across letters in English or Hinglish.", color = muted, style = MaterialTheme.typography.bodySmall)
-                                                }
-                                                Switch(checked = swipeTyping, onCheckedChange = { scope.launch { settings.setSwipeTyping(it) } },
-                                                    modifier = Modifier.semantics { contentDescription = "Swipe to type" })
-                                            }
-                                            Row(verticalAlignment = Alignment.CenterVertically) {
-                                                Column(Modifier.weight(1f)) {
-                                                    Text("Long-press numbers & symbols", color = ink)
-                                                    Text("Hold Q–P for 1–0. Hold other English letters for the symbol shown above them.", color = muted, style = MaterialTheme.typography.bodySmall)
-                                                }
-                                                Switch(checked = longPressCharacters, onCheckedChange = { scope.launch { settings.setLongPressCharacters(it) } },
-                                                    modifier = Modifier.semantics { contentDescription = "Long-press numbers and symbols" })
-                                            }
-                                            if (longPressCharacters) {
-                                                Text("Key hold delay · $keyLongPressMs ms", color = muted)
-                                                Slider(
-                                                    value = keyLongPressMs.toFloat(),
-                                                    onValueChange = { value -> scope.launch { settings.setKeyLongPressMs(value.toInt()) } },
-                                                    valueRange = 150f..800f,
-                                                    steps = 12,
-                                                    modifier = Modifier.semantics { contentDescription = "Key hold delay" }
-                                                )
-                                            }
-                                            Row(verticalAlignment = Alignment.CenterVertically) {
-                                                Column(Modifier.weight(1f)) {
-                                                    Text("Vibration haptics", color = ink)
-                                                    Text("Vibrate on keypress and long-press gestures.", color = muted, style = MaterialTheme.typography.bodySmall)
-                                                }
-                                                Switch(checked = vibrationHaptics, onCheckedChange = { scope.launch { settings.setVibrationHaptics(it) } },
-                                                    modifier = Modifier.semantics { contentDescription = "Vibration haptics" })
-                                            }
-                                        }
                                         KeyboardBehaviorSettings(settings)
                                         PersonalDictionarySettings(settings)
                                         val tapOpensShortcuts by settings.tapOpensShortcuts.collectAsState(false)
@@ -968,6 +954,7 @@ fun CompanionApp(
                                             Text("Open the keyboard menu to turn on incognito for 15 minutes. Monolog automatically protects password fields.", color = muted, style = MaterialTheme.typography.bodyMedium)
                                         }
                                         WebSettings(settings)
+                                        KeyboardPrivacySettings(settings)
                                         SettingsCard("Local storage") {
                                             OutlinedButton(onClick = { confirmClear = true }) { Text("Clear local data") }
                                         }
@@ -985,14 +972,16 @@ fun CompanionApp(
 private enum class SettingsPage(val id: String, val title: String, val summary: String, val icon: Glyph) {
     MEMORY("memory", "Journal memory", "Meaningful moments and offline search", Glyph.BOOK),
     ACCOUNT("account", "Account & backup", "Google account, encrypted Drive backup, and past years", Glyph.SHIELD),
-    APPEARANCE("appearance", "Appearance", "Paper, Ink, and transparency", Glyph.INK),
-    KEYBOARD("keyboard", "Keyboard & shortcuts", "Setup, hold duration, and haptics", Glyph.SETTINGS),
+    WEB_CONNECT("web-connect", "Web Connect", "Pair with the Monolog browser client", Glyph.GLOBE),
+    APPEARANCE("appearance", "Themes & appearance", "Paper, Ink, keyboard preview, key borders and transparency", Glyph.INK),
+    KEYBOARD("keyboard", "Keyboard & shortcuts", "Glide, suggestions, number row, autocorrect, grammar, hold duration and haptics", Glyph.SETTINGS),
+    KEYBOARD_STYLE("keyboard-style", "Keyboard fonts & sounds", "Geist, text size, emoji rows and key tap sound", Glyph.SMILE),
     VOICE("voice", "VOX and Voice Features", "Speech packs, language, and dictation controls", Glyph.MIC),
     TONES("tones", "Tones", "Smart tone suggestions for work and chat", Glyph.BOLT),
     LANGUAGES("languages", "Languages & packs", "Layouts and offline translation", Glyph.GLOBE),
     MODELS("models", "On-device AI", "Offline text model downloads", Glyph.BOLT),
     CAPTURE("capture", "Quick Capture", "Screenshot border color", Glyph.CAPTURE),
-    PRIVACY("privacy", "Privacy & data", "Incognito, Web suggestions, and storage", Glyph.SHIELD),
+    PRIVACY("privacy", "Privacy & data", "Personalise for you, clipboard, Draft Rescue, incognito, and deletion", Glyph.SHIELD),
     ABOUT("about", "About Monolog", "NoTokens, usage, policy, and acknowledgments", Glyph.INFO),
     USAGE("usage", "Usage statistics", "Keyboard activity and dictionary counts", Glyph.INFO);
 
@@ -1084,7 +1073,7 @@ private fun ScreenFrameLayout(
 ) {
     val onSettings = LocalSettingsAction.current
     val configuration = LocalConfiguration.current
-    val showBadgeLabel = configuration.screenWidthDp >= 358 &&
+    val showBadgeLabel = configuration.screenWidthDp >= 390 &&
         (configuration.fontScale <= 1.3f || configuration.screenWidthDp >= 412)
     Box(Modifier.fillMaxSize(), contentAlignment = Alignment.TopCenter) {
         Column(Modifier.widthIn(max = 640.dp).fillMaxWidth().fillMaxHeight().padding(horizontal = 16.dp)) {
@@ -1112,6 +1101,20 @@ private fun ScreenFrameLayout(
                         ) {
                             MonologIcon(Glyph.SHIELD, Modifier.size(12.dp), muted)
                             if (showBadgeLabel) Text("On-device AI", color = muted, style = MaterialTheme.typography.labelSmall)
+                        }
+                    }
+                    Row(
+                        Modifier.widthIn(min = 44.dp).heightIn(min = 48.dp).clip(CircleShape)
+                            .clickable(role = Role.Button) { onSettings(SettingsPage.WEB_CONNECT) }
+                            .semantics { contentDescription = "Web Connect" }
+                            .padding(horizontal = 6.dp),
+                        horizontalArrangement = Arrangement.spacedBy(4.dp),
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        MonologIcon(Glyph.GLOBE, Modifier.size(15.dp), ink)
+                        if (configuration.screenWidthDp >= 360 && configuration.fontScale <= 1.3f) {
+                            Text(if (configuration.screenWidthDp >= 412) "Web Connect" else "Connect",
+                                color = ink, style = MaterialTheme.typography.labelSmall)
                         }
                     }
                     weatherDetails()

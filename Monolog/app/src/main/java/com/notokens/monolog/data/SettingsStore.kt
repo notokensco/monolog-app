@@ -39,6 +39,30 @@ enum class KeyboardPlacement(val label: String) {
 
 enum class QuickShortcut { REMINDER, ALARM, JOURNAL }
 
+internal enum class KeyboardTypeface(val label: String) {
+    MONOLOG("Monolog Default"), GEIST("Geist"), SYSTEM("System default")
+}
+
+internal enum class KeyTapSound(val label: String) {
+    OFF("Off"), TICK("Tick"), TYPEWRITER("Typewriter"), CUSTOM("Custom sound")
+}
+
+internal enum class KeyboardOption(val label: String, val default: Boolean = true) {
+    WORD_STRIP("Word suggestions"),
+    EMOJI("Emoji suggestions"),
+    GIF("GIF shortcuts in suggestions"),
+    STICKER("Sticker shortcuts in suggestions"),
+    GLIDE_DELETE("Swipe left from Backspace to delete words"),
+    COPIED("Show copied items in suggestions"),
+    GRAMMAR("Polish suggestions"),
+    NUMBERS("Number row"),
+    PASSWORD_NUMBERS("Number row in password fields"),
+    PERIOD("Show period key"),
+    COMMA("Show comma key");
+
+    val key = booleanPreferencesKey("keyboard_option_" + name.lowercase(java.util.Locale.ROOT))
+}
+
 enum class VoiceInputEngine(val id: String, val label: String) {
     NATIVE("native", "Native real-time streaming"),
     MOONSHINE("moonshine", "VOX AI English"),
@@ -46,6 +70,35 @@ enum class VoiceInputEngine(val id: String, val label: String) {
 }
 
 class SettingsStore(private val context: Context) {
+    private val typefaceKey = stringPreferencesKey("keyboard_typeface")
+    private val keyFontSizeKey = intPreferencesKey("keyboard_font_percent")
+    private val emojiColumnsKey = intPreferencesKey("keyboard_emoji_columns")
+    private val tapSoundKey = stringPreferencesKey("keyboard_tap_sound")
+    private val tapSoundRevisionKey = longPreferencesKey("keyboard_tap_sound_revision")
+    internal val keyboardTypeface = context.monologSettings.data.map { values ->
+        KeyboardTypeface.entries.firstOrNull { it.name == values[typefaceKey] } ?: KeyboardTypeface.MONOLOG
+    }.distinctUntilChanged()
+    internal val keyboardFontSize = context.monologSettings.data.map { (it[keyFontSizeKey] ?: 100).coerceIn(80, 130) }.distinctUntilChanged()
+    internal val emojiColumns = context.monologSettings.data.map { (it[emojiColumnsKey] ?: 8).coerceIn(5, 10) }.distinctUntilChanged()
+    internal val keyTapSound = context.monologSettings.data.map { values ->
+        KeyTapSound.entries.firstOrNull { it.name == values[tapSoundKey] } ?: KeyTapSound.OFF
+    }.distinctUntilChanged()
+    internal val keyTapSoundRevision = context.monologSettings.data.map { it[tapSoundRevisionKey] ?: 0L }.distinctUntilChanged()
+    internal suspend fun setKeyboardTypeface(value: KeyboardTypeface) { context.monologSettings.edit { it[typefaceKey] = value.name } }
+    internal suspend fun setKeyboardFontSize(value: Int) { context.monologSettings.edit { it[keyFontSizeKey] = value.coerceIn(80, 130) } }
+    internal suspend fun setEmojiColumns(value: Int) { context.monologSettings.edit { it[emojiColumnsKey] = value.coerceIn(5, 10) } }
+    internal suspend fun setKeyTapSound(value: KeyTapSound) {
+        context.monologSettings.edit {
+            it[tapSoundKey] = value.name
+            if (value == KeyTapSound.CUSTOM) it[tapSoundRevisionKey] = System.currentTimeMillis()
+        }
+    }
+    internal val keyboardOptions = context.monologSettings.data.map { values ->
+        KeyboardOption.entries.filterTo(mutableSetOf()) { values[it.key] ?: it.default }
+    }.distinctUntilChanged()
+    internal suspend fun setKeyboardOption(option: KeyboardOption, enabled: Boolean) {
+        context.monologSettings.edit { it[option.key] = enabled }
+    }
     private val autoCapKey = booleanPreferencesKey("keyboard_auto_capitalize")
     private val learningKey = booleanPreferencesKey("keyboard_learn_words")
     private val typingProfileKey = stringPreferencesKey("keyboard_typing_profile")
@@ -57,6 +110,29 @@ class SettingsStore(private val context: Context) {
 
     suspend fun setAutoCapitalize(enabled: Boolean) { context.monologSettings.edit { it[autoCapKey] = enabled } }
     suspend fun setLearnWords(enabled: Boolean) { context.monologSettings.edit { it[learningKey] = enabled } }
+
+    internal suspend fun deleteKeyboardLearning() {
+        context.monologSettings.edit { values ->
+            val profile = readTypingProfile(values)
+            values.remove(personalWordsKey)
+            values[typingProfileKey] = JournalCipher.seal(
+                profile.copy(words = emptyMap(), transitions = emptyMap()).encode().toString(), "keyboard-typing-profile")
+        }
+    }
+
+    internal suspend fun resetLocalContent() {
+        context.monologSettings.edit { values ->
+            values.remove(typingProfileKey)
+            values.remove(personalWordsKey)
+            values.remove(clipboardPinsKey)
+            values.remove(clipboardKey)
+            values.remove(recentEmojiKey)
+            values.remove(recentGifSearchKey)
+            values.remove(recentStickerSearchKey)
+            values.remove(incognitoUntilKey)
+            values.remove(draftRescueKey)
+        }
+    }
 
     private fun readTypingProfile(values: Preferences): TypingProfile = decodeTypingProfile(values[typingProfileKey])
 
@@ -160,6 +236,9 @@ class SettingsStore(private val context: Context) {
     private val preferences = context.monologSettings.data
     private val smartToneKey = booleanPreferencesKey("smart_tone")
     private val clipboardKey = booleanPreferencesKey("keyboard_clipboard")
+    private val draftRescueKey = booleanPreferencesKey("keyboard_draft_rescue")
+    val draftRescue = preferences.map { it[draftRescueKey] ?: false }.distinctUntilChanged()
+    suspend fun setDraftRescue(enabled: Boolean) { context.monologSettings.edit { it[draftRescueKey] = enabled } }
     private val phoneActionsKey = booleanPreferencesKey("keyboard_phone_actions")
     val phoneActions = preferences.map { it[phoneActionsKey] ?: true }.distinctUntilChanged()
     suspend fun setPhoneActions(value: Boolean) { context.monologSettings.edit { it[phoneActionsKey] = value } }
@@ -291,7 +370,7 @@ class SettingsStore(private val context: Context) {
     val defaultVox = preferences.map { it[defaultVoxKey] ?: false }.distinctUntilChanged()
     val smartVoxFilter = preferences.map { it[smartFilterKey] ?: true }.distinctUntilChanged()
     val keyBorders = preferences.map { it[keyBordersKey] ?: false }.distinctUntilChanged()
-    val keyPopups = preferences.map { it[keyPopupsKey] ?: false }.distinctUntilChanged()
+    val keyPopups = preferences.map { it[keyPopupsKey] ?: true }.distinctUntilChanged()
     val keyPopupMs = preferences.map { it[keyPopupMsKey] ?: 70 }.distinctUntilChanged()
     val keyHeightPercent = preferences.map { it[keyHeightKey] ?: 100 }.distinctUntilChanged()
     val sensitiveWords = preferences.map { it[sensitiveWordsKey].orEmpty() }.distinctUntilChanged()
@@ -383,11 +462,12 @@ class SettingsStore(private val context: Context) {
     private val portableBooleans get() = listOf(autoCapKey, learningKey, autocorrectKey, swipeTypingKey,
         systemSpellCheckerKey, longPressCharactersKey, shortcutHapticsKey, vibrationHapticsKey, tapOpensShortcutsKey,
         smartToneKey, clipboardKey, phoneActionsKey, defaultVoxKey, smartFilterKey, cursorOnSpaceKey,
-        keyBordersKey, compactKeysKey, keyPopupsKey, swapVoxAndAiKey, reduceTransparencyKey)
+        keyBordersKey, compactKeysKey, keyPopupsKey, swapVoxAndAiKey, reduceTransparencyKey) +
+        KeyboardOption.entries.map { it.key }
     private val portableIntegers get() = listOf(swipeTrailKey, keyLongPressMsKey, shortcutHoldKey,
-        keyPopupMsKey, keyHeightKey, voxPauseKey)
+        keyPopupMsKey, keyHeightKey, voxPauseKey, keyFontSizeKey, emojiColumnsKey)
     private val portableStrings get() = listOf(keyboardLanguageKey, themeModeKey, placementKey,
-        dashboardOrderKey, dashboardPinsKey, voiceInputEngineKey, voxLanguageKey, quickShortcutOrderKey, sensitiveWordsKey)
+        dashboardOrderKey, dashboardPinsKey, voiceInputEngineKey, voxLanguageKey, quickShortcutOrderKey, sensitiveWordsKey, typefaceKey)
     private val portableSets get() = listOf(dashboardExtrasKey, hiddenDashboardKey, personalWordsKey)
 
     internal suspend fun exportKeyboard(): JSONObject {

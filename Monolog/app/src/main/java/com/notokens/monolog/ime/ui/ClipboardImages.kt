@@ -130,6 +130,11 @@ internal class ClipboardImages(private val context: Context) {
     }
 }
 
+internal suspend fun clearClipboardImageStorage(context: Context) = withContext(Dispatchers.IO) {
+    context.getSharedPreferences("ime_clipboard_images", Context.MODE_PRIVATE).edit().clear().commit()
+    File(context.filesDir, "ime-clipboard").listFiles()?.forEach { if (it.isFile) it.delete() }
+}
+
 @Composable
 internal fun rememberClipboardImages(enabled: Boolean, privateMode: Boolean, visible: Boolean): ClipboardImages {
     val context = LocalContext.current.applicationContext

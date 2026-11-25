@@ -1,6 +1,12 @@
 package com.notokens.monolog.ime.ui
 
 import kotlinx.coroutines.launch
+import android.content.Intent
+import com.notokens.monolog.ai.ModelState
+import com.notokens.monolog.ai.ModelStore
+import com.notokens.monolog.ime.ChatAssist
+import com.notokens.monolog.ime.ChatAssistService
+import com.notokens.monolog.ime.ChatAssistSetupActivity
 import androidx.compose.animation.Crossfade
 import androidx.compose.animation.core.tween
 import com.notokens.monolog.data.KeyboardPlacement
@@ -9,6 +15,13 @@ import android.content.res.Configuration
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.ui.platform.LocalContext
 import com.notokens.monolog.data.SettingsStore
+import com.notokens.monolog.data.KeyboardOption
+import com.notokens.monolog.data.KeyboardTypeface
+import com.notokens.monolog.data.KeyTapSound
+import com.notokens.monolog.R
+import androidx.compose.ui.text.font.Font
+import androidx.compose.ui.text.font.FontFamily
+import androidx.compose.ui.unit.Density
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Box
@@ -136,7 +149,10 @@ internal fun MonologKeyboardView(
     onToggleIncognito: () -> Unit,
     longPressCharacters: Boolean = true,
     modifier: Modifier = Modifier,
-    voxLanguageLabel: String = voxLanguage.title
+    voxLanguageLabel: String = voxLanguage.title,
+    rescueHint: Boolean = false,
+    onConsumeRescueHint: () -> Unit = {},
+    onDeleteWords: ((Int) -> Unit)? = null
 ) {
     val configuration = LocalConfiguration.current
     val isLandscape = configuration.orientation == Configuration.ORIENTATION_LANDSCAPE
@@ -150,6 +166,17 @@ internal fun MonologKeyboardView(
     val isAiActive = searchQuery != null
     val context = LocalContext.current
     val settings = remember(context) { SettingsStore(context.applicationContext) }
+    val options by settings.keyboardOptions.collectAsState(KeyboardOption.entries.toSet())
+    val typeface by settings.keyboardTypeface.collectAsState(KeyboardTypeface.MONOLOG)
+    val fontPercent by settings.keyboardFontSize.collectAsState(100)
+    val sound by settings.keyTapSound.collectAsState(KeyTapSound.OFF)
+    val soundRevision by settings.keyTapSoundRevision.collectAsState(0L)
+    val playSound = rememberKeySound(sound, soundRevision)
+    val font = remember(typeface) { when (typeface) {
+        KeyboardTypeface.MONOLOG -> null
+        KeyboardTypeface.GEIST -> FontFamily(Font(R.font.geist))
+        KeyboardTypeface.SYSTEM -> FontFamily.Default
+    } }
     val savedEmoji by settings.recentEmoji.collectAsState("")
     val recentEmoji = remember(savedEmoji) {
         savedEmoji.lineSequence().mapNotNull { row ->
@@ -163,12 +190,14 @@ internal fun MonologKeyboardView(
     val placement by settings.keyboardPlacement.collectAsState(KeyboardPlacement.FULL)
     val compactKeys by settings.compactKeys.collectAsState(false)
     val keyBorders by settings.keyBorders.collectAsState(initial = false)
-    val keyPopups by settings.keyPopups.collectAsState(initial = false)
+    val keyPopups by settings.keyPopups.collectAsState(initial = true)
     val keyPopupMs by settings.keyPopupMs.collectAsState(initial = 70)
     val vibrationHaptics by settings.vibrationHaptics.collectAsState(initial = true)
     val keyLongPressMs by settings.keyLongPressMs.collectAsState(initial = 350)
     val swipeTrail by settings.swipeTrail.collectAsState(initial = 120)
-    val maxRowHeight = ((configuration.screenHeightDp.dp - 170.dp) / 4).coerceAtLeast(32.dp)
+    val numberRow = if (editorContext.isPassword) KeyboardOption.PASSWORD_NUMBERS in options
+        else KeyboardOption.NUMBERS in options
+    val maxRowHeight = ((configuration.screenHeightDp.dp - 170.dp) / if (numberRow) 5 else 4).coerceAtLeast(32.dp)
     val preferredRowHeight = ((if (isLandscape) 38.dp else 54.dp) * (heightPercent / 100f))
         .coerceIn(30.dp, maxRowHeight)
     val smartFilter by settings.smartVoxFilter.collectAsState(initial = true)
@@ -181,12 +210,15 @@ internal fun MonologKeyboardView(
     val phoneActions by settings.phoneActions.collectAsState(false)
     val customTriggers by settings.sensitiveWords.collectAsState("")
     val copiedActions = com.notokens.monolog.ime.rememberClipboardActions(
-        phoneActions && editorActive && !privateMode && ai.journalAllowed, customTriggers)
+        phoneActions && editorActive && !privateMode && KeyboardOption.COPIED in options, customTriggers)
+    val clipboardText = rememberClipboardSuggestion(
+        editorActive && !privateMode && KeyboardOption.COPIED in options, customTriggers)
     val input = ai.toolbarInput
     val hasInput = ai.hasDraft || input.isNotBlank()
     val shortcode = emojiShortcode(input).takeUnless { editorContext.isRestrictedField }
     val nameMatches by androidx.compose.runtime.produceState<Pair<String, EmojiMatches?>?>(null, input, editorContext.isRestrictedField) {
-        value = if ((input.lastOrNull()?.isLetter() != true && shortcode == null) || editorContext.isRestrictedField) null else {
+        value = if ((KeyboardOption.EMOJI !in options && shortcode == null) ||
+            (input.lastOrNull()?.isLetter() != true && shortcode == null) || editorContext.isRestrictedField) null else {
             input to kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.Default) {
                 matchEmojiName(context.assets, input)
             }
@@ -205,6 +237,34 @@ internal fun MonologKeyboardView(
     var dashboardOpen by remember(layoutSession) { mutableStateOf(false) }
     var dashboardClips by remember(layoutSession) { mutableStateOf(false) }
     var panel by remember(layoutSession) { mutableStateOf<KeyboardPanel?>(null) }
+    var chatOpen by remember(layoutSession) { mutableStateOf(false) }
+    val chatSession by ChatAssist.session.collectAsState()
+    val chatError by ChatAssist.failure.collectAsState()
+    val chatAllowed = !privateMode && !editorContext.isRestrictedField && !editorContext.isNumber && !editorContext.isEmail &&
+        !editorContext.packageName.isNullOrBlank() && editorContext.packageName != context.packageName
+    val chatHere = chatSession?.takeIf { chatAllowed && it.target == editorContext.packageName }
+    val chatModel = remember(context) { ModelStore.get(context) }
+    val chatModelActive by chatModel.active.collectAsState()
+    val chatModelState by chatModel.state.collectAsState()
+    val rescueAllowed = !privateMode && !editorContext.isRestrictedField
+    val rescueBadge by com.notokens.monolog.ime.DraftRescue.hasBadge.collectAsState()
+    var rescuePreview by remember(layoutSession) { mutableStateOf<com.notokens.monolog.ime.RescueDraft?>(null) }
+    fun openRescue() {
+        if (!rescueAllowed) return
+        dashboardOpen = false
+        panel = KeyboardPanel.DRAFT_RESCUE
+        onConsumeRescueHint()
+    }
+    LaunchedEffect(rescueHint) {
+        if (rescueHint) {
+            kotlinx.coroutines.delay(6000)
+            onConsumeRescueHint()
+        }
+    }
+    LaunchedEffect(rescueAllowed, panel) {
+        if (!rescueAllowed && panel == KeyboardPanel.DRAFT_RESCUE) panel = null
+        if (!rescueAllowed || panel != KeyboardPanel.DRAFT_RESCUE) rescuePreview = null
+    }
     var showTranslation by remember(layoutSession) { mutableStateOf(false) }
     fun closeTranslation() {
         if (!showTranslation) return
@@ -266,6 +326,7 @@ internal fun MonologKeyboardView(
             DashboardTile.CLIPBOARD -> { panel = null; dashboardClips = true; dashboardOpen = true }
             DashboardTile.EDIT_TEXT -> { dashboardOpen = false; panel = KeyboardPanel.EDIT_TEXT }
             DashboardTile.LANGUAGE -> { dashboardOpen = false; panel = KeyboardPanel.LANGUAGES }
+            DashboardTile.CHAT_ASSIST -> { if (chatAllowed) chatOpen = true; dashboardOpen = false }
             DashboardTile.APPEARANCE -> onAppearance()
             DashboardTile.TRANSLATE -> {
                 if (editorContext.isNumber) return
@@ -321,11 +382,12 @@ internal fun MonologKeyboardView(
     val mediaBottomPadding = if (activePlacement == KeyboardPlacement.FLOATING) 6.dp else 20.dp
     val mediaMaxHeight = if (mediaBrowsing) (if (mediaTab.online) 86.dp else 58.dp) + mediaBottomPadding + 3.dp else 0.dp
     val mediaHeightLimit = configuration.screenHeightDp.dp * .63f - 49.dp
-    KeyboardPosition(activePlacement, preferredRowHeight * 4 + 24.dp + mediaMaxHeight, onFloatingBounds,
+    val extraNumberHeight = if (numberRow && keyboardState.layer == KeyboardLayer.LETTERS && !numberPadOpen) .69f else 0f
+    KeyboardPosition(activePlacement, preferredRowHeight * (4f + extraNumberHeight) + 24.dp + mediaMaxHeight, onFloatingBounds,
         onDock = { keyboardScope.launch { settings.setKeyboardPlacement(KeyboardPlacement.FULL) } }
     ) { positionModifier, scale, placementControls ->
     val rowHeight = (preferredRowHeight * scale).coerceAtLeast(30.dp)
-    val standardBodyHeight = rowHeight * 4 + 24.dp
+    val standardBodyHeight = rowHeight * (4f + extraNumberHeight) + 24.dp
     val bodyHeight = standardBodyHeight + (mediaHeightLimit - standardBodyHeight).coerceIn(0.dp, mediaMaxHeight)
     val displayedLayer = if (searchingMedia) mediaSearchLayer else keyboardState.layer
     val displayedEditor = if (searchingMedia) editorContext.copy(action = KeyboardAction.SEARCH) else editorContext
@@ -341,10 +403,24 @@ internal fun MonologKeyboardView(
     }) else onToggleSymbols
     KeyPreviewHost(!dashboardOpen && !isVoxOpen && !placementMenu && panel != KeyboardPanel.EDIT_TEXT) {
     androidx.compose.runtime.CompositionLocalProvider(
+        LocalDensity provides Density(density.density, density.fontScale * fontPercent / 100f),
+        androidx.compose.material3.LocalTextStyle provides androidx.compose.material3.LocalTextStyle.current.let {
+            if (font == null) it else it.copy(fontFamily = font)
+        },
+        LocalKeySound provides playSound,
+        LocalGlideDelete provides onDeleteWords.takeIf {
+            KeyboardOption.GLIDE_DELETE in options && !editorContext.isRestrictedField &&
+                !isAiActive && !isShortcutsOpen && !isVoxOpen && !mediaWorkspace && !showTranslation
+        },
         LocalKeyAppearance provides KeyAppearance(keyBorders, keyPopups, keyPopupMs, vibrationHaptics, keyLongPressMs, swipeTrail, compactKeys),
         LocalVibrationHaptics provides vibrationHaptics,
         LocalCursorKeys provides CursorKeys(cursorDrag.takeIf { cursorOnSpace && !searchingMedia }, cursorActive && !searchingMedia, cursorCharacter),
         LocalActiveKeyboardLanguage provides language,
+        LocalKeyOptions provides options,
+        LocalKeyLanguageMenu provides (if (searchingMedia) null else ({
+            panel = KeyboardPanel.LANGUAGES
+            dashboardOpen = false
+        })),
         LocalKeyboardLayoutMenu provides (if (searchingMedia) null else ({
             placementMenu = !placementMenu
             panel = null
@@ -418,6 +494,7 @@ internal fun MonologKeyboardView(
                     onToggleShortcuts = onToggleShortcuts,
                     onCaptureContext = onCaptureContext,
                     onToggleDashboard = {
+                        chatOpen = false
                         dashboardOpen = !dashboardOpen
                         dashboardClips = false
                         userPinned = false
@@ -432,42 +509,97 @@ internal fun MonologKeyboardView(
                     onModeAction = if (swapVoxAndAi) onOpenSearch else onEnterVox,
                     toolbarAi = swapVoxAndAi,
                     isContextActive = !editorContext.isIncognito && (isShortcutsOpen || ScreenCaptureService.isReady),
+                    leading = {
+                        if (chatHere != null) ChatAssistToolbarButton(chatHere) { chatOpen = !chatOpen }
+                    },
                     suggestions = {
                         if (!dashboardOpen && !isShortcutsOpen && !showTranslation && searchQuery == null) {
                             val localActions = ai.inlineActions.ifEmpty { if (!hasInput) copiedActions else emptyList() }
                             val match = emojiMatches
-                            val predictionsVisible = aiAllowed && (ai.suggestions.isNotEmpty() || ai.shortcutSuggestion != null)
-                            val mediaVisible = showSymbolTools && !hasInput && !editorContext.isRestrictedField
+                            val showWords = KeyboardOption.WORD_STRIP in options
+                            val showPolish = KeyboardOption.GRAMMAR in options
+                            val predictionsVisible = aiAllowed && (showWords && ai.suggestions.isNotEmpty() || ai.shortcutSuggestion != null)
+                            val mediaVisible = KeyboardOption.EMOJI in options &&
+                                showSymbolTools && !hasInput && !editorContext.isRestrictedField
+                            val mediaShortcut = when {
+                                !mediaAllowed || !mediaOptIn || !KeyboardMedia.configured -> null
+                                KeyboardOption.GIF in options && shortcode.equals(":gif", true) -> KeyboardMediaTab.GIFS
+                                KeyboardOption.STICKER in options && shortcode.equals(":sticker", true) -> KeyboardMediaTab.STICKERS
+                                else -> null
+                            }
                             val idle = !ai.inlineBusy && ai.toolbar == null && !ai.rewriteOpen &&
                                 localActions.isEmpty() && !predictionsVisible && !mediaVisible && match?.entries.isNullOrEmpty()
                             when {
                                 systemAutofillSuggestions.isNotEmpty() ->
                                     SystemAutofillStrip(systemAutofillSuggestions)
-                                userPinned || (idle && shortcode == null && pinnedTiles.isNotEmpty()) ->
+                                rescueHint && rescueAllowed && !hasInput && panel == null ->
+                                    DraftRescueButton(::openRescue)
+                                userPinned || (idle && !hasInput && shortcode == null && clipboardText == null && pinnedTiles.isNotEmpty()) ->
                                     PinnedKeyboardWidgets(pinnedTiles, if (userPinned) ({ userPinned = false }) else null, ::activate)
                                 aiAllowed && ai.dictionaryActionsAllowed &&
                                     (ai.selectedDictionaryWord != null || ai.suggestionToRemove != null) ->
-                                    KeyboardSuggestionStrip(ai, language, onSuggestedShortcut)
+                                    KeyboardSuggestionStrip(ai, language, onSuggestedShortcut, showWords = showWords, showPolish = showPolish)
+                                mediaShortcut != null -> androidx.compose.material3.TextButton(onClick = {
+                                    activate(if (mediaShortcut == KeyboardMediaTab.GIFS) DashboardTile.GIFS else DashboardTile.STICKERS)
+                                }) { Text(if (mediaShortcut == KeyboardMediaTab.GIFS) "Find GIFs" else "Find stickers") }
                                 shortcode != null -> EmojiShortcutStrip(
                                     if (privateMode) emptyList() else recentEmoji,
                                     if (shortcode == ":") null else match?.entries.orEmpty()
                                 ) { emoji -> replaceEmoji(shortcode, emoji) }
                                 aiAllowed && (ai.shortcutSuggestion != null || ai.inlineBusy || ai.toolbar != null || ai.rewriteOpen) ->
-                                    KeyboardSuggestionStrip(ai, language, onSuggestedShortcut, copiedActions)
+                                    KeyboardSuggestionStrip(ai, language, onSuggestedShortcut, copiedActions,
+                                        showWords = showWords, showPolish = showPolish)
                                 localActions.isNotEmpty() -> Row(Modifier.fillMaxWidth(),
                                     horizontalArrangement = androidx.compose.foundation.layout.Arrangement.Center) {
                                     DeviceActionButtons(localActions)
                                 }
-                                showSymbolTools && !hasInput && !editorContext.isRestrictedField ->
+                                mediaVisible ->
                                     EmojiShortcutStrip(if (privateMode) emptyList() else recentEmoji, onPick = ::pickEmoji)
+                                idle && !hasInput && clipboardText != null ->
+                                    androidx.compose.material3.TextButton(onClick = { onPasteText(clipboardText) }) {
+                                        Text("Paste " + clipboardText.orEmpty().lineSequence().first().take(24), maxLines = 1)
+                                    }
                                 aiAllowed -> KeyboardSuggestionStrip(ai, language, onSuggestedShortcut,
                                     copiedActions.takeUnless { hasInput }.orEmpty(),
                                     emojis = match?.entries.orEmpty(),
-                                    onEmoji = { if (match != null) replaceEmoji(match.typed, it) })
+                                    onEmoji = { if (match != null) replaceEmoji(match.typed, it) },
+                                    showWords = showWords, showPolish = showPolish)
                             }
                         }
                     }
                 )
+                if (chatOpen && chatAllowed && searchQuery == null && !isShortcutsOpen && !mediaWorkspace) {
+                    Popup(AboveKeyboardHeader, onDismissRequest = { chatOpen = false },
+                        properties = PopupProperties(focusable = false, clippingEnabled = false)) {
+                        ChatAssistPanel(
+                            Modifier.width(maxWidth).height(overlayHeight), chatHere,
+                            chatSession == null && chatModelActive?.isGguf == true && chatModelState is ModelState.Ready,
+                            chatError, onStart = {
+                                runCatching {
+                                    context.startActivity(Intent(context, ChatAssistSetupActivity::class.java)
+                                        .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+                                        .putExtra(ChatAssistService.TARGET, editorContext.packageName))
+                                    chatOpen = false
+                                }.onFailure { ChatAssist.stop("Couldn’t open Android’s sharing setup.") }
+                            }, onPause = ChatAssist::pause, onStop = {
+                                ChatAssist.stop()
+                                context.stopService(Intent(context, ChatAssistService::class.java))
+                                chatOpen = false
+                            }, onClose = { chatOpen = false }, onInsert = { text ->
+                                if (ChatAssist.editor == editorContext.packageName && ChatAssist.session.value?.reply == text) {
+                                    onPasteText(text)
+                                    chatOpen = false
+                                }
+                            }
+                        )
+                    }
+                }
+                rescuePreview?.takeIf { rescueAllowed && panel == KeyboardPanel.DRAFT_RESCUE }?.let { draft ->
+                    Popup(AboveKeyboardHeader, onDismissRequest = { rescuePreview = null },
+                        properties = PopupProperties(focusable = false, clippingEnabled = false)) {
+                        DraftRescuePreview(draft, Modifier.width(maxWidth).height(overlayHeight)) { rescuePreview = null }
+                    }
+                }
                 if (searchQuery != null) {
                     Popup(
                         popupPositionProvider = AboveKeyboardHeader,
@@ -522,7 +654,9 @@ internal fun MonologKeyboardView(
                             showClips = dashboardClips,
                             onShowClips = { dashboardClips = it },
                             onActivate = ::activate,
-                            onPaste = { value -> onPasteText(value); dashboardOpen = false }
+                            onPaste = { value -> onPasteText(value); dashboardOpen = false },
+                            onRescue = if (rescueAllowed) ::openRescue else null,
+                            rescueBadge = rescueBadge
                         )
                     } else if (placementMenu) {
                         KeyboardPlacementPicker(placement, onClose = { placementMenu = false }) {
@@ -531,6 +665,12 @@ internal fun MonologKeyboardView(
                     } else if (workspace != null) {
                         fun closePanel() { panel = null }
                         when (workspace) {
+                            KeyboardPanel.DRAFT_RESCUE -> if (rescueAllowed) {
+                                DraftRescuePanel(settings, ::closePanel, { rescuePreview = it }) { value ->
+                                    onPasteText(value)
+                                    closePanel()
+                                }
+                            }
                             KeyboardPanel.EDIT_TEXT -> KeyboardEditorTools(onEditorCommand, ::closePanel)
                             KeyboardPanel.LANGUAGES -> KeyboardLanguagePicker(language, {
                                 keyboardScope.launch { settings.setKeyboardLanguage(it.id); closePanel() }
@@ -637,6 +777,9 @@ private object AboveKeyboardHeader : PopupPositionProvider {
     }
 }
 
+private val LocalKeyOptions = androidx.compose.runtime.staticCompositionLocalOf { KeyboardOption.entries.toSet() }
+private val LocalKeyLanguageMenu = androidx.compose.runtime.staticCompositionLocalOf<(() -> Unit)?> { null }
+
 @Composable
 private fun LettersLayout(
     rowHeight: Dp,
@@ -667,6 +810,17 @@ private fun LettersLayout(
     val split = LocalSplitKeys.current
     val nativeKeys = remember(language) { language.nativeKeys() }
     var page by remember(language) { mutableIntStateOf(0) }
+    val options = LocalKeyOptions.current
+    val numbers = if (editorContext.isPassword) KeyboardOption.PASSWORD_NUMBERS in options else KeyboardOption.NUMBERS in options
+    if (numbers) {
+        Row(Modifier.fillMaxWidth().height(rowHeight * .69f)) {
+            for (digit in "1234567890") {
+                if (split && digit == '6') Spacer(Modifier.width(SplitKeyboardGap))
+                KeyButton(Modifier.weight(1f), text = digit.toString(), fontSize = 16.sp,
+                    onClick = { onCharTyped(digit.toString()) })
+            }
+        }
+    }
 
     if (nativeKeys.isNotEmpty()) {
         val pages = remember(nativeKeys) { nativeKeys.chunked(24) }
@@ -752,10 +906,25 @@ internal fun KeyboardThemePreview(settings: SettingsStore, borders: Boolean) {
     val cursor by settings.cursorOnSpace.collectAsState(false)
     val swapped by settings.swapVoxAndAi.collectAsState(false)
     val height by settings.keyHeightPercent.collectAsState(100)
+    val options by settings.keyboardOptions.collectAsState(KeyboardOption.entries.toSet())
+    val typeface by settings.keyboardTypeface.collectAsState(KeyboardTypeface.MONOLOG)
+    val fontPercent by settings.keyboardFontSize.collectAsState(100)
+    val density = LocalDensity.current
+    val font = remember(typeface) { when (typeface) {
+        KeyboardTypeface.MONOLOG -> null
+        KeyboardTypeface.GEIST -> FontFamily(Font(R.font.geist))
+        KeyboardTypeface.SYSTEM -> FontFamily.Default
+    } }
     val rowHeight = (43.dp * (height / 100f)).coerceIn(30.dp, 53.dp)
     val previewCursor = remember { CursorDrag({}, {}, {}) }
     androidx.compose.runtime.CompositionLocalProvider(
         LocalPreviewOnly provides true,
+        LocalKeyOptions provides options,
+        LocalActiveKeyboardLanguage provides KeyboardLanguage.of(languageId),
+        LocalDensity provides Density(density.density, density.fontScale * fontPercent / 100f),
+        androidx.compose.material3.LocalTextStyle provides androidx.compose.material3.LocalTextStyle.current.let {
+            if (font == null) it else it.copy(fontFamily = font)
+        },
         LocalKeyAppearance provides KeyAppearance(borders = borders),
         LocalCursorKeys provides CursorKeys(previewCursor.takeIf { cursor })
     ) {
@@ -990,6 +1159,8 @@ private fun BottomRow(
     onNumberPad: (() -> Unit)? = null
 ) {
     val language = LocalActiveKeyboardLanguage.current
+    val options = LocalKeyOptions.current
+    val languageMenu = LocalKeyLanguageMenu.current
     val layoutMenu = LocalKeyboardLayoutMenu.current.takeIf { modeLabel == "?123" }
     val split = LocalSplitKeys.current
     val cursorDrag = LocalCursorKeys.current.drag
@@ -1005,7 +1176,7 @@ private fun BottomRow(
             fontSize = 16.sp, onClick = onModeClick,
             longClickLabel = if (layoutMenu != null) "Keyboard layout options" else null,
             onLongClick = layoutMenu)
-        KeyButton(
+        if (KeyboardOption.COMMA in options) KeyButton(
             Modifier.weight(1.15f),
             label = "Comma",
             previewText = ",",
@@ -1052,7 +1223,7 @@ private fun BottomRow(
             }
         }
         if (split) Spacer(Modifier.width(13.dp))
-        KeyButton(
+        if (KeyboardOption.PERIOD in options) KeyButton(
             Modifier.weight(1.1f),
             previewText = ".",
             label = if (editorContext.isIncognito) "Period, incognito on" else "Period, incognito off",
@@ -1061,7 +1232,15 @@ private fun BottomRow(
                 editorContext.isIncognito -> "Incognito is automatic for this private field"
                 else -> "Turn on incognito for 15 minutes"
             },
-            onLongClick = onToggleIncognito,
+            alternates = if (languageMenu != null) listOf("☺", "🌐", "◉") else emptyList(),
+            onAlternate = { symbol ->
+                when (symbol) {
+                    "☺" -> onEmojiClick()
+                    "🌐" -> languageMenu?.invoke()
+                    "◉" -> onToggleIncognito()
+                }
+            },
+            onLongClick = if (languageMenu == null) onToggleIncognito else null,
             glow = editorContext.isIncognito,
             onClick = { onCharTyped(".") }
         ) {

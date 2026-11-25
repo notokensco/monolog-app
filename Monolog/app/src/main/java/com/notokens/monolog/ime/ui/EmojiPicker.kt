@@ -177,6 +177,9 @@ internal fun EmojiShortcutStrip(recent: List<Emoji>, matches: List<Emoji>? = nul
 internal fun EmojiPicker(
     recent: List<Emoji>, query: String, onClearSearch: () -> Unit, onClearRecents: (() -> Unit)?, onPick: (Emoji) -> Unit
 ) {
+    val emojiContext = LocalContext.current
+    val emojiSettings = remember(emojiContext) { com.notokens.monolog.data.SettingsStore(emojiContext.applicationContext) }
+    val emojiColumns by emojiSettings.emojiColumns.collectAsState(8)
     val context = LocalContext.current
     val view = LocalView.current
     val vibration = LocalVibrationHaptics.current
@@ -222,7 +225,7 @@ internal fun EmojiPicker(
                 }
             } else {
                 key(category, tone?.text, query) {
-                    LazyVerticalGrid(columns = GridCells.Adaptive(42.dp), modifier = Modifier.fillMaxWidth().weight(1f),
+                    LazyVerticalGrid(columns = GridCells.Fixed(emojiColumns), modifier = Modifier.fillMaxWidth().weight(1f),
                         contentPadding = PaddingValues(horizontal = 5.dp, vertical = 3.dp)) {
                         items(entries, key = { it.text }) { emoji ->
                             val hasTones = query.isBlank() && tone == null && group?.variants?.containsKey(emoji.label) == true

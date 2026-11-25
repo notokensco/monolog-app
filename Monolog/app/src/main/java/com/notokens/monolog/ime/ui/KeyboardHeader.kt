@@ -37,7 +37,8 @@ fun KeyboardHeader(
     toolbarAi: Boolean,
     isContextActive: Boolean = false,
     suggestions: @Composable () -> Unit = {},
-    modifier: Modifier = Modifier
+    modifier: Modifier = Modifier,
+    leading: @Composable () -> Unit = {}
 ) {
     Row(
         modifier.fillMaxWidth().height(52.dp).padding(horizontal = 4.dp),
@@ -60,6 +61,7 @@ fun KeyboardHeader(
                 else -> Glyph.DASHBOARD
             }, Modifier.size(21.dp), PaperKeyText)
         }
+        leading()
         Box(Modifier.weight(1f), contentAlignment = Alignment.Center) {
             suggestions()
         }

@@ -24,6 +24,9 @@ internal object DeviceActions {
     private val phone = Regex("""(?<![\w+])(?:\+\s*)?\d(?:[ ().-]*\d){6,14}(?![\w]|[ ()-]*\d)""")
     private val mail = Regex("""[A-Za-z0-9.!#$%&'*+/=?^`{|}~-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,63}""")
     private val website = Regex("""https?://[^\s<>]+""", RegexOption.IGNORE_CASE)
+    private val street = Regex(
+        """\b\d{1,6}[A-Za-z]?\s+(?:[\p{L}][\p{L}'.-]*\s+){1,5}(?:Street|Road|Avenue|Lane|Drive|Boulevard|Way|Marg|Nagar|Gali|St\.?|Rd\.?|Ave\.?)\b""",
+        RegexOption.IGNORE_CASE)
     private val request = Regex("""^\s*(?:please\s+)?(call|dial|text|sms|message|email|mail|open|visit|navigate to|directions to)\b\s*(.*)$""",
         RegexOption.IGNORE_CASE)
 
@@ -40,6 +43,9 @@ internal object DeviceActions {
         if (allowLinks && (verb == null || verb in setOf("open", "visit"))) website.find(target)?.let {
             val uri = Uri.parse(it.value.trimEnd('.', ',', ')', ']', '?'))
             if (!uri.host.isNullOrBlank() && uri.userInfo == null) return listOf(DeviceAction("Open link", uri, Intent.ACTION_VIEW))
+        }
+        if (allowLinks && verb == null) street.find(target)?.let { match ->
+            return listOf(DeviceAction("Directions", Uri.parse("geo:0,0?q=" + Uri.encode(match.value)), Intent.ACTION_VIEW))
         }
         val number = phone.find(target)
         if (number != null && (verb == null || verb in setOf("call", "dial", "text", "sms", "message"))) {

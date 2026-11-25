@@ -1,6 +1,7 @@
 package com.notokens.monolog.ime
 
 import com.notokens.monolog.data.TypingMetric
+import com.notokens.monolog.data.contextWord
 import com.notokens.monolog.data.dictionaryWord
 import com.notokens.monolog.data.lastContextWord
 import com.notokens.monolog.data.wordKey
@@ -13,14 +14,18 @@ internal class TypingSession {
     private val counters = java.util.EnumMap<TypingMetric, Long>(TypingMetric::class.java)
     private var skipWord = false
     private var wordBeforeCorrection: String? = null
+    private var previousWord: String? = null
     var hasPendingCorrection = false
         private set
     val hasUpdates get() = current.isNotEmpty() || counters.isNotEmpty()
 
-    fun type(text: String) {
-        increment(TypingMetric.KEYS)
+    fun type(text: String, keyPress: Boolean = true) {
+        if (keyPress) increment(TypingMetric.KEYS)
         for (char in text) {
-            if (char.isWhitespace() || char in ".,!?;:()") finishWord()
+            if (char.isWhitespace() || char in ".,!?;:()") {
+                finishWord()
+                if (char != ' ' && char != '\t') previousWord = null
+            }
             else if (current.length < 25) {
                 current.append(char)
                 if (wordBeforeCorrection != null && char.isLetter()) hasPendingCorrection = true
@@ -30,9 +35,15 @@ internal class TypingSession {
     }
 
     fun finishWord() {
-        if (!skipWord) dictionaryWord(current.toString())?.let { word ->
-            increment(TypingMetric.WORDS)
-            if (word in words || words.size < 256) words[word] = (words[word] ?: 0) + 1
+        if (current.isNotEmpty()) {
+            val token = current.toString().takeUnless { skipWord }?.let(::contextWord)
+            val word = token?.let(::dictionaryWord)
+            if (word != null) {
+                increment(TypingMetric.WORDS)
+                if (word in words || words.size < 256) words[word] = (words[word] ?: 0) + 1
+                if (wordBeforeCorrection == null) previousWord?.let { recordTransition(it, word) }
+            }
+            previousWord = token?.let(::wordKey)
         }
         resetWord()
     }
@@ -45,6 +56,7 @@ internal class TypingSession {
     fun trackBackspace(before: String) {
         val prefix = if (before.lastOrNull()?.isWhitespace() == true) "" else lastContextWord(before).orEmpty()
         val previous = lastContextWord(before.dropLast(prefix.length))
+        previousWord = previous?.let(::wordKey)
         if (previous == null) {
             wordBeforeCorrection = null
             hasPendingCorrection = false
@@ -62,7 +74,11 @@ internal class TypingSession {
         val replacement = dictionaryWord(current.toString()) ?: return
         if (!before.endsWith(replacement) || lastContextWord(before) != replacement) return
         if (lastContextWord(before.dropLast(replacement.length))?.let(::wordKey) != previous) return
-        val pair = "$previous " + wordKey(replacement)
+        recordTransition(previous, replacement)
+    }
+
+    private fun recordTransition(previous: String, word: String) {
+        val pair = "$previous " + wordKey(word)
         if (pair in transitions || transitions.size < 64) transitions[pair] = (transitions[pair] ?: 0) + 1
     }
 
@@ -71,6 +87,11 @@ internal class TypingSession {
         skipWord = false
         wordBeforeCorrection = null
         hasPendingCorrection = false
+    }
+
+    fun resetContext() {
+        resetWord()
+        previousWord = null
     }
 
     fun increment(metric: TypingMetric) {
@@ -82,7 +103,7 @@ internal class TypingSession {
     fun take(): Updates = Updates(words.toMap(), counters.toMap(), transitions.toMap()).also { clear() }
 
     fun clear() {
-        resetWord()
+        resetContext()
         words.clear()
         transitions.clear()
         counters.clear()

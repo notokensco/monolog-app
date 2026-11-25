@@ -56,6 +56,9 @@ import com.notokens.monolog.ui.MonologIcon
 import com.notokens.monolog.ui.Glyph
 import com.notokens.monolog.ui.theme.PaperKeyText
 
+private val commonGrammarMistake = Regex(
+    """\b(the|a|an|to|of)\s+\1\b|\bi\s+(?=am\b|was\b|have\b|will\b)|[\p{L}] +[,.!?]""")
+
 @Composable
 internal fun KeyboardSuggestionStrip(
     ai: ImeAi,
@@ -63,8 +66,13 @@ internal fun KeyboardSuggestionStrip(
     onShortcut: (com.notokens.monolog.ime.shortcuts.ShortcutSuggestion) -> Unit,
     clipboardActions: List<com.notokens.monolog.ime.DeviceAction> = emptyList(),
     emojis: List<Emoji> = emptyList(),
-    onEmoji: (Emoji) -> Unit = {}
+    onEmoji: (Emoji) -> Unit = {},
+    showWords: Boolean = true,
+    showPolish: Boolean = true
 ) {
+    val grammarHint = remember(ai.toolbarInput, language.id, showPolish) {
+        showPolish && language.isEnglish && commonGrammarMistake.containsMatchIn(ai.toolbarInput)
+    }
     Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
         val actions = ai.inlineActions.ifEmpty { clipboardActions }
         val removal = ai.suggestionToRemove.takeIf { ai.dictionaryActionsAllowed }
@@ -107,7 +115,7 @@ internal fun KeyboardSuggestionStrip(
             }
         } else if (!ai.rewriteOpen && ai.toolbar == null) {
             Row(Modifier.weight(1f).height(40.dp), verticalAlignment = Alignment.CenterVertically) {
-                SuggestionChoices(Modifier.weight(1f), ai.suggestions, emojis, ai.hasDraft, ai::applyWord, onEmoji,
+                SuggestionChoices(Modifier.weight(1f), if (showWords) ai.suggestions else emptyList(), emojis, ai.hasDraft, ai::applyWord, onEmoji,
                     if (ai.dictionaryActionsAllowed) ai::requestSuggestionRemoval else null)
             }
         } else {
@@ -117,7 +125,8 @@ internal fun KeyboardSuggestionStrip(
                     val styles = if (language.isEnglish || language.translationCode != null) RewriteStyle.entries
                         else listOf(RewriteStyle.POLISH)
                     styles.forEach { style ->
-                        ToolbarAction(style.label, enabled = !ai.busy) { ai.rewrite(style, language) }
+                        if (style != RewriteStyle.POLISH || showPolish)
+                            ToolbarAction(style.label, enabled = !ai.busy) { ai.rewrite(style, language) }
                     }
                     if (language.translationCode != null) ToolbarAction("To English", enabled = !ai.busy) {
                         ai.rewrite(RewriteStyle.POLISH, language, translate = true)
@@ -141,7 +150,12 @@ internal fun KeyboardSuggestionStrip(
                 }
             }
         }
-        if (ai.hasDraft && !ai.rewriteOpen) IconButton(onClick = { ai.openRewrite(language) },
+        if (grammarHint && ai.hasDraft && !ai.rewriteOpen && ai.toolbar == null && !ai.inlineBusy && shortcut == null) {
+            IconButton(onClick = { ai.openRewrite(language); ai.rewrite(RewriteStyle.POLISH, language) },
+                modifier = Modifier.size(36.dp).semantics { contentDescription = "Polish grammar" }) {
+                MonologIcon(Glyph.REWRITE, Modifier.size(18.dp), MaterialTheme.colorScheme.primary)
+            }
+        } else if (ai.hasDraft && !ai.rewriteOpen) IconButton(onClick = { ai.openRewrite(language) },
             modifier = Modifier.size(36.dp).semantics { contentDescription = "Rewrite" }) {
             MonologIcon(Glyph.REWRITE, Modifier.size(22.dp))
         }

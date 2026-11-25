@@ -1,5 +1,5 @@
 Monolog Privacy Policy
-Last updated 24 November 2026
+Last updated 26 November 2026
 
 NoTokens provides Monolog. This policy covers the Monolog Android app and its official website. Contact monolog@notokens.co for privacy questions or requests.
 
@@ -9,13 +9,17 @@ When Monolog is your active keyboard, it receives the text you type. Android may
 
 If Journal memory is on, Monolog can save summaries of eligible drafts, including text you have not sent. Use Settings → Journal memory to control this. Incognito and protected fields limit what Monolog saves and which features can use the current text. Your saved notes, media, reminders and personal dictionary stay on your device unless you choose to share, export or back up content. NoTokens does not use your typing, voice recordings or journal content to train models.
 
-You can turn keyboard word learning off in Settings. Monolog can keep individual words you use, frequently used word pairs learned from your typing corrections, and aggregate counts such as key presses and accepted suggestions. Incognito and protected fields are excluded. Enabling the optional Keyboard profile in Account & backup includes your dictionary, learned word pairs, counts and keyboard preferences in encrypted Google Drive backups.
+Use Settings → Privacy & data → Personalise for you to control keyboard word learning. Monolog can keep words you use, word pairs learned from typing and corrections, and totals such as key presses and accepted suggestions. Incognito and protected fields are excluded. Enabling the optional Keyboard profile in Account & backup includes your dictionary, learned word pairs, counts and keyboard preferences in encrypted Google Drive backups.
 
 Microphone, screenshots and clipboard
 
 Microphone access supports voice typing and voice notes when you start recording. Downloaded voice packs process speech on your device. If you select Android speech recognition, the app requests the device's on-device recognition service. Audio is kept with voice notes you choose to save. You can revoke microphone access in Android settings.
 
 Quick Capture uses Android Accessibility if you enable it. It requests a screenshot when you activate capture and may use the position of Android's accessibility shortcut to place its menu nearby. Screenshots and accompanying notes are kept when you save them. You can discard a capture or disable the service in Android settings.
+
+Chat Assist starts when you enter a goal and allow Android screen sharing. Select only the chat app you intend to share. While Monolog is active in that app, Chat Assist reads visible text from the shared screen and uses a downloaded model to suggest replies and feedback on your device. The session goal and chat context are temporary and are excluded from journal and Drive backups. You can pause or end the session in the keyboard, or stop sharing in Android.
+
+Draft Rescue is optional. When enabled, it holds up to 10 recent text drafts on this device in memory for 30 minutes or until the Monolog process closes. Drafts are excluded from Drive backup. You can view, insert or copy them. When you copy or insert a draft, Android or the receiving app handles that text.
 
 Clipboard history is optional and off by default. Clipboard history uses copied text and images for pasting. If clipboard action suggestions are enabled, Monolog can also read copied information to suggest an action. Unpinned history expires after one hour. Pinned items remain until removed or cleared. Android manages its system clipboard separately. If you enable system spell checking in Monolog, the selected Android spell-checking service may receive the word being checked.
 
@@ -31,6 +35,8 @@ Keyboard translation is optional. Choosing Translate with Google can download th
 
 Optional Google Drive backup
 
+Web Connect is optional. When you pair with Local Connect, the phone shares your saved journal, library and reminders over a session encrypted on your Wi-Fi network. Web Connect over Google Drive uses a temporary encrypted snapshot and an edit queue in your Google account's app data. Browser edits are applied when the phone restores changes. You can end the connection to restore pending edits and remove temporary Drive files. The camera scans the pairing code on your device.
+
 When you connect Google Drive, Monolog uses your Google account name, email address, account identifier and authorization to connect to the selected account. If you enable backup, Monolog encrypts the selected journal content and attachments on your device before sending them to your Google Drive. You choose what to back up and when. Disconnecting stops future backup access. You can remove existing backup files separately in Google Drive.
 
 Website and support
@@ -43,6 +49,6 @@ Subscriptions are planned. Terms shown at checkout will explain the plan, price 
 
 Your controls and data retention
 
-Saved journal content stays on your device until you remove it or clear app storage. Use Settings → Privacy & data → Clear local data to delete the local journal and reminders. Android's Clear storage option removes Monolog's remaining local settings, files and downloaded models. To remove Drive backups, open Google Drive settings and delete Monolog's hidden app data. Disconnecting Monolog or uninstalling it leaves backups in Drive for you to remove separately.
+Saved journal content stays on your device until you remove it or clear app storage. In Settings → Privacy & data, you can delete learned words and typing patterns or clear the local journal, clipboard history and other saved content. Android's Clear storage option removes Monolog's remaining local settings, files and downloaded models. Use Settings → Account & backup to delete Monolog backups from the connected Drive account. You can also remove Monolog's app data from Google Drive settings.
 
 Monolog uses encrypted connections for the online features described above. If you have questions or wish to request access, correction or deletion of personal information held by NoTokens, email monolog@notokens.co. We may ask for information to verify the request. Privacy rights depend on where you live. The latest policy and its update date are available on the Monolog website.

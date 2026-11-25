@@ -142,8 +142,8 @@ android {
         applicationId = "com.notokens.monolog"
         minSdk = 35
         targetSdk = 36
-        versionCode = 13
-        versionName = "0.1.0-alpha.6"
+        versionCode = 14
+        versionName = "0.1.0-alpha.7.1"
         buildConfigField("boolean", "MONOLOG_HAS_GGUF", (llamaSource != null).toString())
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
         val webEndpoint = providers.gradleProperty("monologWebEndpoint").orElse("").get()
@@ -253,6 +253,7 @@ dependencies {
     implementation("androidx.autofill:autofill:1.3.0")
     implementation("com.google.android.material:material:1.10.0")
     implementation("com.squareup.okhttp3:okhttp:4.12.0")
+    implementation("com.journeyapps:zxing-android-embedded:4.3.0")
     implementation("androidx.credentials:credentials:1.5.0")
     implementation("androidx.credentials:credentials-play-services-auth:1.5.0")
     implementation("com.google.android.libraries.identity.googleid:googleid:1.1.1")

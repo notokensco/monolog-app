@@ -182,9 +182,9 @@ class ScreenCaptureService : AccessibilityService() {
         private var connected: ScreenCaptureService? = null
         val isReady: Boolean get() = connected != null
 
-        fun capture(displayId: Int = Display.DEFAULT_DISPLAY): Boolean {
+        fun capture(displayId: Int = Display.DEFAULT_DISPLAY, hideKeyboard: Boolean = false): Boolean {
             val service = connected ?: return false
-            service.saveScreenshot(displayId)
+            service.saveScreenshot(displayId, hideKeyboard)
             return true
         }
     }

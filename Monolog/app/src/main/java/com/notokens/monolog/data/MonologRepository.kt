@@ -106,6 +106,7 @@ class RoomMonologRepository(private val context: Context) : MonologRepository {
     }
 
     override suspend fun clearAllData() {
+        com.notokens.monolog.memory.MemoryPreferences(context).markCleared()
         database.reminders().all().forEach { scheduler.cancel(it.id) }
         NotificationManagerCompat.from(context).cancelAll()
         withContext(Dispatchers.IO) { database.clearAllTables() }

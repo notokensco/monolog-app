@@ -53,7 +53,9 @@ internal fun SettingsCard(title: String, content: @Composable ColumnScope.() -> 
     Column(Modifier.fillMaxWidth().glassSurface(24, GlassAccent.LAVENDER).padding(16.dp),
         verticalArrangement = Arrangement.spacedBy(10.dp)) {
         Text(title, color = PaperKeyText, style = MaterialTheme.typography.titleMedium)
-        content()
+        androidx.compose.runtime.CompositionLocalProvider(
+            androidx.compose.material3.LocalContentColor provides MaterialTheme.colorScheme.onSurface
+        ) { content() }
     }
 }
 

@@ -51,7 +51,7 @@ internal object RegionalVox {
                 }
             }
         }.also { manifest = it }
-        return packs.getValue(code)
+        return packs[code].orEmpty()
     }
 
     fun packSize(context: Context, mode: VoxLanguage) = assets(context, mode.pack).sumOf { it.bytes }
@@ -73,8 +73,12 @@ internal object RegionalVox {
     private fun folder(context: Context, code: String) = File(context.noBackupFilesDir,
         if (code == "hi") "vox-india-shruti-1" else "vox-india-shruti-1-$code")
 
-    fun ready(context: Context, mode: VoxLanguage = VoxLanguage.HINDI) =
-        assets(context, mode.pack).all { File(folder(context, mode.pack), it.name).length() == it.bytes }
+    fun ready(context: Context, mode: VoxLanguage = VoxLanguage.HINDI): Boolean = try {
+        val pack = assets(context, mode.pack)
+        pack.isNotEmpty() && pack.all { File(folder(context, mode.pack), it.name).length() == it.bytes }
+    } catch (_: Exception) {
+        false
+    }
 
     /** The open speech pack exposes subword pieces, which can supplement typed-prefix coverage. */
     fun typingVocabulary(context: Context, code: String): List<String> {
@@ -368,14 +372,14 @@ internal class RegionalRecognizer(folder: File) : AutoCloseable {
         VoxLanguage.ENGLISH -> normalizeDigits(text.replace(nonLatinWord, ""))
             .replace(extraSpace, " ").trim()
         VoxLanguage.HINDI -> text.replace(latinWord, "").replace(extraSpace, " ").trim()
-        VoxLanguage.HINGLISH -> normalizeDigits(devanagariWord.replace(text) { match ->
+        VoxLanguage.HINGLISH -> normalizeHinglish(normalizeDigits(devanagariWord.replace(text) { match ->
             romanWords[match.value] ?: Normalizer.normalize(
                 romanizer.transliterate(match.value).replace("\u0101", "aa").replace("\u012b", "ee").replace("\u016b", "oo"),
                 Normalizer.Form.NFD
             ).replace(combiningMarks, "").let {
                 if (match.value.last() in '\u0915'..'\u0939') it.removeSuffix("a") else it
             }
-        })
+        }))
         else -> text
     }
 
@@ -401,9 +405,16 @@ internal class RegionalRecognizer(folder: File) : AutoCloseable {
             "\u0939\u0948\u0902" to "hain", "\u0939\u0942\u0901" to "hoon", "\u0928\u0939\u0940\u0902" to "nahi",
             "\u092e\u0941\u091d\u0947" to "mujhe", "\u0915\u0948\u0938\u0947" to "kaise",
             "\u0920\u0940\u0915" to "theek", "\u0905\u091a\u094d\u091b\u093e" to "achha",
-            "\u0927\u0928\u094d\u092f\u0935\u093e\u0926" to "dhanyavaad"
+            "\u0927\u0928\u094d\u092f\u0935\u093e\u0926" to "dhanyavaad",
+            "भाई" to "bhai", "चल" to "chal", "रहा" to "raha", "रही" to "rahi", "रहे" to "rahe"
         )
     }
 
     override fun close() { sessions.asReversed().forEach { runCatching { it.close() } } }
 }
+
+private val hinglishBrother = Regex("""\bbhae['’]ee\b""", RegexOption.IGNORE_CASE)
+private val hinglishWalking = Regex("""\b(?:cal|chal)\s+raha+\s+hai\b""", RegexOption.IGNORE_CASE)
+
+internal fun normalizeHinglish(text: String): String =
+    hinglishWalking.replace(hinglishBrother.replace(text, "bhai"), "chal raha hai")

@@ -15,6 +15,8 @@ Reviewed the Android release dependency graph, the latest ARM64 package's native
 
 ## Before submitting a paid release
 
+- Geist is included under the bundled SIL OFL. Confirm redistribution rights for the supplied Tick and Typewriter audio before distributing them commercially.
+
 - Retain written ownership and permission records for both builders, any outside contributions, and listing media. Clear the brand in launch markets if trademark protection or exclusivity is important. Copyright and trademark are distinct.
 - Confirm the final dependency notices and corresponding source access for shipped MPL-covered components, including the vendor SDK builds. Confirm the exact production search provider, if configured, and the permitted rights to use and display its results.
 - Confirm the actual billing provider, purchase metadata, checkout disclosures, and cancellation flow. Update the privacy policy and Play disclosures from the production behavior before activating billing.

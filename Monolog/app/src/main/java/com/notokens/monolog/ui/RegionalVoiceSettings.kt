@@ -1,10 +1,7 @@
 package com.notokens.monolog.ui
 
-import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.fillMaxWidth
-import androidx.compose.foundation.layout.heightIn
-import androidx.compose.material3.DropdownMenu
-import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
@@ -12,7 +9,6 @@ import androidx.compose.material3.TextButton
 import androidx.compose.runtime.*
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
-import androidx.compose.ui.unit.dp
 import com.notokens.monolog.data.SettingsStore
 import com.notokens.monolog.data.VoiceInputEngine
 import com.notokens.monolog.ime.vox.RegionalVox
@@ -32,7 +28,11 @@ internal fun RegionalVoiceSettings(onReady: (Boolean) -> Unit = {}) {
     val pack = remember { mutableStateOf<VoxLanguage?>(null) }
     val choice = pack.value ?: VoxLanguage.resolve(activeLanguage.pack, "hi")
     val completed = install as? RegionalVox.Install.Ready
-    val downloaded = remember(completed) { VoxLanguage.downloadChoices.filter { RegionalVox.ready(context, it) }.toSet() }
+    val downloaded by produceState(emptySet<VoxLanguage>(), completed) {
+        value = kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) {
+            VoxLanguage.downloadChoices.filter { RegionalVox.ready(context, it) }.toSet()
+        }
+    }
     val ready = choice in downloaded
     val anyReady = downloaded.isNotEmpty()
     var expanded by remember { mutableStateOf(false) }
@@ -40,19 +40,21 @@ internal fun RegionalVoiceSettings(onReady: (Boolean) -> Unit = {}) {
     LaunchedEffect(anyReady) { onReady(anyReady) }
     SettingsCard("VOX AI India") {
         Text("Download only the languages you use. Hindi also includes English and Hinglish.", color = PaperKeySubText)
-        Box {
-            TextButton({ expanded = true }) { Text("Choose language  ·  ${choice.title}  ▾") }
-            DropdownMenu(expanded, { expanded = false }, Modifier.heightIn(max = 360.dp)) {
-                VoxLanguage.downloadChoices.sortedBy { it.title }.forEach { language ->
-                    DropdownMenuItem(
-                        text = { Text(language.title + if (language in downloaded) " · Downloaded" else "") },
-                        onClick = { pack.value = language; expanded = false }
-                    )
+        TextButton({ expanded = !expanded }) { Text("Choose language  ·  ${choice.title}  ${if (expanded) "▴" else "▾"}") }
+        if (expanded) Column {
+            VoxLanguage.downloadChoices.sortedBy { it.title }.forEach { language ->
+                TextButton({ pack.value = language; expanded = false }) {
+                    Text(language.title + if (language in downloaded) " · Downloaded" else "")
                 }
             }
         }
-        val size = (RegionalVox.packSize(context, choice) + 999_999) / 1_000_000
-        Text("$size MB · On-device", color = PaperKeySubText)
+        val modelSize by produceState<Long?>(null, choice) {
+            value = kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) {
+                runCatching { RegionalVox.packSize(context, choice) }.getOrNull()?.takeIf { it > 0 }
+                    ?.let { (it + 999_999) / 1_000_000 }
+            }
+        }
+        if (modelSize != null) Text("$modelSize MB · On-device", color = PaperKeySubText)
         val state = install
         when {
             ready && selected == VoiceInputEngine.REGIONAL && choice.pack == activeLanguage.pack ->

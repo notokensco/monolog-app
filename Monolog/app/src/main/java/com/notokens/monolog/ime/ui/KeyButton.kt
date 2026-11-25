@@ -83,6 +83,7 @@ internal val LocalCursorKeys = staticCompositionLocalOf { CursorKeys() }
 internal val LocalPreviewOnly = staticCompositionLocalOf { false }
 internal val LocalKeyAppearance = staticCompositionLocalOf { KeyAppearance() }
 internal val LocalVibrationHaptics = staticCompositionLocalOf { true }
+internal val LocalGlideDelete = staticCompositionLocalOf<((Int) -> Unit)?> { null }
 
 internal fun triggerHapticFeedback(view: View, isLong: Boolean = false, enabled: Boolean = true) {
     if (!enabled) return
@@ -122,6 +123,9 @@ fun KeyButton(
     val view = LocalView.current
     val previewOnly = LocalPreviewOnly.current
     val appearance = LocalKeyAppearance.current
+    val tapSound by rememberUpdatedState(LocalKeySound.current)
+    val glideDelete = LocalGlideDelete.current.takeIf { glyph == Glyph.BACKSPACE && repeatOnHold }
+    val deleteWords by rememberUpdatedState(glideDelete)
     val cursor = LocalCursorKeys.current
     val keyCharacter = (previewText ?: text)?.takeIf { it.length == 1 }
     val dimmed = cursor.active && (keyCharacter == null || !keyCharacter.equals(cursor.character, ignoreCase = true))
@@ -192,7 +196,7 @@ fun KeyButton(
                     }
                 }
             }
-            .pointerInput(onLongClick != null, hasAlternates, cursorDrag != null, repeatOnHold, repeatIntervalMs) {
+            .pointerInput(onLongClick != null, hasAlternates, cursorDrag != null, repeatOnHold, repeatIntervalMs, glideDelete != null) {
                 coroutineScope {
                     class Press(val preview: KeyPreview.Preview?, val start: Offset,
                         var action: Job? = null, var handled: Boolean = false) {
@@ -201,11 +205,14 @@ fun KeyButton(
                         var selecting = false
                         var latest = start
                         var holdStart = start
+                        var wordCount = 0
                     }
                     val stepWidth = 18.dp.toPx()
                     val cellWidth = 42.dp.toPx()
                     val popupGap = 3.dp.toPx()
                     val selectionSlop = 6.dp.toPx()
+                    val deleteSlop = 24.dp.toPx()
+                    val deleteStep = 40.dp.toPx()
                     val cancelBelow = 24.dp.toPx()
                     val presses = mutableMapOf<PointerId, Press>()
                     try {
@@ -230,7 +237,10 @@ fun KeyButton(
                                         } else {
                                             controller?.up(active, active.preview.takeIf { completed && (!active.handled || repeatOnHold) })
                                         }
-                                        if (completed && !active.handled) {
+                                        if (completed && active.wordCount > 0) {
+                                            change.consume()
+                                            deleteWords?.invoke(active.wordCount)
+                                        } else if (completed && !active.handled) {
                                             change.consume()
                                             tap()
                                         }
@@ -244,6 +254,13 @@ fun KeyButton(
                                         change.consume()
                                     } else if (active != null) {
                                         active.latest = change.position
+                                        val delta = active.start - change.position
+                                        if (deleteWords != null && !active.handled &&
+                                            (active.wordCount > 0 || delta.x >= deleteSlop && kotlin.math.abs(delta.y) < delta.x)) {
+                                            active.action?.cancel()
+                                            active.wordCount = (1 + ((delta.x - deleteSlop) / deleteStep).toInt()).coerceIn(1, 6)
+                                            change.consume()
+                                        }
                                         if (active.selecting) {
                                             if ((change.position - active.holdStart).getDistance() >= selectionSlop) {
                                                 controller?.move(active, bounds.topLeft + change.position, bounds.bottom + cancelBelow)
@@ -253,14 +270,16 @@ fun KeyButton(
                                     } else if (active == null && change.pressed && !change.previousPressed && !change.isConsumed) {
                                         change.consume()
                                         val press = Press(legend?.takeIf { tapPreviews }?.let { KeyPreview.Preview(it, bounds) },
-                                            change.position, handled = repeatOnHold)
+                                            change.position, handled = repeatOnHold && deleteWords == null)
                                         press.preview?.let { controller?.down(press, it, popupDelay) }
                                         presses[change.id] = press
                                         triggerHapticFeedback(view, enabled = appearance.vibration)
+                                        tapSound?.invoke()
                                         if (repeatOnHold) {
-                                            tap()
+                                            if (press.handled) tap()
                                             press.action = launch {
                                                 delay(350)
+                                                press.handled = true
                                                 while (true) {
                                                     tap()
                                                     delay(repeatIntervalMs)

@@ -17,6 +17,29 @@ internal data class WordSuggestion(
     val nextWord: Boolean = typed.isEmpty()
 )
 
+private val englishContractions = mapOf(
+    "im" to "I'm", "ive" to "I've",
+    "cant" to "can't", "wont" to "won't", "dont" to "don't", "doesnt" to "doesn't", "didnt" to "didn't",
+    "isnt" to "isn't", "arent" to "aren't", "wasnt" to "wasn't", "werent" to "weren't",
+    "havent" to "haven't", "hasnt" to "hasn't", "hadnt" to "hadn't",
+    "couldnt" to "couldn't", "shouldnt" to "shouldn't", "wouldnt" to "wouldn't",
+    "couldve" to "could've", "shouldve" to "should've", "wouldve" to "would've",
+    "youre" to "you're", "youve" to "you've", "youll" to "you'll", "weve" to "we've",
+    "theyre" to "they're", "theyve" to "they've", "theyll" to "they'll",
+    "thats" to "that's", "whats" to "what's", "whos" to "who's", "theres" to "there's"
+)
+private val nounDeterminers = setOf("a", "an", "the", "his", "her", "my", "our", "your", "their", "its", "some")
+
+internal fun englishContraction(typed: String, preceding: String): String? {
+    if (typed.all(Char::isUpperCase)) return null
+    val lower = typed.lowercase(Locale.ROOT)
+    val contraction = englishContractions[lower] ?: return null
+    if ((lower == "cant" || lower == "wont") && lastContextWord(preceding)?.lowercase(Locale.ROOT) in nounDeterminers) {
+        return null
+    }
+    return if (typed.first().isUpperCase()) contraction.replaceFirstChar { it.titlecase(Locale.ROOT) } else contraction
+}
+
 internal class EnglishSuggestions(private val context: Context) {
     private val token = Regex("""[\p{L}\p{M}\u200C\u200D]+(?:['’][\p{L}\p{M}\u200C\u200D]+)?\z""")
     private val indic = IndicTyping(context)
@@ -56,7 +79,8 @@ internal class EnglishSuggestions(private val context: Context) {
         val known: Set<String> = emptySet(),
         val hidden: Set<String> = emptySet(),
         val frequency: Map<String, Int> = emptyMap(),
-        val nextByWord: Map<String, List<String>> = emptyMap()
+        val nextByWord: Map<String, List<String>> = emptyMap(),
+        val manual: Set<String> = emptySet()
     )
 
     @Volatile private var personalRank = PersonalRank()
@@ -76,7 +100,7 @@ internal class EnglishSuggestions(private val context: Context) {
             candidates.map { profile.words[it]?.text ?: it }
         }
         personalRank = PersonalRank(ranked.map { wordKey(it) to it }, ranked.mapTo(hashSetOf(), ::wordKey),
-            hidden, counts, nextByWord)
+            hidden, counts, nextByWord, manual)
     }
 
     fun inPersonalDictionary(word: String): Boolean = wordKey(word) in personalRank.known
@@ -125,12 +149,15 @@ internal class EnglishSuggestions(private val context: Context) {
     }
 
     /** Called on the key path: only a small lookup or a precomputed candidate, no dictionary work. */
-    fun automaticCorrection(beforeCursor: String): WordSuggestion? {
+    fun automaticCorrection(beforeCursor: String, contractionsOnly: Boolean = false): WordSuggestion? {
         val match = token.find(beforeCursor) ?: return null
         val typed = match.value
         if (typed.length !in 2..24 || typed.all(Char::isUpperCase)) return null
         val preceding = beforeCursor.getOrNull(match.range.first - 1)
         if (preceding != null && !preceding.isWhitespace() && preceding !in "([\"“‘") return null
+        val contraction = preferredContraction(typed, beforeCursor.take(match.range.first), personalized = true)
+        if (contraction != null) return WordSuggestion(typed, contraction)
+        if (contractionsOnly) return null
         val lower = typed.lowercase(Locale.ROOT)
         if (lower in personalRank.known) return null
         val replacement = commonTypos[lower]
@@ -140,10 +167,18 @@ internal class EnglishSuggestions(private val context: Context) {
         return WordSuggestion(typed, cased)
     }
 
-    fun swipe(language: KeyboardLanguage, points: List<SwipePoint>, before: String): List<String> {
+    private fun preferredContraction(typed: String, before: String, personalized: Boolean): String? {
+        if (personalized && wordKey(typed) in personalRank.manual) return null
+        return englishContraction(typed, before)?.takeUnless { personalized && hidesSuggestion(it) }
+    }
+
+    fun swipe(language: KeyboardLanguage, points: List<SwipePoint>, before: String, personalized: Boolean = false): List<String> {
         if (language.transliterationTarget != null) return indic.swipe(points, language, before)
         val hinglish = language.id == "hi-Latn"
-        NativeTyping.swipe(context, language, points, before, continuations(before, hinglish))?.let { return it }
+        val next = continuations(before, hinglish).let { regular ->
+            if (personalized) (personalNext(before) + regular).distinctBy(::wordKey).take(4) else regular
+        }
+        NativeTyping.swipe(context, language, points, before, next)?.let { return it }
         return when {
             language.isEnglish -> listOfNotNull(swipeDecoder.decode(points))
             hinglish -> listOfNotNull(hinglishSwipeDecoder.decode(points))
@@ -185,6 +220,9 @@ internal class EnglishSuggestions(private val context: Context) {
                 predictions, personal + regional.map { it.label })
         }
         val word = typed.lowercase(Locale.ROOT)
+        if (legacy) preferredContraction(typed, before, personalized)?.let { contraction ->
+            return@withContext toolbarCandidates(typed, contraction, nextAfter(contraction, layout, personalized), personal)
+        }
         val next = if (legacy) continuations(before, hinglish) else emptyList()
         if (typed.length > 24) return@withContext listOf(original)
         NativeTyping.suggestions(context, if (layout.isEnglish) "en" else language, word, before, next)?.let { ranked ->
@@ -275,10 +313,7 @@ internal class EnglishSuggestions(private val context: Context) {
             "woudl" to "would", "coudl" to "could", "shoudl" to "should",
             "recieve" to "receive", "recieved" to "received", "becuase" to "because",
             "beacuse" to "because", "definately" to "definitely", "seperate" to "separate",
-            "alot" to "a lot", "dont" to "don't", "doesnt" to "doesn't", "didnt" to "didn't",
-            "isnt" to "isn't", "wasnt" to "wasn't", "couldnt" to "couldn't",
-            "shouldnt" to "shouldn't", "wouldnt" to "wouldn't", "youre" to "you're",
-            "youve" to "you've", "thats" to "that's", "whats" to "what's"
+            "alot" to "a lot"
         )
         val nextWords = mapOf(
             "i" to listOf("am", "will", "have"), "you" to listOf("are", "can", "will"),

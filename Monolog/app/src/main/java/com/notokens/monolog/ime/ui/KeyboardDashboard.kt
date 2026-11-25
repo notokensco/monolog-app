@@ -61,6 +61,40 @@ private val recentClips = mutableStateListOf<Pair<String, Long>>()
 private var latestPrivateClip = 0L
 private var latestDeletedClip = 0L
 
+internal fun clearRecentKeyboardClips() {
+    recentClips.clear()
+    latestDeletedClip = System.currentTimeMillis()
+}
+
+@Composable
+internal fun rememberClipboardSuggestion(enabled: Boolean, triggers: String): String? {
+    val context = LocalContext.current
+    var current by remember { mutableStateOf<String?>(null) }
+    DisposableEffect(context, enabled, triggers) {
+        val manager = context.getSystemService(ClipboardManager::class.java)
+        val detector = SensitiveDraft().apply { setWords(triggers) }
+        val listener = ClipboardManager.OnPrimaryClipChangedListener {
+            current = runCatching {
+                val clip = manager?.primaryClip ?: return@runCatching null
+                if (clip.description.timestamp <= maxOf(latestPrivateClip, latestDeletedClip) ||
+                    System.currentTimeMillis() - clip.description.timestamp >= CLIP_LIFE_MS ||
+                    clip.description.extras?.getBoolean(ClipDescription.EXTRA_IS_SENSITIVE) == true ||
+                    clip.itemCount == 0) return@runCatching null
+                clip.getItemAt(0).text?.toString()?.takeIf { it.isNotBlank() && it.length <= 4000 && !detector.matches(it) }
+            }.getOrNull()
+        }
+        if (enabled) {
+            manager?.addPrimaryClipChangedListener(listener)
+            listener.onPrimaryClipChanged()
+        }
+        onDispose {
+            if (enabled) manager?.removePrimaryClipChangedListener(listener)
+            current = null
+        }
+    }
+    return current.takeIf { enabled }
+}
+
 @Composable
 internal fun rememberKeyboardClips(settings: SettingsStore, privateMode: Boolean, visible: Boolean): List<String> {
     val context = LocalContext.current
@@ -80,7 +114,7 @@ internal fun rememberKeyboardClips(settings: SettingsStore, privateMode: Boolean
             val text = runCatching {
                 val clip = manager?.primaryClip ?: return@runCatching null
                 val timestamp = clip.description.timestamp
-                if (timestamp <= latestPrivateClip || timestamp == latestDeletedClip || System.currentTimeMillis() - timestamp >= CLIP_LIFE_MS ||
+                if (timestamp <= latestPrivateClip || timestamp <= latestDeletedClip || System.currentTimeMillis() - timestamp >= CLIP_LIFE_MS ||
                     clip.description.extras?.getBoolean(ClipDescription.EXTRA_IS_SENSITIVE) == true ||
                     clip.itemCount == 0) null else clip.getItemAt(0).text?.toString()?.let { it to timestamp }
             }.getOrNull()?.takeIf { (text, _) -> text.length <= 4000 && text.isNotBlank() && !detector.matches(text) } ?: return
@@ -115,7 +149,7 @@ internal enum class DashboardTile(val label: String, val glyph: Glyph, val extra
     REDO("Redo", Glyph.ARROW, true), AUTOFILL("Autofill", Glyph.SHIELD, true),
     LANGUAGE("Languages", Glyph.GLOBE, true), APPEARANCE("Appearance", Glyph.PAPER, true),
     TRANSLATE("Translate", Glyph.GLOBE, true), GIFS("GIFs", Glyph.PHOTO, true),
-    STICKERS("Stickers", Glyph.SMILE, true);
+    STICKERS("Stickers", Glyph.SMILE, true), CHAT_ASSIST("Chat Assist", Glyph.BOLT);
 
     fun allowed(privateMode: Boolean, restricted: Boolean) =
         (!privateMode && !restricted) || this in setOf(
@@ -164,7 +198,9 @@ internal fun KeyboardDashboard(
     showClips: Boolean,
     onShowClips: (Boolean) -> Unit,
     onActivate: (DashboardTile) -> Unit,
-    onPaste: (String) -> Unit
+    onPaste: (String) -> Unit,
+    onRescue: (() -> Unit)? = null,
+    rescueBadge: Boolean = false
 ) {
     val clipboard by settings.keyboardClipboard.collectAsState(false)
     val pins by settings.clipboardPins.collectAsState(emptyList())
@@ -226,6 +262,7 @@ internal fun KeyboardDashboard(
                     IconControl(if (showAdd) Glyph.BACK else Glyph.PLUS,
                         if (showAdd) "Back to widgets" else "Add dashboard widget", { showAdd = !showAdd })
                 }
+                if (onRescue != null) DraftRescueButton(onRescue, rescueBadge)
                 IconControl(Glyph.SHARE, "Share Monolog", {
                     val share = Intent(Intent.ACTION_SEND).setType("text/plain")
                         .putExtra(Intent.EXTRA_TEXT, "https://monolog.notokens.co")

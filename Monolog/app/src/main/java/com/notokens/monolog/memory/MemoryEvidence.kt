@@ -20,7 +20,9 @@ internal object MeaningfulMoment {
         val angry = self.containsMatchIn(clean) && !notAngry.containsMatchIn(clean)
         val timed = Regex("\\b\\d{1,2}(?::\\d{2})?\\s*[ap]\\.?m\\b|\\bat\\s+\\d{1,2}:\\d{2}\\b",
             RegexOption.IGNORE_CASE).containsMatchIn(clean)
-        if (!explicit && !angry && (!(plans.containsMatchIn(clean) || timed) || clean.count { it.isLetter() } < 12)) return null
+        val letters = clean.count(Char::isLetter)
+        val substantialDraft = letters >= 24 && clean.split(' ').count { it.any(Char::isLetter) } >= 5
+        if (!explicit && !angry && !substantialDraft && (!(plans.containsMatchIn(clean) || timed) || letters < 12)) return null
         val match = if (angry) selfScore.find(clean) else null
         val reported = match?.groupValues?.drop(1)?.firstOrNull { it.isNotBlank() }?.toIntOrNull()
         val inferred = if (angry) when {

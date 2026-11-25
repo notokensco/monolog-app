@@ -49,6 +49,17 @@ internal class BackupCoordinator(
         return authorized(account) { it.list() }
     }
 
+    suspend fun deleteMonologBackups(account: BackupAccount): Int = operations.withLock {
+        requireConnected(account)
+        accounts.frequency("Manual")
+        com.notokens.monolog.connect.DriveConnect(context).discardLocalSession()
+        val removed = authorized(account) { drive ->
+            drive.deleteMonologData { accounts.requireSession(account.session) }
+        }
+        accounts.backupsDeleted(account.session)
+        removed
+    }
+
     suspend fun linkExistingKey(account: BackupAccount) = operations.withLock {
         requireConnected(account)
         val local = withContext(Dispatchers.IO) { if (keys.hasKey(account.id)) keys.load(account.id) else null }

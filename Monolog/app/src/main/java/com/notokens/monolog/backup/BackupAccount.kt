@@ -56,15 +56,18 @@ internal class BackupAccountStore private constructor(private val context: Conte
 
     fun select(id: String, email: String, name: String) {
         BackupWork.cancel(context)
+        com.notokens.monolog.connect.WebConnectRestoreWork.cancel(context)
         prefs.edit().clear().putString("id", id).putString("email", email).putString("name", name)
             .putString("session", UUID.randomUUID().toString()).persist()
     }
     fun signOut() {
         BackupWork.cancel(context)
+        com.notokens.monolog.connect.WebConnectRestoreWork.cancel(context)
         prefs.edit().clear().persist()
     }
     fun disconnect() {
         BackupWork.cancel(context)
+        com.notokens.monolog.connect.WebConnectRestoreWork.cancel(context)
         prefs.edit().putBoolean("connected", false).putBoolean("reconnect", false)
             .putString("frequency", "Manual").putString("session", UUID.randomUUID().toString()).persist()
     }
@@ -102,6 +105,11 @@ internal class BackupAccountStore private constructor(private val context: Conte
     fun success(session: String) {
         requireSession(session)
         prefs.edit().putLong("lastBackup", System.currentTimeMillis()).persist()
+    }
+    fun backupsDeleted(session: String) {
+        requireSession(session)
+        prefs.edit().remove("lastBackup").remove("loadedYears").putString("frequency", "Manual").persist()
+        BackupWork.cancel(context)
     }
     fun loaded(session: String, years: Set<Int>) {
         requireSession(session)

@@ -8,6 +8,8 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.width
 import androidx.compose.material3.Button
+import androidx.compose.material3.AlertDialog
+import androidx.compose.material3.FilterChip
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedTextField
@@ -21,6 +23,9 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.unit.dp
 import com.notokens.monolog.data.KeyboardPlacement
+import com.notokens.monolog.data.KeyboardOption
+import com.notokens.monolog.data.KeyboardTypeface
+import com.notokens.monolog.data.KeyTapSound
 import com.notokens.monolog.data.SettingsStore
 import com.notokens.monolog.data.VoiceInputEngine
 import com.notokens.monolog.ui.theme.PaperKeySubText
@@ -38,14 +43,17 @@ internal fun KeyboardBehaviorSettings(settings: SettingsStore) {
     val onlineMedia by settings.onlineMedia.collectAsState(false)
     val phoneActions by settings.phoneActions.collectAsState(true)
     val capitalize by settings.autoCapitalize.collectAsState(false)
-    val learn by settings.learnWords.collectAsState(true)
     val spellCheck by settings.systemSpellChecker.collectAsState(false)
     val cursorOnSpace by settings.cursorOnSpace.collectAsState(false)
-    val popups by settings.keyPopups.collectAsState(false)
+    val popups by settings.keyPopups.collectAsState(true)
+    val correct by settings.autocorrect.collectAsState(true)
+    val swipe by settings.swipeTyping.collectAsState(true)
+    val options by settings.keyboardOptions.collectAsState(KeyboardOption.entries.toSet())
     val popupMs by settings.keyPopupMs.collectAsState(70)
     val height by settings.keyHeightPercent.collectAsState(100)
     val vibrationHaptics by settings.vibrationHaptics.collectAsState(true)
     val keyHoldMs by settings.keyLongPressMs.collectAsState(350)
+    val longPressCharacters by settings.longPressCharacters.collectAsState(true)
     val trail by settings.swipeTrail.collectAsState(120)
     val savedTriggers by settings.sensitiveWords.collectAsState("")
     var triggers by remember(savedTriggers) { mutableStateOf(savedTriggers) }
@@ -59,16 +67,13 @@ internal fun KeyboardBehaviorSettings(settings: SettingsStore) {
         }
         if (borders) KeyboardSwitch("Compact keys", compact) { scope.launch { settings.setCompactKeys(it) } }
         KeyboardSwitch("Vibration haptics", vibrationHaptics) { scope.launch { settings.setVibrationHaptics(it) } }
-        KeyboardSwitch("Online GIFs and stickers", onlineMedia) { scope.launch { settings.setOnlineMedia(it) } }
-        KeyboardSwitch("Auto-capitalize sentences", capitalize) { scope.launch { settings.setAutoCapitalize(it) } }
-        KeyboardSwitch("Learn words I type", learn) { scope.launch { settings.setLearnWords(it) } }
-        KeyboardSwitch("Android spell checker", spellCheck) { scope.launch { settings.setSystemSpellChecker(it) } }
-        if (spellCheck) Text("Offers extra corrections from the spell checker selected in Android settings. Private fields stay local to Monolog.",
-            color = PaperKeySubText, style = MaterialTheme.typography.bodySmall)
-        KeyboardSwitch("Phone actions in toolbar and AI Ask", phoneActions) { scope.launch { settings.setPhoneActions(it) } }
-        if (phoneActions) Text("Suggests actions from typed text or the current clipboard without saving clipboard history.",
-            color = PaperKeySubText, style = MaterialTheme.typography.bodySmall)
+        for (option in listOf(KeyboardOption.NUMBERS, KeyboardOption.PASSWORD_NUMBERS, KeyboardOption.PERIOD, KeyboardOption.COMMA)) {
+            KeyboardSwitch(option.label, option in options) { scope.launch { settings.setKeyboardOption(option, it) } }
+        }
         KeyboardSwitch("Hold space to move the cursor", cursorOnSpace) { scope.launch { settings.setCursorOnSpace(it) } }
+        KeyboardSwitch("Touch and hold for numbers and symbols", longPressCharacters) {
+            scope.launch { settings.setLongPressCharacters(it) }
+        }
         KeyboardSwitch("Key popups", popups) { scope.launch { settings.setKeyPopups(it) } }
         if (popups) {
             Text("Popup delay · $previewDelay ms")
@@ -84,10 +89,32 @@ internal fun KeyboardBehaviorSettings(settings: SettingsStore) {
         Slider(previewKeyHoldMs.toFloat(), { previewKeyHoldMs = it.roundToInt() },
             onValueChangeFinished = { scope.launch { settings.setKeyLongPressMs(previewKeyHoldMs) } },
             valueRange = 150f..800f, steps = 12)
+    }
+    SettingsCard("Glide typing") {
+        KeyboardSwitch("Glide typing", swipe) { scope.launch { settings.setSwipeTyping(it) } }
+        KeyboardSwitch(KeyboardOption.GLIDE_DELETE.label, KeyboardOption.GLIDE_DELETE in options) {
+            scope.launch { settings.setKeyboardOption(KeyboardOption.GLIDE_DELETE, it) }
+        }
         Text(if (previewTrail == 0) "Swipe trail · Off" else "Swipe trail · ${previewTrail * 100 / 120}%")
         Slider(previewTrail.toFloat(), { previewTrail = it.roundToInt() },
             onValueChangeFinished = { scope.launch { settings.setSwipeTrail(previewTrail) } },
             valueRange = 0f..240f, steps = 11)
+    }
+    SettingsCard("Typing and suggestions") {
+        KeyboardSwitch("Autocorrect", correct) { scope.launch { settings.setAutocorrect(it) } }
+        if (correct) Text("Press Backspace immediately to undo an autocorrection.",
+            color = PaperKeySubText, style = MaterialTheme.typography.bodySmall)
+        KeyboardSwitch("Auto-capitalize sentences", capitalize) { scope.launch { settings.setAutoCapitalize(it) } }
+        KeyboardSwitch("Android spell checker", spellCheck) { scope.launch { settings.setSystemSpellChecker(it) } }
+        if (spellCheck) Text("Offers extra corrections from the spell checker selected in Android settings. Private fields stay local to Monolog.",
+            color = PaperKeySubText, style = MaterialTheme.typography.bodySmall)
+        for (option in listOf(KeyboardOption.WORD_STRIP, KeyboardOption.GRAMMAR, KeyboardOption.EMOJI, KeyboardOption.GIF, KeyboardOption.STICKER)) {
+            KeyboardSwitch(option.label, option in options) { scope.launch { settings.setKeyboardOption(option, it) } }
+        }
+        KeyboardSwitch("Online GIFs and stickers", onlineMedia) { scope.launch { settings.setOnlineMedia(it) } }
+        KeyboardSwitch("Text actions for addresses, phone numbers and email", phoneActions) {
+            scope.launch { settings.setPhoneActions(it) }
+        }
     }
     SettingsCard("Sensitive drafts") {
         Text("Matching drafts stay out of saved memory. Separate your own trigger words or phrases with commas.",
@@ -100,10 +127,93 @@ internal fun KeyboardBehaviorSettings(settings: SettingsStore) {
 }
 
 @Composable
-private fun KeyboardSwitch(label: String, checked: Boolean, onChange: (Boolean) -> Unit) {
+internal fun KeyboardSwitch(label: String, checked: Boolean, onChange: (Boolean) -> Unit) {
     Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
-        Text(label, Modifier.weight(1f))
+        Text(label, Modifier.weight(1f), color = MaterialTheme.colorScheme.onSurface)
         Switch(checked, onChange)
+    }
+}
+
+@Composable
+internal fun KeyboardPrivacySettings(settings: SettingsStore) {
+    val scope = rememberCoroutineScope()
+    val learn by settings.learnWords.collectAsState(true)
+    val history by settings.keyboardClipboard.collectAsState(false)
+    val rescue by settings.draftRescue.collectAsState(false)
+    val options by settings.keyboardOptions.collectAsState(KeyboardOption.entries.toSet())
+    var confirm by remember { mutableStateOf(false) }
+    if (confirm) AlertDialog(
+        onDismissRequest = { confirm = false },
+        title = { Text("Delete keyboard learning?") },
+        text = { Text("This clears learned words, typing patterns, and your personal dictionary on this device. Usage totals are kept. Drive copies can be deleted under Account & backup.") },
+        confirmButton = { TextButton(onClick = {
+            scope.launch { settings.deleteKeyboardLearning(); confirm = false }
+        }) { Text("Delete learning") } },
+        dismissButton = { TextButton(onClick = { confirm = false }) { Text("Cancel") } }
+    )
+    SettingsCard("Personalisation") {
+        KeyboardSwitch("Personalise for you", learn) { scope.launch { settings.setLearnWords(it) } }
+        Text("Use words and word combinations you type to improve suggestions on this device.",
+            color = PaperKeySubText, style = MaterialTheme.typography.bodySmall)
+        TextButton(onClick = { confirm = true }) { Text("Delete keyboard learning") }
+    }
+    SettingsCard("Clipboard and drafts") {
+        KeyboardSwitch(KeyboardOption.COPIED.label, KeyboardOption.COPIED in options) {
+            scope.launch { settings.setKeyboardOption(KeyboardOption.COPIED, it) }
+        }
+        KeyboardSwitch("Clipboard history", history) { scope.launch { settings.setKeyboardClipboard(it) } }
+        KeyboardSwitch("Draft Rescue", rescue) { scope.launch { settings.setDraftRescue(it) } }
+        Text("Draft Rescue holds up to 10 drafts in memory for 30 minutes. Drafts disappear when Monolog is closed by Android.",
+            color = PaperKeySubText, style = MaterialTheme.typography.bodySmall)
+    }
+}
+
+@Composable
+internal fun KeyboardStyleSettings(settings: SettingsStore) {
+    val context = androidx.compose.ui.platform.LocalContext.current
+    val scope = rememberCoroutineScope()
+    val font by settings.keyboardTypeface.collectAsState(KeyboardTypeface.MONOLOG)
+    val size by settings.keyboardFontSize.collectAsState(100)
+    val emojiColumns by settings.emojiColumns.collectAsState(8)
+    val sound by settings.keyTapSound.collectAsState(KeyTapSound.OFF)
+    var sizePreview by remember(size) { mutableIntStateOf(size) }
+    var columnsPreview by remember(emojiColumns) { mutableIntStateOf(emojiColumns) }
+    var message by remember { mutableStateOf<String?>(null) }
+    val picker = androidx.activity.compose.rememberLauncherForActivityResult(
+        androidx.activity.result.contract.ActivityResultContracts.OpenDocument()
+    ) { uri ->
+        if (uri != null) scope.launch {
+            try {
+                com.notokens.monolog.ime.ui.importKeySound(context.applicationContext, uri)
+                settings.setKeyTapSound(KeyTapSound.CUSTOM)
+                message = null
+            } catch (cancelled: kotlinx.coroutines.CancellationException) {
+                throw cancelled
+            } catch (error: Exception) {
+                message = error.message?.take(120) ?: "Couldn’t load that sound."
+            }
+        }
+    }
+    SettingsCard("Keyboard font and emoji size") {
+        for (choice in KeyboardTypeface.entries) {
+            FilterChip(selected = font == choice, onClick = { scope.launch { settings.setKeyboardTypeface(choice) } },
+                label = { Text(choice.label) })
+        }
+        Text("Keyboard font size · $sizePreview%")
+        Slider(sizePreview.toFloat(), { sizePreview = it.roundToInt() }, valueRange = 80f..130f, steps = 9,
+            onValueChangeFinished = { scope.launch { settings.setKeyboardFontSize(sizePreview) } })
+        Text("Emoji per row · $columnsPreview")
+        Slider(columnsPreview.toFloat(), { columnsPreview = it.roundToInt() }, valueRange = 5f..10f, steps = 4,
+            onValueChangeFinished = { scope.launch { settings.setEmojiColumns(columnsPreview) } })
+    }
+    SettingsCard("Key tap sound") {
+        for (choice in KeyTapSound.entries) {
+            FilterChip(selected = sound == choice, onClick = {
+                if (choice == KeyTapSound.CUSTOM) picker.launch(arrayOf("audio/*"))
+                else scope.launch { settings.setKeyTapSound(choice) }
+            }, label = { Text(choice.label) })
+        }
+        message?.let { Text(it, color = MaterialTheme.colorScheme.error) }
     }
 }
 

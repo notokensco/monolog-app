@@ -67,6 +67,7 @@ internal fun AccountBackupSettings(onboarding: Boolean = false) {
     var files by remember { mutableStateOf(emptyList<DriveBackup>()) }
     var authorizationSession by remember { mutableStateOf("") }
     var recovering by remember { mutableStateOf(false) }
+    var confirmDeleteBackups by remember { mutableStateOf(false) }
     val activity = remember(context) { context.activity() }
     DisposableEffect(activity) {
         val secure = activity?.window?.attributes?.flags?.and(WindowManager.LayoutParams.FLAG_SECURE) != 0
@@ -76,6 +77,7 @@ internal fun AccountBackupSettings(onboarding: Boolean = false) {
     LaunchedEffect(account.session) {
         files = emptyList()
         recovering = false
+        confirmDeleteBackups = false
     }
 
     fun run(work: suspend () -> Unit) {
@@ -108,6 +110,21 @@ internal fun AccountBackupSettings(onboarding: Boolean = false) {
             }
         }
     }
+
+    if (confirmDeleteBackups) androidx.compose.material3.AlertDialog(
+        onDismissRequest = { confirmDeleteBackups = false },
+        title = { Text("Delete Monolog backups from Drive?") },
+        text = { Text("This permanently removes Monolog’s encrypted backups and linked restore keys from ${account.email}. Automatic backups will pause. Your local entries stay on this device.") },
+        confirmButton = { TextButton(onClick = {
+            confirmDeleteBackups = false
+            run {
+                val removed = coordinator.deleteMonologBackups(account)
+                files = emptyList()
+                message = if (removed == 0) "No Monolog backups were found." else "Monolog backups deleted from Drive."
+            }
+        }) { Text("Delete backups") } },
+        dismissButton = { TextButton(onClick = { confirmDeleteBackups = false }) { Text("Cancel") } }
+    )
 
     suspend fun mergeCurrentYearAndBackUp() {
         val selected = store.state.value
@@ -219,6 +236,7 @@ internal fun AccountBackupSettings(onboarding: Boolean = false) {
                     else recovering = true
                 }
             }) { Text("Restore") }
+            TextButton(enabled = !busy, onClick = { confirmDeleteBackups = true }) { Text("Delete Monolog backups from Drive") }
             Row(Modifier.horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(6.dp)) {
                 listOf("Manual", "Daily", "Weekly", "Monthly").forEach { frequency ->
                     FilterChip(account.frequency == frequency, { store.frequency(frequency) },

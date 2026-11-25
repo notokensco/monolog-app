@@ -13,6 +13,8 @@ internal class MemoryPreferences(context: Context) {
     var explained: Boolean
         get() = prefs.getBoolean("explained", false)
         set(value) { prefs.edit().putBoolean("explained", value).apply() }
+    val clearedAt: Long get() = prefs.getLong("cleared_at", 0L)
+    fun markCleared() { prefs.edit().putLong("cleared_at", System.currentTimeMillis()).apply() }
 
     val enabledChanges = callbackFlow {
         val listener = SharedPreferences.OnSharedPreferenceChangeListener { _, key ->

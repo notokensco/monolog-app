@@ -56,6 +56,18 @@ data class BackupVersion(val owner: String, val recordId: String, val digest: St
         onDelete = ForeignKey.CASCADE)], indices = [Index("noteId")])
 data class BackupArchive(val owner: String, val noteId: Long, val fingerprint: String)
 
+@Entity(tableName = "web_connect_receipts", primaryKeys = ["session", "operation"])
+internal data class WebConnectReceipt(val session: String, val operation: String, val result: String, val expiresAt: Long)
+
+@Dao
+internal interface WebConnectDao {
+    @Query("SELECT result FROM web_connect_receipts WHERE session = :session AND operation = :operation")
+    suspend fun receipt(session: String, operation: String): String?
+    @Insert suspend fun insert(receipt: WebConnectReceipt)
+    @Query("DELETE FROM web_connect_receipts WHERE expiresAt <= :now OR session = :session")
+    suspend fun clear(now: Long, session: String = "")
+}
+
 @Dao
 interface BackupDao {
     @Query("SELECT * FROM backup_records") suspend fun records(): List<BackupRecord>
@@ -82,6 +94,7 @@ interface NoteDao {
     @Query("SELECT * FROM notes WHERE updatedAt >= :start AND updatedAt < :end ORDER BY updatedAt DESC LIMIT 1")
     fun observeLatestBetween(start: Long, end: Long): Flow<Note?>
     @Query("SELECT * FROM notes WHERE id = :id LIMIT 1") fun observe(id: Long): Flow<Note?>
+    @Query("SELECT * FROM notes WHERE id = :id LIMIT 1") suspend fun current(id: Long): Note?
     @Insert suspend fun insert(note: Note): Long
     @Update suspend fun update(note: Note): Int
     @Delete suspend fun delete(note: Note)
@@ -108,6 +121,7 @@ interface NotePhotoDao {
 interface ReminderDao {
     @Query("SELECT * FROM reminders ORDER BY dueAt ASC") fun observeAll(): Flow<List<Reminder>>
     @Query("SELECT * FROM reminders WHERE id = :id") fun observe(id: Long): Flow<Reminder?>
+    @Query("SELECT * FROM reminders WHERE id = :id") suspend fun current(id: Long): Reminder?
     @Query("SELECT * FROM reminders WHERE dueAt > :now ORDER BY dueAt ASC LIMIT 1")
     fun observeNext(now: Long): Flow<Reminder?>
     @Query("SELECT * FROM reminders") suspend fun all(): List<Reminder>
@@ -119,13 +133,15 @@ interface ReminderDao {
 
 @Database(entities = [Note::class, Reminder::class, NotePhoto::class, BackupRecord::class,
     BackupVersion::class, BackupArchive::class, MemoryRecord::class, MemoryRecap::class,
-    MemoryBackupReceipt::class, YearDownload::class, YearDownloadNote::class], version = 5, exportSchema = false)
+    MemoryBackupReceipt::class, YearDownload::class, YearDownloadNote::class, WebConnectReceipt::class],
+    version = 6, exportSchema = false)
 abstract class MonologDatabase : RoomDatabase() {
     abstract fun notes(): NoteDao
     abstract fun photos(): NotePhotoDao
     abstract fun reminders(): ReminderDao
     abstract fun backups(): BackupDao
     abstract fun memories(): MemoryDao
+    internal abstract fun webConnect(): WebConnectDao
 
     companion object {
         @Volatile private var instance: MonologDatabase? = null
@@ -196,10 +212,17 @@ abstract class MonologDatabase : RoomDatabase() {
             }
         }
 
+        internal val webConnectMigration: Migration = object : Migration(5, 6) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                db.execSQL("CREATE TABLE IF NOT EXISTS web_connect_receipts (session TEXT NOT NULL, operation TEXT NOT NULL, result TEXT NOT NULL, expiresAt INTEGER NOT NULL, PRIMARY KEY(session, operation))")
+            }
+        }
+
         fun get(context: Context): MonologDatabase = instance ?: synchronized(this) {
             instance ?: Room.databaseBuilder(
                 context.applicationContext, MonologDatabase::class.java, "monolog.db"
-            ).addMigrations(photosMigration, journalEncryption, backupMigration, memoryMigration).build().also { instance = it }
+            ).addMigrations(photosMigration, journalEncryption, backupMigration, memoryMigration, webConnectMigration)
+                .build().also { instance = it }
         }
     }
 }

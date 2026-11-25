@@ -67,17 +67,30 @@ internal class VoxController(
         val session = generation
         update(state.copy(status = VoxStatus.PREPARING, errorMessage = null))
         scope.launch {
-            val selected = settings.voiceInputEngine.first()
-            pauseMs = settings.voxPause.first()
-            if (recordingNote) smartFilter = settings.smartVoxFilter.first()
-            if (session != generation || !isListening) return@launch
-            regionalMode = mode ?: VoxLanguage.resolve(settings.voxLanguage.first(), languageTag)
-            if (session != generation || !isListening) return@launch
-            activeEngine = if (recordingNote && selected == VoiceInputEngine.NATIVE) {
-                if (RegionalVox.ready(context, regionalMode)) VoiceInputEngine.REGIONAL else VoiceInputEngine.MOONSHINE
-            } else selected
-            startEngine()
+            try {
+                val selected = settings.voiceInputEngine.first()
+                pauseMs = settings.voxPause.first()
+                if (recordingNote) smartFilter = settings.smartVoxFilter.first()
+                if (session != generation || !isListening) return@launch
+                regionalMode = mode ?: VoxLanguage.resolve(settings.voxLanguage.first(), languageTag)
+                if (session != generation || !isListening) return@launch
+                activeEngine = if (recordingNote && selected == VoiceInputEngine.NATIVE) {
+                    if (RegionalVox.ready(context, regionalMode)) VoiceInputEngine.REGIONAL else VoiceInputEngine.MOONSHINE
+                } else selected
+                startEngine()
+            } catch (cancelled: CancellationException) {
+                throw cancelled
+            } catch (_: Exception) {
+                if (session == generation) failToStart()
+            } catch (_: LinkageError) {
+                if (session == generation) failToStart()
+            }
         }
+    }
+
+    private fun failToStart() {
+        cleanup()
+        update(state.copy(status = VoxStatus.ERROR, errorMessage = "Couldn’t start Vox. Check your voice model and try again."))
     }
 
     private fun startEngine() {
