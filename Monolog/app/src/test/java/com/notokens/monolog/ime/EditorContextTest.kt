@@ -90,14 +90,39 @@ class EditorContextTest {
     }
 
     @Test
-    fun testMultilineEditorForcesEnterAction() {
+    fun testMultilineEditorWithExplicitActionResolvesAction() {
         val info = EditorInfo().apply {
             inputType = InputType.TYPE_CLASS_TEXT or InputType.TYPE_TEXT_FLAG_MULTI_LINE
             imeOptions = EditorInfo.IME_ACTION_SEARCH
         }
         val context = EditorContext.fromEditorInfo(info)
         assertTrue(context.isMultiline)
-        assertEquals(KeyboardAction.ENTER, context.action)
+        assertEquals(KeyboardAction.SEARCH, context.action)
+
+        val sendInfo = EditorInfo().apply {
+            inputType = InputType.TYPE_CLASS_TEXT or InputType.TYPE_TEXT_FLAG_MULTI_LINE
+            imeOptions = EditorInfo.IME_ACTION_SEND
+        }
+        assertEquals(KeyboardAction.SEND, EditorContext.fromEditorInfo(sendInfo).action)
+    }
+
+    @Test
+    fun testMultilineEditorWithNoEnterActionOrUnspecifiedForcesEnterAction() {
+        val noEnterActionInfo = EditorInfo().apply {
+            inputType = InputType.TYPE_CLASS_TEXT or InputType.TYPE_TEXT_FLAG_MULTI_LINE
+            imeOptions = EditorInfo.IME_ACTION_SEARCH or EditorInfo.IME_FLAG_NO_ENTER_ACTION
+        }
+        val noEnterContext = EditorContext.fromEditorInfo(noEnterActionInfo)
+        assertTrue(noEnterContext.isMultiline)
+        assertEquals(KeyboardAction.ENTER, noEnterContext.action)
+
+        val unspecifiedInfo = EditorInfo().apply {
+            inputType = InputType.TYPE_CLASS_TEXT or InputType.TYPE_TEXT_FLAG_MULTI_LINE
+            imeOptions = EditorInfo.IME_ACTION_UNSPECIFIED
+        }
+        val unspecifiedContext = EditorContext.fromEditorInfo(unspecifiedInfo)
+        assertTrue(unspecifiedContext.isMultiline)
+        assertEquals(KeyboardAction.ENTER, unspecifiedContext.action)
     }
 
     @Test

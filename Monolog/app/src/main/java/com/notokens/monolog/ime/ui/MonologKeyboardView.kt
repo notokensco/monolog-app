@@ -1194,8 +1194,15 @@ private fun BottomRow(
             Modifier.weight(1.15f),
             label = "Comma",
             previewText = ",",
-            longClickLabel = "Open emoji picker",
-            onLongClick = onEmojiClick,
+            longClickLabel = "Open emoji picker or switch language",
+            alternates = if (languageMenu != null) listOf("☺", "🌐") else emptyList(),
+            onAlternate = { symbol ->
+                when (symbol) {
+                    "☺" -> onEmojiClick()
+                    "🌐" -> languageMenu?.invoke()
+                }
+            },
+            onLongClick = if (languageMenu == null) onEmojiClick else null,
             onClick = { onCharTyped(",") }
         ) {
             Column(horizontalAlignment = Alignment.CenterHorizontally) {
@@ -1246,15 +1253,7 @@ private fun BottomRow(
                 editorContext.isIncognito -> "Incognito is automatic for this private field"
                 else -> "Turn on incognito for 15 minutes"
             },
-            alternates = if (languageMenu != null) listOf("☺", "🌐", "◉") else emptyList(),
-            onAlternate = { symbol ->
-                when (symbol) {
-                    "☺" -> onEmojiClick()
-                    "🌐" -> languageMenu?.invoke()
-                    "◉" -> onToggleIncognito()
-                }
-            },
-            onLongClick = if (languageMenu == null) onToggleIncognito else null,
+            onLongClick = onToggleIncognito,
             glow = editorContext.isIncognito,
             onClick = { onCharTyped(".") }
         ) {
