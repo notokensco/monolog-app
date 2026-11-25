@@ -318,6 +318,13 @@ internal fun VoiceInputSettings(settings: SettingsStore, onRequestMicPermission:
 internal fun KeyboardUsageSettings(settings: SettingsStore) {
     val profile by settings.typingProfile.collectAsState(com.notokens.monolog.data.TypingProfile())
     val manualWords by settings.personalWords.collectAsState(emptySet())
+    val personal by settings.personalProfile.collectAsState(com.notokens.monolog.data.PersonalProfile())
+    SettingsCard("Last browser sign-in") {
+        val format = java.text.DateFormat.getDateTimeInstance(java.text.DateFormat.MEDIUM, java.text.DateFormat.SHORT)
+        for ((label, time) in listOf("Local Connect" to personal.localSignIn, "Web Connect" to personal.driveSignIn)) {
+            Text("$label · ${if (time > 0) format.format(java.util.Date(time)) else "No sign-in yet"}", color = PaperKeyText)
+        }
+    }
     SettingsCard("Keyboard activity") {
         Text("Counts exclude incognito and protected fields. Enable Keyboard profile in Account & backup to include them in Drive backups.",
             style = MaterialTheme.typography.bodySmall, color = PaperKeySubText)

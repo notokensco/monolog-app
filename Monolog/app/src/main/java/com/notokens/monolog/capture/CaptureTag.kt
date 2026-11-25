@@ -31,7 +31,7 @@ object TagMetadataCodec {
             if (tags.isNotEmpty()) {
                 appendLine("### Tags (${tags.size}/5)")
                 tags.forEach { tag ->
-                    val label = if (tag.isVoice) "Voice note" else "Pinned note"
+                    val label = if (tag.isVoice) "Audio Note" else "Pinned note"
                     appendLine("- **$label:** ${tag.text}")
                 }
                 appendLine()

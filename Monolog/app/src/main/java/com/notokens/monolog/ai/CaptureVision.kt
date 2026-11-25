@@ -24,7 +24,8 @@ internal data class VisionEvidence(
     val objects: List<PositionedText>,
     val labels: List<String>,
     val width: Int,
-    val height: Int
+    val height: Int,
+    val recognizedText: String
 ) {
     fun imageKeywords(bitmap: Bitmap): List<String> {
         val names = (objects.map { it.text }.filterNot { it == "unclassified" } + labels)
@@ -67,17 +68,6 @@ internal data class VisionEvidence(
         return counts.indices.maxByOrNull { counts[it] }?.takeIf { counts[it] >= 26 }?.let(palette::get)
     }
 
-    fun description(): String = buildString {
-        text.forEach { item -> appendLine("Text at " + position(item.box) + ": " + item.text) }
-        if (labels.isNotEmpty()) append("Whole-image labels: ").appendLine(labels.joinToString())
-        objects.forEach { item -> appendLine("Object at " + position(item.box) + ": " + item.text) }
-    }.trim()
-
-    private fun position(box: Rect): String = String.format(
-        Locale.ROOT, "(%.0f, %.0f)–(%.0f, %.0f)%% from top left",
-        100f * box.left / width, 100f * box.top / height,
-        100f * box.right / width, 100f * box.bottom / height
-    )
 }
 
 internal object CaptureVision {
@@ -85,11 +75,13 @@ internal object CaptureVision {
         LocalMlKit.initialize(context)
         val image = InputImage.fromBitmap(bitmap, 0)
         val text = async {
-            safe(emptyList()) {
+            safe(emptyList<PositionedText>() to "") {
                 TextRecognition.getClient(TextRecognizerOptions.DEFAULT_OPTIONS).use { client ->
-                    client.process(image).await().textBlocks.flatMap { it.lines }
+                    val result = client.process(image).await()
+                    val lines = result.textBlocks.flatMap { it.lines }
                         .mapNotNull { line -> line.boundingBox?.let { PositionedText(line.text.take(180), it) } }
                         .sortedWith(compareBy<PositionedText> { it.box.top }.thenBy { it.box.left }).take(40)
+                    lines to result.text
                 }
             }
         }
@@ -112,7 +104,8 @@ internal object CaptureVision {
                 }
             }
         }
-        VisionEvidence(text.await(), objects.await(), labels.await(), bitmap.width, bitmap.height)
+        val (lines, recognizedText) = text.await()
+        VisionEvidence(lines, objects.await(), labels.await(), bitmap.width, bitmap.height, recognizedText)
     }
 
     suspend fun ask(context: Context, bitmap: Bitmap, question: String): String {

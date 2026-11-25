@@ -168,6 +168,19 @@ internal fun AccountBackupSettings(onboarding: Boolean = false) {
         }
     }
 
+    if (!onboarding) {
+        val settings = remember(context) { com.notokens.monolog.data.SettingsStore(context) }
+        val profile by settings.personalProfile.collectAsState(com.notokens.monolog.data.PersonalProfile())
+        var draft by remember(profile.name) { mutableStateOf(profile.name) }
+        SettingsCard("Your name") {
+            ProfileNameField(draft) { draft = it }
+            Text("Used for your Today greeting on your phone and in the browser. Included with Keyboard profile backups.",
+                color = PaperKeySubText, style = MaterialTheme.typography.bodySmall)
+            TextButton(enabled = draft.trim() != profile.name, onClick = { run { settings.setProfileName(draft) } }) {
+                Text("Save name")
+            }
+        }
+    }
     SettingsCard("Google account") {
         Text(if (account.id.isBlank()) "Guest" else account.name.ifBlank { account.email },
             style = MaterialTheme.typography.titleMedium, color = PaperKeyText)

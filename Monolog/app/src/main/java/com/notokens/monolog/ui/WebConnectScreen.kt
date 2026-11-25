@@ -8,6 +8,7 @@ import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.compose.foundation.layout.*
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
+import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.dp
@@ -27,19 +28,24 @@ import java.text.DateFormat
 import java.util.Date
 
 @Composable
-internal fun WebConnectScreen(onAccount: () -> Unit) {
+internal fun WebConnectScreen(pairingUrl: String?, onPairingOpened: () -> Unit, onAccount: () -> Unit) {
     val context = LocalContext.current
     val app = context.applicationContext
     val accounts = remember(app) { BackupAccountStore.get(app) }
     val account by accounts.state.collectAsState()
     val settings = remember(app) { SettingsStore(app) }
-    val incognito by settings.incognito.collectAsState(true)
+    val privateState by settings.incognito.collectAsState(initial = null)
+    val incognito = privateState != false
     val cloud = remember(app) { DriveConnect(app) }
     val stored by cloud.state.collectAsState(null)
     val remote = stored?.takeIf { it.accountSession == account.session }
     val local by LocalConnect.state.collectAsState()
     val scope = rememberCoroutineScope()
-    var mode by remember { mutableStateOf(ConnectMode.LOCAL) }
+    var mode by rememberSaveable { mutableStateOf(ConnectMode.LOCAL) }
+    var pendingLink by rememberSaveable { mutableStateOf<String?>(null) }
+    val linkedRequest = remember(pendingLink, mode) {
+        pendingLink?.let { url -> runCatching { ConnectRequest.parse(url, mode) }.getOrNull() }
+    }
     var request by remember { mutableStateOf<ConnectRequest?>(null) }
     var busy by remember { mutableStateOf(false) }
     var problem by remember { mutableStateOf<String?>(null) }
@@ -69,6 +75,7 @@ internal fun WebConnectScreen(onAccount: () -> Unit) {
     }
 
     fun accept(code: String) {
+        pendingLink = null
         val scanned = try {
             ConnectRequest.parse(code, mode)
         } catch (_: Exception) {
@@ -88,6 +95,19 @@ internal fun WebConnectScreen(onAccount: () -> Unit) {
         }
     }
 
+    LaunchedEffect(pairingUrl, privateState) {
+        if (pairingUrl != null && privateState != null) {
+            val scanned = ConnectMode.entries.firstNotNullOfOrNull { choice ->
+                runCatching { ConnectRequest.parse(pairingUrl, choice) }.getOrNull()
+            }
+            if (scanned != null) {
+                mode = scanned.mode
+                request = null
+                pendingLink = pairingUrl
+            } else problem = "This pairing link is invalid. Scan a new code from your computer."
+            onPairingOpened()
+        }
+    }
     LaunchedEffect(incognito) {
         if (incognito) {
             LocalConnect.stop()
@@ -99,7 +119,7 @@ internal fun WebConnectScreen(onAccount: () -> Unit) {
         Text("Open web.monolog.notokens.co on your computer and choose the same connection method.")
         Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
             for (choice in ConnectMode.entries) FilterChip(selected = mode == choice, enabled = !busy,
-                onClick = { mode = choice; request = null; problem = null },
+                onClick = { mode = choice; request = null; pendingLink = null; problem = null },
                 label = { Text(if (choice == ConnectMode.LOCAL) "Local Connect" else "Web Connect") })
         }
         if (incognito) Text("Turn off incognito to share your journal.", color = MaterialTheme.colorScheme.error)
@@ -115,12 +135,12 @@ internal fun WebConnectScreen(onAccount: () -> Unit) {
                 Text("Locking the phone or leaving this Wi-Fi ends pairing.", style = MaterialTheme.typography.bodySmall)
                 OutlinedButton(onClick = { LocalConnect.stop() }) { Text("Disconnect") }
             } else if (!incognito) {
-                val pending = request?.takeIf { it.mode == ConnectMode.LOCAL }
+                val pending = (request ?: linkedRequest)?.takeIf { it.mode == ConnectMode.LOCAL }
                 if (pending == null) Button(enabled = !busy, onClick = {
                     scanner.launch(pairingScanOptions())
                 }) { Text("Scan browser QR") }
                 else Button(enabled = !busy, onClick = {
-                    run { LocalConnect.start(app, pending); request = null }
+                    run { LocalConnect.start(app, pending); request = null; pendingLink = null }
                 }) { Text("Share over Wi-Fi") }
             }
         } else {
@@ -129,17 +149,18 @@ internal fun WebConnectScreen(onAccount: () -> Unit) {
             if (!driveReady) {
                 OutlinedButton(onClick = onAccount) { Text("Open Account & backup") }
             } else if (!incognito && remote == null) {
-                val pending = request?.takeIf { it.mode == ConnectMode.WEB }
+                val pending = (request ?: linkedRequest)?.takeIf { it.mode == ConnectMode.WEB }
                 if (pending == null) Button(enabled = !busy, onClick = { scanner.launch(pairingScanOptions()) }) {
                     Text("Scan browser QR")
                 } else {
-                    Text(if (pending.stay) "The browser requested Stay signed in. Pairing can remain active for up to 30 days."
+                    Text(if (pending.stay) "The browser requested Keep signed in for the day. Pairing expires within 24 hours."
                         else "Temporary pairing expires in 24 hours.")
                     Button(enabled = !busy, onClick = {
                         run {
                             if (stored != null) cloud.restore()
                             cloud.start(pending)
                             request = null
+                            pendingLink = null
                         }
                     }) { Text("Sync now") }
                 }

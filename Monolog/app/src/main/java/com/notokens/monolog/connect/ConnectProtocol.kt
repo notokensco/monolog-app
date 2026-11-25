@@ -85,7 +85,6 @@ internal object ConnectProtocol {
         } finally { shared.fill(0) }
         val duration = when {
             request.mode == ConnectMode.LOCAL -> 2 * 60 * 60_000L
-            request.stay -> 30 * 24 * 60 * 60_000L
             else -> 24 * 60 * 60_000L
         }
         return ConnectPairing(ConnectChannel(request.session, base64Url(phone.public.encoded), key), pin, now + duration)

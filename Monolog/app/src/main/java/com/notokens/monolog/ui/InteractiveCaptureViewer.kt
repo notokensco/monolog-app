@@ -65,6 +65,7 @@ fun InteractiveCaptureViewer(
     val focus = LocalFocusManager.current
     val keyboard = LocalSoftwareKeyboardController.current
     val settings = remember { SettingsStore(context) }
+    val viewerColors = MaterialTheme.colorScheme
 
     val incognito by settings.incognito.collectAsState(initial = true)
     val borderColorHex by settings.captureBorderColor.collectAsState(initial = "#FFB800")
@@ -109,7 +110,7 @@ fun InteractiveCaptureViewer(
     }
 
     val micLauncher = rememberLauncherForActivityResult(ActivityResultContracts.RequestPermission()) { granted ->
-        if (!granted) Toast.makeText(context, "Microphone permission required for voice notes", Toast.LENGTH_SHORT).show()
+        if (!granted) Toast.makeText(context, "Microphone permission required for audio notes", Toast.LENGTH_SHORT).show()
     }
 
 
@@ -131,7 +132,7 @@ fun InteractiveCaptureViewer(
         BoxWithConstraints(
             modifier = Modifier
                 .fillMaxSize()
-                .background(Color(0xFF101014))
+                .background(viewerColors.surface)
                 .imePadding()
                 .systemBarsPadding()
         ) {
@@ -154,14 +155,14 @@ fun InteractiveCaptureViewer(
                         if (hasChanges) saveAllChanges()
                         onDismiss()
                     }) {
-                        MonologIcon(Glyph.CLOSE, Modifier.size(24.dp), Color.White)
+                        MonologIcon(Glyph.CLOSE, Modifier.size(24.dp), viewerColors.onSurface)
                     }
 
                     Column(Modifier.weight(1f).padding(horizontal = 8.dp),
                         horizontalAlignment = Alignment.CenterHorizontally) {
                         Text(
                             text = note.title,
-                            color = Color.White,
+                            color = viewerColors.onSurface,
                             fontSize = 16.sp,
                             fontWeight = FontWeight.SemiBold,
                             maxLines = 1,
@@ -169,12 +170,9 @@ fun InteractiveCaptureViewer(
                         )
                         Text(
                             text = if (tags.isEmpty()) "Tap photo to add note" else "${tags.size}/5 notes pinned",
-                            color = Color.White.copy(alpha = 0.6f),
+                            color = viewerColors.onSurfaceVariant,
                             fontSize = 12.sp
                         )
-                        TextButton(onClick = { scope.launch { scroll.animateScrollTo(scroll.maxValue) } }) {
-                            Text("Overall note", color = accentColor, fontSize = 12.sp)
-                        }
                     }
 
                     Row(verticalAlignment = Alignment.CenterVertically) {
@@ -190,9 +188,9 @@ fun InteractiveCaptureViewer(
                                 Toast.makeText(context, "Could not open the crop editor", Toast.LENGTH_SHORT).show()
                             }
                         }) {
-                            MonologIcon(Glyph.EXPAND, Modifier.size(18.dp), Color.White)
+                            MonologIcon(Glyph.EXPAND, Modifier.size(18.dp), viewerColors.onSurface)
                             Spacer(Modifier.width(5.dp))
-                            Text("Crop", color = Color.White)
+                            Text("Crop", color = viewerColors.onSurface)
                         }
                         if (hasChanges) {
                             Button(
@@ -203,6 +201,14 @@ fun InteractiveCaptureViewer(
                                 Text("Save", color = Color.Black, fontWeight = FontWeight.SemiBold, fontSize = 13.sp)
                             }
                         }
+                    }
+                }
+
+                Row(Modifier.fillMaxWidth().padding(horizontal = 16.dp),
+                    horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    bottomAudio?.let { VoiceNotePlayback(it) }
+                    TextButton(onClick = { editingBottomNote = true }) {
+                        Text(if (bottomAudio == null) "Audio Notes" else "Edit note")
                     }
                 }
 
@@ -353,8 +359,8 @@ fun InteractiveCaptureViewer(
                 // Bottom note card (Voice note or text note)
                 Surface(
                     shape = RoundedCornerShape(20.dp),
-                    color = Color(0xFF1E202A).copy(alpha = 0.92f),
-                    border = androidx.compose.foundation.BorderStroke(1.dp, Color.White.copy(alpha = 0.12f)),
+                    color = viewerColors.surfaceContainer,
+                    border = androidx.compose.foundation.BorderStroke(1.dp, viewerColors.outlineVariant),
                     modifier = Modifier
                         .fillMaxWidth()
                         .padding(horizontal = 16.dp, vertical = 10.dp)
@@ -373,8 +379,8 @@ fun InteractiveCaptureViewer(
                                 if (isBottomVoice) {
                                     MonologIcon(Glyph.MIC, Modifier.size(16.dp), accentColor)
                                     Text(
-                                        "Voice note",
-                                        color = accentColor,
+                                        "Audio Note",
+                                        color = viewerColors.onSurface,
                                         fontSize = 13.sp,
                                         fontWeight = FontWeight.SemiBold
                                     )
@@ -405,10 +411,10 @@ fun InteractiveCaptureViewer(
                                         }
                                     }
                                 } else {
-                                    MonologIcon(Glyph.BOOK, Modifier.size(16.dp), Color.White.copy(alpha = 0.7f))
+                                    MonologIcon(Glyph.BOOK, Modifier.size(16.dp), viewerColors.onSurfaceVariant)
                                     Text(
                                         "Overall Note",
-                                        color = Color.White.copy(alpha = 0.7f),
+                                        color = viewerColors.onSurfaceVariant,
                                         fontSize = 13.sp,
                                         fontWeight = FontWeight.SemiBold
                                     )
@@ -417,7 +423,7 @@ fun InteractiveCaptureViewer(
 
                             Text(
                                 "Tap to edit",
-                                color = Color.White.copy(alpha = 0.45f),
+                                color = viewerColors.onSurfaceVariant,
                                 fontSize = 11.sp
                             )
                         }
@@ -426,7 +432,7 @@ fun InteractiveCaptureViewer(
                             Spacer(Modifier.height(6.dp))
                             Text(
                                 text = bottomComment,
-                                color = Color.White,
+                                color = viewerColors.onSurface,
                                 fontSize = 14.sp,
                                 lineHeight = 20.sp
                             )
@@ -434,7 +440,7 @@ fun InteractiveCaptureViewer(
                             Spacer(Modifier.height(4.dp))
                             Text(
                                 text = "No overall note attached. Tap to add.",
-                                color = Color.White.copy(alpha = 0.4f),
+                                color = viewerColors.onSurfaceVariant,
                                 fontSize = 13.sp
                             )
                         }
@@ -446,30 +452,30 @@ fun InteractiveCaptureViewer(
             if (pendingTagLocation != null) {
                 CaptureNoteSheet(
                     onDismissRequest = { pendingTagLocation = null },
-                    containerColor = Color(0xFF1E1F26),
+                    containerColor = viewerColors.surfaceContainerHigh,
                     title = {
-                        Text("Add Note at Pin", color = Color.White, fontSize = 17.sp, fontWeight = FontWeight.SemiBold)
+                        Text("Add Note at Pin", color = viewerColors.onSurface, fontSize = 17.sp, fontWeight = FontWeight.SemiBold)
                     },
                     text = {
                         Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
                             OutlinedTextField(
                                 value = tagInputText,
                                 onValueChange = { tagInputText = it },
-                                placeholder = { Text("Write note...", color = Color.White.copy(alpha = 0.4f)) },
+                                placeholder = { Text("Write note...", color = viewerColors.onSurfaceVariant) },
                                 singleLine = true,
                                 modifier = Modifier.fillMaxWidth(),
                                 colors = OutlinedTextFieldDefaults.colors(
-                                    focusedTextColor = Color.White,
-                                    unfocusedTextColor = Color.White,
+                                    focusedTextColor = viewerColors.onSurface,
+                                    unfocusedTextColor = viewerColors.onSurface,
                                     focusedBorderColor = accentColor,
-                                    unfocusedBorderColor = Color.White.copy(alpha = 0.2f)
+                                    unfocusedBorderColor = viewerColors.outline
                                 )
                             )
 
                             VoiceNoteControl(enabled = !incognito, onPermission = { micLauncher.launch(Manifest.permission.RECORD_AUDIO) },
                                 onVoice = { voice ->
                                     val location = pendingTagLocation ?: return@VoiceNoteControl
-                                    tags.add(CaptureTag(location.first, location.second, voice.transcript.ifBlank { "Voice note" },
+                                    tags.add(CaptureTag(location.first, location.second, voice.transcript.ifBlank { "Audio Note" },
                                         isVoice = true, audio = voice.audio))
                                     hasChanges = true
                                     pendingTagLocation = null
@@ -495,7 +501,7 @@ fun InteractiveCaptureViewer(
                     },
                     dismissButton = {
                         TextButton(onClick = { pendingTagLocation = null }) {
-                            Text("Cancel", color = Color.White.copy(alpha = 0.7f))
+                            Text("Cancel", color = viewerColors.onSurfaceVariant)
                         }
                     }
                 )
@@ -507,9 +513,9 @@ fun InteractiveCaptureViewer(
                     val tag = tags[idx]
                     CaptureNoteSheet(
                         onDismissRequest = { editingTagIndex = null },
-                        containerColor = Color(0xFF1E1F26),
+                        containerColor = viewerColors.surfaceContainerHigh,
                         title = {
-                            Text(if (tag.isVoice) "Voice Note Tag" else "Text Tag", color = Color.White, fontSize = 17.sp, fontWeight = FontWeight.SemiBold)
+                            Text(if (tag.isVoice) "Pinned Audio Note" else "Text Tag", color = viewerColors.onSurface, fontSize = 17.sp, fontWeight = FontWeight.SemiBold)
                         },
                         text = {
                             Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
@@ -519,10 +525,10 @@ fun InteractiveCaptureViewer(
                                     singleLine = true,
                                     modifier = Modifier.fillMaxWidth(),
                                     colors = OutlinedTextFieldDefaults.colors(
-                                        focusedTextColor = Color.White,
-                                        unfocusedTextColor = Color.White,
+                                        focusedTextColor = viewerColors.onSurface,
+                                        unfocusedTextColor = viewerColors.onSurface,
                                         focusedBorderColor = accentColor,
-                                        unfocusedBorderColor = Color.White.copy(alpha = 0.2f)
+                                        unfocusedBorderColor = viewerColors.outline
                                     )
                                 )
 
@@ -530,7 +536,7 @@ fun InteractiveCaptureViewer(
                                 VoiceNoteControl(enabled = !incognito, onPermission = { micLauncher.launch(Manifest.permission.RECORD_AUDIO) },
                                     onVoice = { voice ->
                                         tags[idx] = tag.copy(audio = voice.audio, isVoice = true,
-                                            text = voice.transcript.ifBlank { tagInputText.ifBlank { "Voice note" } })
+                                            text = voice.transcript.ifBlank { tagInputText.ifBlank { "Audio Note" } })
                                         tagInputText = tags[idx].text
                                         hasChanges = true
                                     })
@@ -564,7 +570,7 @@ fun InteractiveCaptureViewer(
                         },
                         dismissButton = {
                             TextButton(onClick = { editingTagIndex = null }) {
-                                Text("Cancel", color = Color.White.copy(alpha = 0.7f))
+                                Text("Cancel", color = viewerColors.onSurfaceVariant)
                             }
                         }
                     )
@@ -578,23 +584,23 @@ fun InteractiveCaptureViewer(
                 var tempIsVoice by remember { mutableStateOf(isBottomVoice) }
                 CaptureNoteSheet(
                     onDismissRequest = { editingBottomNote = false },
-                    containerColor = Color(0xFF1E1F26),
+                    containerColor = viewerColors.surfaceContainerHigh,
                     title = {
-                        Text("Edit Overall Note", color = Color.White, fontSize = 17.sp, fontWeight = FontWeight.SemiBold)
+                        Text("Edit Overall Note", color = viewerColors.onSurface, fontSize = 17.sp, fontWeight = FontWeight.SemiBold)
                     },
                     text = {
                         Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
                             OutlinedTextField(
                                 value = tempBottom,
                                 onValueChange = { tempBottom = it },
-                                placeholder = { Text("Note description...", color = Color.White.copy(alpha = 0.4f)) },
+                                placeholder = { Text("Note description...", color = viewerColors.onSurfaceVariant) },
                                 modifier = Modifier.fillMaxWidth(),
                                 minLines = 3,
                                 colors = OutlinedTextFieldDefaults.colors(
-                                    focusedTextColor = Color.White,
-                                    unfocusedTextColor = Color.White,
+                                    focusedTextColor = viewerColors.onSurface,
+                                    unfocusedTextColor = viewerColors.onSurface,
                                     focusedBorderColor = accentColor,
-                                    unfocusedBorderColor = Color.White.copy(alpha = 0.2f)
+                                    unfocusedBorderColor = viewerColors.outline
                                 )
                             )
 
@@ -624,7 +630,7 @@ fun InteractiveCaptureViewer(
                     },
                     dismissButton = {
                         TextButton(onClick = { editingBottomNote = false }) {
-                            Text("Cancel", color = Color.White.copy(alpha = 0.7f))
+                            Text("Cancel", color = viewerColors.onSurfaceVariant)
                         }
                     }
                 )

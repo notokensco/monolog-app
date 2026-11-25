@@ -125,6 +125,8 @@ fun CompanionApp(
     appearance: Appearance,
     destination: CompanionDestination?,
     personalRoute: String? = null,
+    pairingUrl: String? = null,
+    onPairingOpened: () -> Unit = {},
     onDestinationOpened: () -> Unit,
     onRequestMicPermission: () -> Unit
 ) {
@@ -171,6 +173,11 @@ fun CompanionApp(
                 }
             }
             onDestinationOpened()
+        }
+    }
+    LaunchedEffect(pairingUrl) {
+        if (pairingUrl != null && nav.currentDestination?.route != SettingsPage.WEB_CONNECT.route) {
+            nav.navigate(SettingsPage.WEB_CONNECT.route) { launchSingleTop = true }
         }
     }
     var confirmClear by remember { mutableStateOf(false) }
@@ -250,7 +257,8 @@ fun CompanionApp(
                         val todayScope = rememberCoroutineScope()
                         val todayScroll = rememberScrollState()
                         val journal = remember(context) { MemorySearch(context.applicationContext) }
-                        Screen("Your day, remembered.", showWeatherAndDate = true, scrollState = todayScroll, footer = {
+                        val profile by settings.personalProfile.collectAsState(com.notokens.monolog.data.PersonalProfile())
+                        Screen(personalGreeting(profile.name), showWeatherAndDate = true, scrollState = todayScroll, footer = {
                             JournalAskBar(query, {
                                 request?.cancel()
                                 query = it
@@ -541,7 +549,7 @@ fun CompanionApp(
                                 item {
                                     Row(Modifier.horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(7.dp)) {
                                         listOf("All" to null, "Photos" to Glyph.PHOTO, "Screenshots" to Glyph.CAPTURE, "Voice" to Glyph.MIC).forEach { (label, glyph) ->
-                                            FilterChip(filter == label, { filter = label }, { Text(label) }, enabled = !selecting,
+                                            FilterChip(filter == label, { filter = label }, { Text(if (label == "Voice") "Audio Notes" else label) }, enabled = !selecting,
                                                 shape = RoundedCornerShape(22.dp),
                                                 leadingIcon = glyph?.let { icon -> { MonologIcon(icon, Modifier.size(14.dp)) } })
                                         }
@@ -626,6 +634,9 @@ fun CompanionApp(
                             Screen(note.title, onBack = navigateBack) {
                                 val decoded = remember(note.body) { TagMetadataCodec.decode(note.body) }
                                 Text(formatTime(note.updatedAt), color = muted)
+                                (decoded.bottomAudio ?: VoiceNoteBody.audio(note.body))?.let {
+                                    VoiceNotePlayback(it)
+                                }
                                 if (photos.isNotEmpty()) {
                                     Spacer(Modifier.height(14.dp))
                                     // Primary photo interactive hero card
@@ -670,12 +681,11 @@ fun CompanionApp(
                                 }
                                 if (decoded.hasMetadata) {
                                     Spacer(Modifier.height(14.dp))
-                                    CaptureDetails(decoded)
+                                    CaptureDetails(decoded, showBottomAudio = false)
                                 } else if (decoded.cleanBody.isNotBlank()) {
                                     Spacer(Modifier.height(14.dp))
                                     JournalMarkdown(decoded.cleanBody, Modifier.fillMaxWidth().glassSurface().padding(16.dp))
                                 }
-                                VoiceNoteBody.audio(note.body)?.let { VoiceNotePlayback(it) }
                                 Spacer(Modifier.height(20.dp))
                                 Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                                     Button(onClick = { nav.navigate("note/edit/${note.id}") }) { Text("Edit") }
@@ -789,7 +799,9 @@ fun CompanionApp(
                                     SettingsPage.ABOUT -> AboutSettings { nav.navigate(SettingsPage.USAGE.route) }
                                     SettingsPage.USAGE -> KeyboardUsageSettings(settings)
                                     SettingsPage.ACCOUNT -> AccountBackupSettings()
-                                    SettingsPage.WEB_CONNECT -> WebConnectScreen { nav.navigate(SettingsPage.ACCOUNT.route) }
+                                    SettingsPage.WEB_CONNECT -> WebConnectScreen(pairingUrl, onPairingOpened) {
+                                        nav.navigate(SettingsPage.ACCOUNT.route)
+                                    }
                                     SettingsPage.MEMORY -> MemorySettings()
                                     SettingsPage.KEYBOARD_STYLE -> KeyboardStyleSettings(settings)
                                     SettingsPage.APPEARANCE -> {
@@ -1410,7 +1422,7 @@ private fun NoteTile(
                 Box(Modifier.fillMaxWidth().height(106.dp).glassSurface(17, GlassAccent.LAVENDER),
                     contentAlignment = Alignment.Center) {
                     if (selecting) MonologIcon(Glyph.MIC)
-                    else VoiceNotePlayback(audio, "Play voice note", onLongClick = onSelect)
+                    else VoiceNotePlayback(audio, "Play audio note", onLongClick = onSelect)
                 }
             }
             Text(
@@ -1441,7 +1453,7 @@ private fun NoteTile(
                                         .background(PaperAccentBlue, RoundedCornerShape(1.dp))
                                 )
                             }
-                            Text("Voice note", color = PaperAccentBlue, style = MaterialTheme.typography.labelSmall)
+                            Text("Audio Note", color = PaperAccentBlue, style = MaterialTheme.typography.labelSmall)
                         }
                     }
                 } else if (excerpt.isNotEmpty()) {
@@ -1723,7 +1735,7 @@ private fun NoteEditor(initial: Note?, savedPhotos: List<NotePhotoRef>, onCancel
                                 VoiceNoteBody.attach(updated, voiceAudio)
                             }
                             MonologData.repository(context).saveNote(
-                                currentTitle.ifBlank { if (voiceAudio != null && currentBody.isBlank()) "Voice note" else "" },
+                                currentTitle.ifBlank { if (voiceAudio != null && currentBody.isBlank()) "Audio Note" else "" },
                                 savedBody, initial, NotePhotoChanges(removals, bytes)
                             )
                             onCancel()

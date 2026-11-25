@@ -1048,7 +1048,7 @@ class MonologInputMethodService : LifecycleInputMethodService() {
                 val note = com.notokens.monolog.ime.vox.VoiceNoteBody.attach(body, audio)
                 com.notokens.monolog.data.MonologData.repository(applicationContext).saveNote(
                     body.trim().split(Regex("\\s+")).take(6).joinToString(" ").take(65), note)
-                Toast.makeText(this@MonologInputMethodService, if (audio != null) "Voice note saved" else "Note saved as text", Toast.LENGTH_SHORT).show()
+                Toast.makeText(this@MonologInputMethodService, if (audio != null) "Audio note saved" else "Note saved as text", Toast.LENGTH_SHORT).show()
             } catch (cancelled: kotlinx.coroutines.CancellationException) { throw cancelled }
             catch (_: Exception) { Toast.makeText(this@MonologInputMethodService, "Couldn’t save the note.", Toast.LENGTH_SHORT).show() }
             finally { recorder?.cancel() }

@@ -74,6 +74,7 @@ internal class DriveConnect(private val context: Context) {
                 val receipts = existing.filter { it.role == "receipt" }.mapTo(mutableSetOf()) { it.operation }
                 var applied = 0
                 var conflicts = 0
+                var signedIn = false
                 for (file in existing.filter { it.role == "command" }) {
                     accounts.requireSession(session.accountSession)
                     if (!ConnectRecords.validOperation(file.operation) || file.size !in 28..ConnectProtocol.MAX_COMMAND_BYTES ||
@@ -88,6 +89,13 @@ internal class DriveConnect(private val context: Context) {
                         drive.deleteConnect(file)
                         continue
                     } catch (_: org.json.JSONException) {
+                        drive.deleteConnect(file)
+                        continue
+                    }
+                    if (command.optString("operationId") == file.operation && command.optString("op") == "signin") {
+                        accounts.requireSession(session.accountSession)
+                        SettingsStore(context).recordBrowserSignIn(local = false, time = file.createdAt)
+                        signedIn = true
                         drive.deleteConnect(file)
                         continue
                     }
@@ -117,7 +125,10 @@ internal class DriveConnect(private val context: Context) {
                     forget(session)
                     return@withLock null
                 }
-                if (refreshSnapshot || session.lastSync == 0L || applied > 0 && existing.any { it.role == "snapshot" }) {
+                val publishedAt = existing.filter { it.role == "snapshot" }.maxOfOrNull { it.createdAt }
+                val nameUpdatedAt = records.personalProfile.first().nameUpdatedAt
+                if (refreshSnapshot || session.lastSync == 0L || publishedAt != null &&
+                    (applied > 0 || signedIn || nameUpdatedAt > publishedAt)) {
                     publish(drive, session, existing)
                 }
                 save(session.copy(lastSync = System.currentTimeMillis(), applied = applied, conflicts = conflicts))
@@ -184,6 +195,7 @@ internal class DriveConnect(private val context: Context) {
         val row = JSONObject().put("session", session.channel.session).put("phoneKey", session.channel.phoneKey)
             .put("key", base64Url(session.channel.key)).put("pin", session.pin).put("expiresAt", session.expiresAt)
             .put("account", session.accountSession).put("stay", session.stay).put("lastSync", session.lastSync)
+            .put("dayExpiry", true)
             .put("applied", session.applied).put("conflicts", session.conflicts)
         check(prefs.edit().putString(SESSION, JournalCipher.seal(row.toString(), SESSION)).commit()) {
             "Could not save the Web Connect session."
@@ -195,8 +207,10 @@ internal class DriveConnect(private val context: Context) {
         runCatching {
             val row = JSONObject(JournalCipher.open(saved, SESSION))
             val channel = ConnectChannel(row.getString("session"), row.getString("phoneKey"), decodeUrl(row.getString("key")))
-            DriveConnectSession(channel, row.getString("pin"), row.getLong("expiresAt"), row.getString("account"),
-                row.optBoolean("stay"), row.optLong("lastSync"), row.optInt("applied"), row.optInt("conflicts"))
+            val stay = row.optBoolean("stay")
+            val legacyExtra = if (stay && !row.optBoolean("dayExpiry")) 29 * 24 * 60 * 60_000L else 0L
+            DriveConnectSession(channel, row.getString("pin"), row.getLong("expiresAt") - legacyExtra, row.getString("account"),
+                stay, row.optLong("lastSync"), row.optInt("applied"), row.optInt("conflicts"))
         }.getOrNull()
     }
 

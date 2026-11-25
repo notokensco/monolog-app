@@ -13,6 +13,7 @@ import com.notokens.monolog.data.Note
 import com.notokens.monolog.data.NotePhotoChanges
 import com.notokens.monolog.data.PhotoCodec
 import com.notokens.monolog.data.Reminder
+import com.notokens.monolog.data.SettingsStore
 import com.notokens.monolog.data.WebConnectReceipt
 import com.notokens.monolog.ime.vox.VoiceNoteBody
 import com.notokens.monolog.memory.MemoryRepository
@@ -30,6 +31,7 @@ internal class ConnectRecords(private val context: Context) {
     private val db = MonologDatabase.get(context)
     private val repository = MonologData.repository(context)
     private val memory = MemoryRepository(context)
+    val personalProfile = SettingsStore(context).personalProfile
     val changes = db.invalidationTracker.createFlow("notes", "note_photos", "memories", "reminders", "memory_recaps")
 
     suspend fun snapshot(since: String = ""): JSONObject = withContext(Dispatchers.IO) {
@@ -41,8 +43,10 @@ internal class ConnectRecords(private val context: Context) {
             )
         }
         val zone = ZoneId.systemDefault().id
+        val profile = personalProfile.first()
         val fingerprint = buildString {
             appendLine(zone)
+            appendLine(profile)
             for (note in current.notes) append(note.id).append(':').append(note.version()).append(':').appendLine(current.photos[note.id])
             for (moment in current.memories) append(moment.id).append(':').appendLine(moment.revision)
             for (reminder in current.reminders) append(reminder.id).append(':').appendLine(reminder.version())
@@ -100,7 +104,9 @@ internal class ConnectRecords(private val context: Context) {
         }
         JSONObject().put("snapshot", JSONObject().put("revision", fingerprint).put("zone", zone)
             .put("notes", notes).put("memories", moments).put("reminders", reminders)
-            .put("notePhotoEditing", true).put("dayBrief", dayBrief ?: JSONObject.NULL))
+            .put("notePhotoEditing", true).put("dayBrief", dayBrief ?: JSONObject.NULL)
+            .put("personalProfile", JSONObject().put("name", profile.name)
+                .put("localSignIn", profile.localSignIn).put("driveSignIn", profile.driveSignIn)))
     }
 
     suspend fun photo(id: String): JSONObject {

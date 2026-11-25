@@ -47,6 +47,7 @@ class MainActivity : ComponentActivity() {
 
     private var destination by mutableStateOf<CompanionDestination?>(null)
     private var personalRoute by mutableStateOf<String?>(null)
+    private var pairingUrl by mutableStateOf<String?>(null)
     private val micPermissionLauncher = registerForActivityResult(ActivityResultContracts.RequestPermission()) { granted ->
         Toast.makeText(this, if (granted) "Microphone enabled for Vox" else "Microphone permission required for Vox", Toast.LENGTH_SHORT).show()
     }
@@ -85,7 +86,7 @@ class MainActivity : ComponentActivity() {
             }
             val current = appearance ?: Appearance()
             var showLaunch by remember { mutableStateOf(launchFromHome) }
-            val launchVisible = showLaunch && destination == null && personalRoute == null
+            val launchVisible = showLaunch && destination == null && personalRoute == null && pairingUrl == null
             MonologTheme(appearance = current) {
                 val lightBars = !launchVisible && !LocalMonologDark.current
                 SideEffect {
@@ -101,6 +102,8 @@ class MainActivity : ComponentActivity() {
                     appearance = current,
                     destination = destination,
                     personalRoute = personalRoute,
+                    pairingUrl = pairingUrl,
+                    onPairingOpened = { pairingUrl = null; showLaunch = false },
                     onDestinationOpened = { destination = null; personalRoute = null },
                     onRequestMicPermission = { micPermissionLauncher.launch(Manifest.permission.RECORD_AUDIO) }
                 )
@@ -122,6 +125,12 @@ class MainActivity : ComponentActivity() {
         }
         personalRoute = null
         when (intent?.action) {
+            Intent.ACTION_VIEW -> {
+                val uri = intent.data
+                if (uri?.scheme == "https" && uri.encodedAuthority == "web.monolog.notokens.co" && uri.encodedPath == "/pair") {
+                    pairingUrl = uri.toString().takeIf { it.length <= 768 }
+                }
+            }
             ACTION_OPEN_PERSONAL_MATCH -> {
                 val note = intent.getLongExtra("note", 0)
                 val reminder = intent.getLongExtra("reminder", 0)

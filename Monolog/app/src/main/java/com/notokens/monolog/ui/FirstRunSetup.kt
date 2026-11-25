@@ -43,6 +43,8 @@ internal fun FirstRunSetup(settings: SettingsStore, onRequestMic: () -> Unit,
     val scope = rememberCoroutineScope()
     val lifecycle = LocalLifecycleOwner.current
     val memory = remember { MemoryPreferences(context) }
+    val profile by settings.personalProfile.collectAsState(com.notokens.monolog.data.PersonalProfile())
+    var draftName by rememberSaveable { mutableStateOf<String?>(null) }
     val language by settings.keyboardLanguage.collectAsState("en")
     val placement by settings.keyboardPlacement.collectAsState(KeyboardPlacement.FULL)
     val borders by settings.keyBorders.collectAsState(false)
@@ -92,6 +94,7 @@ internal fun FirstRunSetup(settings: SettingsStore, onRequestMic: () -> Unit,
             when (page) {
                 0 -> {
                     Text("Write, save a moment, and find it again in your private journal.", color = PaperKeySubText)
+                    ProfileNameField(draftName ?: profile.name) { draftName = it }
                     SettingsCard("Journal memory") {
                         Text("Turn this on to save meaningful moments from text you type. You can save notes and screenshots with this setting off.",
                             color = PaperKeyText)
@@ -155,7 +158,7 @@ internal fun FirstRunSetup(settings: SettingsStore, onRequestMic: () -> Unit,
                     }
                     Text("Turn on the Quick Capture shortcut and choose the floating accessibility button to capture even when the keyboard is closed.",
                         color = PaperKeySubText, style = MaterialTheme.typography.bodySmall)
-                    SetupAction("Voice typing & voice notes", microphone, "Enable microphone", onRequestMic)
+                    SetupAction("Voice typing & Audio Notes", microphone, "Enable microphone", onRequestMic)
                     SetupAction("Reminder notifications", notifications, "Enable notifications") {
                         requestNotifications.launch(Manifest.permission.POST_NOTIFICATIONS)
                     }
@@ -174,7 +177,12 @@ internal fun FirstRunSetup(settings: SettingsStore, onRequestMic: () -> Unit,
         }
         Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(12.dp)) {
             if (page > 0) OutlinedButton({ page-- }) { Text("Back") }
-            Button(onClick = { if (page < 4) page++ else finish(onFinish) },
+            Button(onClick = { if (page == 0) {
+                scope.launch {
+                    draftName?.let { settings.setProfileName(it) }
+                    page = 1
+                }
+            } else if (page < 4) page++ else finish(onFinish) },
                 enabled = page != 3 || offlineReady, modifier = Modifier.weight(1f)) {
                 Text(when {
                     page == 4 -> "Start using Monolog"

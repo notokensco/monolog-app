@@ -57,7 +57,7 @@ internal fun OnboardingModels(onReady: (Boolean) -> Unit) {
 
     SettingsCard("Choose what to set up") {
         Text("Choose the features you want. Finish their downloads before continuing.", color = PaperKeySubText)
-        FeatureDownloadToggle("Voice typing and voice notes", wantsVoice, { wantsVoice = it })
+        FeatureDownloadToggle("Voice typing and Audio Notes", wantsVoice, { wantsVoice = it })
         if (supportsText) FeatureDownloadToggle("On-device Ask and rewrites", wantsText, { wantsText = it })
         if (supportsBrief) FeatureDownloadToggle("AI daily briefs", wantsBrief, { wantsBrief = it })
     }

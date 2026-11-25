@@ -70,6 +70,30 @@ enum class VoiceInputEngine(val id: String, val label: String) {
 }
 
 class SettingsStore(private val context: Context) {
+    private val profileNameKey = stringPreferencesKey("personal_display_name")
+    private val profileNameTimeKey = longPreferencesKey("personal_display_name_updated_at")
+    private val localSignInKey = longPreferencesKey("web_connect_local_signed_in")
+    private val driveSignInKey = longPreferencesKey("web_connect_drive_signed_in")
+
+    internal val personalProfile = context.monologSettings.data.map {
+        PersonalProfile(it[profileNameKey].orEmpty(), it[profileNameTimeKey] ?: 0L,
+            it[localSignInKey] ?: 0L, it[driveSignInKey] ?: 0L)
+    }.distinctUntilChanged()
+
+    internal suspend fun setProfileName(name: String) {
+        val clean = limitProfileName(name.trim()).trimEnd()
+        context.monologSettings.edit {
+            if (it[profileNameKey].orEmpty() != clean) {
+                it[profileNameKey] = clean
+                it[profileNameTimeKey] = System.currentTimeMillis()
+            }
+        }
+    }
+
+    internal suspend fun recordBrowserSignIn(local: Boolean, time: Long) {
+        val key = if (local) localSignInKey else driveSignInKey
+        context.monologSettings.edit { if (time > (it[key] ?: 0L)) it[key] = time }
+    }
     private val typefaceKey = stringPreferencesKey("keyboard_typeface")
     private val keyFontSizeKey = intPreferencesKey("keyboard_font_percent")
     private val emojiColumnsKey = intPreferencesKey("keyboard_emoji_columns")
@@ -473,6 +497,8 @@ class SettingsStore(private val context: Context) {
     internal suspend fun exportKeyboard(): JSONObject {
         val values = preferences.first()
         return JSONObject().put("profile", readTypingProfile(values).encode()).put("settings", JSONObject().apply {
+            put(profileNameKey.name, values[profileNameKey].orEmpty())
+            put(profileNameTimeKey.name, values[profileNameTimeKey] ?: 0L)
             portableBooleans.forEach { put(it.name, values[it] ?: JSONObject.NULL) }
             portableIntegers.forEach { put(it.name, values[it] ?: JSONObject.NULL) }
             portableStrings.forEach { put(it.name, values[it] ?: JSONObject.NULL) }
@@ -485,6 +511,12 @@ class SettingsStore(private val context: Context) {
         val saved = snapshot.getJSONObject("settings")
         context.monologSettings.edit { values ->
             stillAuthorized()
+            val nameTime = saved.optLong(profileNameTimeKey.name)
+            val savedName = saved.opt(profileNameKey.name) as? String
+            if (savedName != null && nameTime > (values[profileNameTimeKey] ?: 0L)) {
+                values[profileNameKey] = limitProfileName(savedName.trim()).trimEnd()
+                values[profileNameTimeKey] = nameTime
+            }
             val profile = readTypingProfile(values).merge(remote)
             portableBooleans.forEach { key ->
                 when (val value = saved.opt(key.name)) {

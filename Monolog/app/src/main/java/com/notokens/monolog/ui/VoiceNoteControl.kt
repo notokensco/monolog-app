@@ -6,6 +6,7 @@ import android.media.MediaDataSource
 import android.media.MediaPlayer
 import android.util.Base64
 import androidx.compose.foundation.ExperimentalFoundationApi
+import androidx.compose.foundation.background
 import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.shape.CircleShape
@@ -96,7 +97,7 @@ internal fun VoiceNoteControl(
                     } else error = captions.errorMessage ?: "Nothing was recorded. Tap Vox to try again."
                 }
             } catch (cancelled: CancellationException) { throw cancelled }
-            catch (_: Exception) { error = "Couldn’t finish the voice note. Try again." }
+            catch (_: Exception) { error = "Couldn’t finish the audio note. Try again." }
             finally {
                 vox.clearTranscript()
                 processing = false
@@ -137,9 +138,9 @@ internal fun VoiceNoteControl(
             Spacer(Modifier.width(7.dp))
             Text(when {
                 recording -> "Stop recording"
-                processing -> "Finishing voice note…"
-                audioOnly -> "Record voice note"
-                else -> "Vox voice note"
+                processing -> "Finishing audio note…"
+                audioOnly -> "Record audio note"
+                else -> "Vox audio note"
             })
         }
         val caption = listOf(captions.transcript, captions.partialTranscript).filter(String::isNotBlank).joinToString(" ")
@@ -154,7 +155,7 @@ internal fun VoiceNoteControl(
 
 @Composable
 @OptIn(ExperimentalFoundationApi::class)
-internal fun VoiceNotePlayback(audio: String, label: String = "Play voice note", onLongClick: (() -> Unit)? = null) {
+internal fun VoiceNotePlayback(audio: String, label: String = "Play audio note", onLongClick: (() -> Unit)? = null) {
     var player by remember(audio) { mutableStateOf<MediaPlayer?>(null) }
     val active = rememberUpdatedState(player)
     DisposableEffect(audio) { onDispose { active.value?.release() } }
@@ -189,17 +190,18 @@ internal fun VoiceNotePlayback(audio: String, label: String = "Play voice note",
     }
     val playbackContent: @Composable () -> Unit = {
         Row(verticalAlignment = Alignment.CenterVertically) {
-            MonologIcon(Glyph.MIC, Modifier.size(17.dp))
+            MonologIcon(Glyph.MIC, Modifier.size(17.dp), MaterialTheme.colorScheme.onSecondaryContainer)
             Spacer(Modifier.width(6.dp))
-            Text(if (player != null) "Stop audio" else label, color = MaterialTheme.colorScheme.primary,
+            Text(if (player != null) "Stop audio" else label, color = MaterialTheme.colorScheme.onSecondaryContainer,
                 style = MaterialTheme.typography.labelLarge)
         }
     }
     if (onLongClick == null) {
-        TextButton(onClick = togglePlayback) { playbackContent() }
+        androidx.compose.material3.FilledTonalButton(onClick = togglePlayback) { playbackContent() }
     } else {
         Box(
             Modifier.heightIn(min = 48.dp).clip(CircleShape)
+                .background(MaterialTheme.colorScheme.secondaryContainer)
                 .combinedClickable(role = Role.Button, onClick = togglePlayback, onLongClickLabel = "Select item", onLongClick = onLongClick)
                 .padding(horizontal = 12.dp),
             contentAlignment = Alignment.Center

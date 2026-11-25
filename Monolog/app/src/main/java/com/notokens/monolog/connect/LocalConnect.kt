@@ -25,6 +25,7 @@ import kotlinx.coroutines.*
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.first
+import com.notokens.monolog.backup.BackupAccountStore
 import com.notokens.monolog.data.SettingsStore
 import org.json.JSONObject
 
@@ -121,6 +122,7 @@ internal object LocalConnect {
         manual: Boolean
     ) {
         private val records = ConnectRecords(context)
+        private val accounts = BackupAccountStore.get(context)
         private val channel = pairing.channel
         private val clients = java.util.concurrent.ConcurrentHashMap.newKeySet<Socket>()
         private val slots = Semaphore(4)
@@ -138,6 +140,9 @@ internal object LocalConnect {
             }
             workers.launch {
                 records.changes.collect { generation.incrementAndGet() }
+            }
+            workers.launch {
+                records.personalProfile.collect { generation.incrementAndGet() }
             }
             scope.launch {
                 try {
@@ -225,7 +230,13 @@ internal object LocalConnect {
             val operation = command.optString("op")
             val result = try {
                 when (operation) {
-                    "sync" -> sync(command.optString("since"))
+                    "sync" -> {
+                        if (command.optBoolean("signIn")) {
+                            SettingsStore(context).recordBrowserSignIn(local = true, time = System.currentTimeMillis())
+                            generation.incrementAndGet()
+                        }
+                        sync(command.optString("since"))
+                    }
                     "photo" -> records.photo(command.optString("id"))
                     "save", "delete" -> records.mutate(channel.session, pairing.expiresAt, command)
                     "disconnect" -> JSONObject().put("ok", true)
@@ -243,13 +254,17 @@ internal object LocalConnect {
         private suspend fun sync(since: String): JSONObject {
             val current = generation.get()
             val cached = lastRevision
-            if (cached != null && cached.first == current && cached.second == since) {
-                return JSONObject().put("unchanged", true)
+            val result = if (cached != null && cached.first == current && cached.second == since) {
+                JSONObject().put("unchanged", true)
+            } else {
+                records.snapshot(since).also {
+                    val revision = it.optJSONObject("snapshot")?.getString("revision") ?: since
+                    lastRevision = current to revision
+                }
             }
-            val result = records.snapshot(since)
-            val revision = result.optJSONObject("snapshot")?.getString("revision") ?: since
-            lastRevision = current to revision
-            return result
+            val account = accounts.state.value
+            val profile = if (account.id.isBlank()) JSONObject.NULL else JSONObject().put("name", account.name)
+            return result.put("profile", profile)
         }
     }
 

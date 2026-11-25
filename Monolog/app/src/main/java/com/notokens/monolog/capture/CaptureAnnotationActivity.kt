@@ -305,9 +305,13 @@ private fun CaptureAnnotationScreen(
                 if (settings.incognito.first()) return@launch
                 val additional = buildString {
                     appendLine("**Category:** $category")
-                    vision?.description()?.takeIf(String::isNotBlank)?.let {
+                    val recognized = vision?.recognizedText?.trim().orEmpty()
+                    if (recognized.isNotBlank()) {
                         appendLine().appendLine(TagMetadataCodec.ANALYSIS_HEADING)
-                        it.lineSequence().forEach { line -> append("> ").appendLine(line) }
+                        append(recognized)
+                    } else if (existing != null) {
+                        val prior = TagMetadataCodec.decode(existing.body).analysis
+                        if (prior.isNotBlank()) appendLine().appendLine(TagMetadataCodec.ANALYSIS_HEADING).append(prior)
                     }
                 }
                 val body = TagMetadataCodec.encodeCapture(annotations, commentIsVoice, comment, additional, bottomAudio, imageKeywords)
@@ -809,7 +813,7 @@ private fun CaptureAnnotationScreen(
                             onPermission = { micLauncher.launch(Manifest.permission.RECORD_AUDIO) },
                             onVoice = { voice ->
                                 val location = pendingTagLocation ?: return@VoiceNoteControl
-                                val text = voice.transcript.ifBlank { "Voice note" }
+                                val text = voice.transcript.ifBlank { "Audio Note" }
                                 tags.add(CaptureTag(location.first, location.second, text, isVoice = true, audio = voice.audio))
                                 pendingTagLocation = null
                             })

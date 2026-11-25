@@ -137,7 +137,7 @@ fun QuickShortcutsPanel(
                 scope.launch {
                     try {
                         if (isNote) actions.saveNote(editorContext,
-                            draft.title.text.ifBlank { if (audio != null && draft.body.text.isBlank()) "Voice note" else "" },
+                            draft.title.text.ifBlank { if (audio != null && draft.body.text.isBlank()) "Audio Note" else "" },
                             com.notokens.monolog.ime.vox.VoiceNoteBody.attach(draft.body.text, audio))
                         else actions.saveReminder(editorContext, draft.title.text, draft.dueAt)
                         val allowed = ContextCompat.checkSelfPermission(context, Manifest.permission.POST_NOTIFICATIONS) == PackageManager.PERMISSION_GRANTED
