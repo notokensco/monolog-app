@@ -608,10 +608,34 @@ internal fun MonologKeyboardView(
                         }
                     }
                 )
-                rescuePreview?.takeIf { rescueAllowed && panel == KeyboardPanel.DRAFT_RESCUE }?.let { draft ->
-                    Popup(AboveKeyboardHeader, onDismissRequest = { rescuePreview = null },
-                        properties = PopupProperties(focusable = false, clippingEnabled = false)) {
-                        DraftRescuePreview(draft, Modifier.width(maxWidth).height(overlayHeight)) { rescuePreview = null }
+                if (rescueAllowed && panel == KeyboardPanel.DRAFT_RESCUE) {
+                    Popup(
+                        popupPositionProvider = AboveKeyboardHeader,
+                        onDismissRequest = { panel = null; rescuePreview = null },
+                        properties = PopupProperties(focusable = false, clippingEnabled = false)
+                    ) {
+                        Box(Modifier.width(maxWidth).height(overlayHeight)) {
+                            Box(
+                                Modifier.fillMaxSize()
+                                    .background(Color.Black.copy(alpha = .45f))
+                                    .clickable(onClickLabel = "Close Draft Rescue", onClick = { panel = null; rescuePreview = null })
+                            )
+                            Box(Modifier.align(Alignment.BottomCenter).padding(horizontal = 8.dp, vertical = 6.dp)) {
+                                DraftRescueModal(
+                                    draft = rescuePreview,
+                                    settings = settings,
+                                    availableHeight = overlayHeight,
+                                    onClose = { panel = null; rescuePreview = null },
+                                    onView = { rescuePreview = it },
+                                    onBackToList = { rescuePreview = null },
+                                    onInsert = { value ->
+                                        onPasteText(value)
+                                        panel = null
+                                        rescuePreview = null
+                                    }
+                                )
+                            }
+                        }
                     }
                 }
                 if (searchQuery != null) {
@@ -653,7 +677,7 @@ internal fun MonologKeyboardView(
             Box(Modifier.fillMaxWidth().height(bodyHeight)) {
                 Crossfade(dashboardOpen, modifier = Modifier.fillMaxSize(), animationSpec = tween(105),
                     label = "Keyboard dashboard") { showDashboard ->
-                    val workspace = panel
+                    val workspace = panel.takeUnless { it == KeyboardPanel.DRAFT_RESCUE }
                     if (showDashboard) {
                         KeyboardDashboard(
                             settings = settings,
