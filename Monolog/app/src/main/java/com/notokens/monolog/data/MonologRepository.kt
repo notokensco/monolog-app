@@ -3,12 +3,15 @@ package com.notokens.monolog.data
 import android.content.Context
 import androidx.core.app.NotificationManagerCompat
 import androidx.room.withTransaction
+import com.notokens.monolog.memory.invalidateBriefSources
 import com.notokens.monolog.reminders.ReminderScheduler
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.flowOn
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
+import java.time.Instant
+import java.time.ZoneId
 
 interface MonologRepository {
     val notes: Flow<List<Note>>
@@ -82,8 +85,13 @@ class RoomMonologRepository(private val context: Context) : MonologRepository {
         return savedId
     }
 
-    override suspend fun deleteNote(note: Note) = database.notes().delete(note)
-    override suspend fun deleteNotes(notes: List<Note>) = database.notes().delete(notes)
+    override suspend fun deleteNote(note: Note) = deleteNotes(listOf(note))
+    override suspend fun deleteNotes(notes: List<Note>) = database.withTransaction {
+        database.notes().delete(notes)
+        notes.groupBy { journalDay(it.createdAt) }.forEach { (day, deleted) ->
+            invalidateBriefSources(database, day, deleted.mapTo(hashSetOf()) { "note:${it.id}" })
+        }
+    }
 
     override suspend fun saveReminder(title: String, dueAt: Long, existing: Reminder?): Long {
         require(title.isNotBlank())
@@ -98,7 +106,11 @@ class RoomMonologRepository(private val context: Context) : MonologRepository {
 
     override suspend fun deleteReminder(reminder: Reminder) {
         scheduler.cancel(reminder.id)
-        database.reminders().delete(reminder)
+        database.withTransaction {
+            val memory = database.memories().forReminder(reminder.id)
+            database.reminders().delete(reminder)
+            if (memory != null) invalidateBriefSources(database, memory.localDay, setOf("memory:${memory.id}"))
+        }
     }
 
     override suspend fun rescheduleFutureReminders() {
@@ -111,6 +123,9 @@ class RoomMonologRepository(private val context: Context) : MonologRepository {
         NotificationManagerCompat.from(context).cancelAll()
         withContext(Dispatchers.IO) { database.clearAllTables() }
     }
+
+    private fun journalDay(timestamp: Long): String =
+        Instant.ofEpochMilli(timestamp).atZone(ZoneId.systemDefault()).toLocalDate().toString()
 }
 
 object MonologData {

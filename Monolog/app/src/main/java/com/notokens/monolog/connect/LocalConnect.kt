@@ -16,9 +16,11 @@ import java.net.InetSocketAddress
 import java.net.ServerSocket
 import java.net.Socket
 import java.net.SocketTimeoutException
+import java.net.URI
 import java.util.Locale
 import java.util.concurrent.Semaphore
 import javax.crypto.AEADBadTagException
+import javax.net.ssl.HttpsURLConnection
 import kotlinx.coroutines.*
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -26,7 +28,7 @@ import kotlinx.coroutines.flow.first
 import com.notokens.monolog.data.SettingsStore
 import org.json.JSONObject
 
-internal data class LocalConnectState(val address: String, val pin: String, val paired: Boolean)
+internal data class LocalConnectState(val address: String, val pin: String, val paired: Boolean, val manual: Boolean)
 
 internal object LocalConnect {
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
@@ -46,13 +48,47 @@ internal object LocalConnect {
             catch (failure: Exception) { close(); throw failure }
             soTimeout = 1000
         }
-        val session = LanSession(app, manager, network, address, pairing, listener)
+        val session = LanSession(app, manager, network, address, pairing, listener, manual = !request.handoff)
+        try {
+            if (request.handoff) announce(pairing, session.status.address)
+            currentCoroutineContext().ensureActive()
+            check(!SettingsStore(app).incognito.first()) { "Turn off incognito before sharing your journal." }
+        } catch (failure: Exception) {
+            session.close()
+            pairing.channel.key.fill(0)
+            throw failure
+        }
         synchronized(this@LocalConnect) {
             active?.close()
             active = session
             mutableState.value = session.status
         }
         session.start()
+    }
+
+    private fun announce(pairing: ConnectPairing, address: String) {
+        val channel = pairing.channel
+        val endpoint = JSONObject().put("address", address).put("expiresAt", pairing.expiresAt)
+        val payload = JSONObject().put("key", channel.phoneKey)
+            .put("envelope", base64Url(ConnectProtocol.seal(channel, "local-handoff", endpoint.toString().toByteArray())))
+            .toString().toByteArray()
+        val connection = URI("${ConnectRequest.ORIGIN}/api/local-pair/${channel.session}").toURL()
+            .openConnection() as HttpsURLConnection
+        try {
+            connection.requestMethod = "POST"
+            connection.instanceFollowRedirects = false
+            connection.connectTimeout = 5000
+            connection.readTimeout = 5000
+            connection.doOutput = true
+            connection.setRequestProperty("Content-Type", "application/json")
+            connection.setFixedLengthStreamingMode(payload.size)
+            connection.outputStream.use { it.write(payload) }
+            check(connection.responseCode == 204)
+        } catch (failure: Exception) {
+            throw IllegalStateException("Couldn’t share this connection. Scan again or choose Connect manually on your computer.", failure)
+        } finally {
+            connection.disconnect()
+        }
     }
 
     @Synchronized
@@ -81,7 +117,8 @@ internal object LocalConnect {
         private val wifi: Network,
         private val address: LinkAddress,
         private val pairing: ConnectPairing,
-        private val listener: ServerSocket
+        private val listener: ServerSocket,
+        manual: Boolean
     ) {
         private val records = ConnectRecords(context)
         private val channel = pairing.channel
@@ -93,7 +130,7 @@ internal object LocalConnect {
         @Volatile private var connected = false
         private val generation = java.util.concurrent.atomic.AtomicLong()
         @Volatile private var lastRevision: Pair<Long, String>? = null
-        val status = LocalConnectState("${address.address.hostAddress}:${listener.localPort}", pairing.pin, false)
+        val status = LocalConnectState("${address.address.hostAddress}:${listener.localPort}", pairing.pin, false, manual)
 
         fun start() {
             workers.launch {
@@ -151,31 +188,34 @@ internal object LocalConnect {
             socket.soTimeout = 2500
             val input = DataInputStream(BufferedInputStream(socket.getInputStream()))
             val request = readRequest(input) ?: return
-            if (request.headers["origin"] != ConnectRequest.ORIGIN ||
+            val origin = request.headers["origin"]
+            val allowPrivateNetwork =
+                request.headers["access-control-request-private-network"]?.equals("true", ignoreCase = true) == true
+            if (origin == null || origin !in ConnectRequest.ALLOWED_ORIGINS ||
                 request.headers["host"] != status.address || request.headers.containsKey("transfer-encoding") ||
                 !stillOnWifi()) {
-                respond(socket, 403, "application/octet-stream")
+                respond(socket, 403, "application/octet-stream", origin = origin)
                 return
             }
             if (request.method == "OPTIONS" && request.path in setOf("/v1/pair", "/v1/exchange")) {
-                respond(socket, 204, "application/octet-stream")
+                respond(socket, 204, "application/octet-stream", origin = origin, allowPrivateNetwork = allowPrivateNetwork)
                 return
             }
             if (request.method == "GET" && request.path == "/v1/pair") {
                 val body = JSONObject().put("session", channel.session).put("key", channel.phoneKey)
                     .put("expiresAt", pairing.expiresAt).toString().toByteArray()
-                respond(socket, 200, "application/json", body)
+                respond(socket, 200, "application/json", body, origin = origin)
                 return
             }
             val size = request.headers["content-length"]?.toIntOrNull()
-            if (request.method != "POST" || request.path != "/v1/exchange" || size == null || size !in 28..MAX_COMMAND_BYTES ||
+            if (request.method != "POST" || request.path != "/v1/exchange" || size == null || size !in 28..ConnectProtocol.MAX_COMMAND_BYTES ||
                 request.headers["content-type"]?.substringBefore(';') != "application/octet-stream") {
-                respond(socket, 400, "application/octet-stream")
+                respond(socket, 400, "application/octet-stream", origin = origin)
                 return
             }
             val envelope = ByteArray(size).also(input::readFully)
             val command = try { JSONObject(ConnectProtocol.open(channel, "request", envelope).toString(Charsets.UTF_8)) }
-            catch (_: AEADBadTagException) { respond(socket, 401, "application/octet-stream"); return }
+            catch (_: AEADBadTagException) { respond(socket, 401, "application/octet-stream", origin = origin); return }
             if (!stillOnWifi()) return
             touched = SystemClock.elapsedRealtime()
             if (!connected) {
@@ -196,7 +236,7 @@ internal object LocalConnect {
             if (!stillOnWifi()) return
             val responsePurpose = "response|" + base64Url(envelope.copyOfRange(0, 12))
             respond(socket, 200, "application/octet-stream",
-                ConnectProtocol.seal(channel, responsePurpose, result.toString().toByteArray()))
+                ConnectProtocol.seal(channel, responsePurpose, result.toString().toByteArray()), origin = origin)
             if (operation == "disconnect") close()
         }
 
@@ -243,12 +283,22 @@ internal object LocalConnect {
         return Request(first[0], first[1], headers)
     }
 
-    private fun respond(socket: Socket, status: Int, type: String, body: ByteArray = ByteArray(0)) {
+    private fun respond(
+        socket: Socket,
+        status: Int,
+        type: String,
+        body: ByteArray = ByteArray(0),
+        origin: String? = null,
+        allowPrivateNetwork: Boolean = false
+    ) {
         val reason = when (status) {
             200 -> "OK"; 204 -> "No Content"; 400 -> "Bad Request"; 401 -> "Unauthorized"; else -> "Forbidden"
         }
+        val allowOrigin = origin?.takeIf { it in ConnectRequest.ALLOWED_ORIGINS } ?: ConnectRequest.ORIGIN
+        val pnaHeader = if (allowPrivateNetwork) "Access-Control-Allow-Private-Network: true\r\n" else ""
         val headers = "HTTP/1.1 $status $reason\r\n" +
-            "Access-Control-Allow-Origin: ${ConnectRequest.ORIGIN}\r\n" +
+            "Access-Control-Allow-Origin: $allowOrigin\r\n" +
+            pnaHeader +
             "Access-Control-Allow-Methods: GET, POST, OPTIONS\r\n" +
             "Access-Control-Allow-Headers: Content-Type\r\n" +
             "Cache-Control: no-store\r\nVary: Origin\r\nX-Content-Type-Options: nosniff\r\n" +
@@ -280,5 +330,4 @@ internal object LocalConnect {
         return true
     }
 
-    private const val MAX_COMMAND_BYTES = 1_650_000
 }

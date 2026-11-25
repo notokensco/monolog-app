@@ -40,7 +40,9 @@ internal object GgufRuntime {
     private external fun prepare(path: String): Boolean
     private external fun unload()
 
-    suspend fun complete(model: File, prompt: String, tokenLimit: Int): String? {
+    suspend fun complete(
+        model: File, prompt: String, tokenLimit: Int, contextTokens: Int, timeoutMillis: Long
+    ): String? {
         if (!loaded || !model.isFile) return null
         val input = prompt.replace("<|", "< |").replace("<think>", "< think>").replace("</think>", "</ think>")
         val chat = "<|im_start|>user\n$input<|im_end|>\n<|im_start|>assistant\n<think>\n\n</think>\n\n"
@@ -50,7 +52,8 @@ internal object GgufRuntime {
             inference.launch {
                 if (!continuation.isActive) return@launch
                 try {
-                    val answer = generate(model.path, chat.encodeToByteArray(), tokenLimit.coerceIn(1, 192), request)
+                    val answer = generate(model.path, chat.encodeToByteArray(), tokenLimit.coerceIn(1, 192),
+                        contextTokens, request, timeoutMillis)
                         ?.decodeToString()?.trim()?.substringAfterLast("</think>")?.trim()
                     continuation.resume(answer)
                 } catch (error: Exception) {
@@ -62,6 +65,8 @@ internal object GgufRuntime {
         }
     }
 
-    private external fun generate(path: String, prompt: ByteArray, tokenLimit: Int, request: Long): ByteArray?
+    private external fun generate(
+        path: String, prompt: ByteArray, tokenLimit: Int, contextTokens: Int, request: Long, timeoutMillis: Long
+    ): ByteArray?
     private external fun cancel(request: Long)
 }

@@ -69,13 +69,16 @@ internal fun WebConnectScreen(onAccount: () -> Unit) {
     }
 
     fun accept(code: String) {
-        try {
-            request = ConnectRequest.parse(code, mode)
-            problem = null
+        val scanned = try {
+            ConnectRequest.parse(code, mode)
         } catch (_: Exception) {
             request = null
-            problem = "Scan the matching Local Connect or Web Connect QR on web.monolog.notokens.co."
+            problem = "Choose the same connection method on both devices and scan the QR again."
+            return
         }
+        problem = null
+        if (scanned.handoff) run { LocalConnect.start(app, scanned); request = null }
+        else request = scanned
     }
 
     val scanner = rememberLauncherForActivityResult(ScanContract()) { result ->
@@ -93,7 +96,7 @@ internal fun WebConnectScreen(onAccount: () -> Unit) {
     }
 
     SettingsCard("Connect a computer") {
-        Text("Open web.monolog.notokens.co on your computer and choose the same connection mode.")
+        Text("Open web.monolog.notokens.co on your computer and choose the same connection method.")
         Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
             for (choice in ConnectMode.entries) FilterChip(selected = mode == choice, enabled = !busy,
                 onClick = { mode = choice; request = null; problem = null },
@@ -104,9 +107,11 @@ internal fun WebConnectScreen(onAccount: () -> Unit) {
             Text("Connect both devices to the same Wi-Fi. Guest mode works. Allow local network access if your browser asks.")
             val session = local
             if (session != null) {
-                Text(if (session.paired) "Browser connected" else "Enter this address and PIN in the browser")
-                Text(session.address, style = MaterialTheme.typography.titleMedium)
-                Text(session.pin, style = MaterialTheme.typography.headlineMedium)
+                if (session.paired) Text("Computer connected") else {
+                    Text(if (session.manual) "Enter this address and code on your computer" else "Enter this code on your computer")
+                    if (session.manual) Text(session.address, style = MaterialTheme.typography.titleMedium)
+                    Text(session.pin, style = MaterialTheme.typography.headlineMedium)
+                }
                 Text("Locking the phone or leaving this Wi-Fi ends pairing.", style = MaterialTheme.typography.bodySmall)
                 OutlinedButton(onClick = { LocalConnect.stop() }) { Text("Disconnect") }
             } else if (!incognito) {
@@ -181,7 +186,8 @@ internal fun WebConnectScreen(onAccount: () -> Unit) {
 }
 
 private fun pairingScanOptions() = ScanOptions().setDesiredBarcodeFormats(ScanOptions.QR_CODE)
-    .setPrompt("Scan the Web Connect QR on your computer").setBeepEnabled(false)
+    .setCaptureActivity(PairingScannerActivity::class.java)
+    .setPrompt("Fit the QR code inside the square").setBeepEnabled(false)
     .setBarcodeImageEnabled(false).setOrientationLocked(false)
 
 private tailrec fun Context.findWindowActivity(): Activity? = when (this) {

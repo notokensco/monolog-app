@@ -48,6 +48,8 @@ internal sealed interface GemmaResult {
 }
 
 internal object LocalAi {
+    const val DEFAULT_CONTEXT_TOKENS = 1024
+    const val MAX_CONTEXT_TOKENS = 16_384
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
     private val engineLock = Mutex()
     private var engine: Engine? = null
@@ -82,10 +84,16 @@ internal object LocalAi {
         }
     }
 
-    suspend fun request(context: Context, prompt: String, maxTokens: Int, expectedModel: TextModel? = null): GemmaResult {
+    suspend fun request(
+        context: Context, prompt: String, maxTokens: Int, expectedModel: TextModel? = null,
+        contextTokens: Int = DEFAULT_CONTEXT_TOKENS
+    ): GemmaResult {
+        require(contextTokens in DEFAULT_CONTEXT_TOKENS..MAX_CONTEXT_TOKENS)
+        val extended = contextTokens > DEFAULT_CONTEXT_TOKENS
+        val timeoutMillis = if (extended) 90_000L else 30_000L
         val start = SystemClock.elapsedRealtime()
         val result = if (ModelStore.get(context).state.value !is ModelState.Ready) GemmaResult.Missing else {
-            withTimeoutOrNull(30_000L) {
+            withTimeoutOrNull(timeoutMillis) {
                 withContext(Dispatchers.Default) {
                     engineLock.withLock {
                         val store = ModelStore.get(context)
@@ -94,7 +102,8 @@ internal object LocalAi {
                         if (store.state.value !is ModelState.Ready) return@withLock GemmaResult.Missing
                         if (selection.isGguf) {
                             return@withLock try {
-                                val text = GgufRuntime.complete(store.file(selection), prompt, maxTokens)
+                                val text = GgufRuntime.complete(store.file(selection), prompt, maxTokens,
+                                    contextTokens, timeoutMillis - 2_000L)
                                 if (text.isNullOrBlank()) GemmaResult.Empty else GemmaResult.Answer(text)
                             } catch (cancelled: CancellationException) {
                                 throw cancelled
@@ -107,8 +116,12 @@ internal object LocalAi {
                             }
                         }
                         var loading = true
+                        var extendedEngine: Engine? = null
                         try {
-                            val activeEngine = getEngine(context)
+                            val activeEngine = if (extended) {
+                                closeEngine()
+                                initializeEngine(context, contextTokens).also { extendedEngine = it }
+                            } else getEngine(context)
                             loading = false
                             val config = ConversationConfig(
                                 samplerConfig = SamplerConfig(topK = 1, topP = 1.0, temperature = 0.1),
@@ -131,6 +144,7 @@ internal object LocalAi {
                         } catch (_: LinkageError) {
                             GemmaResult.Failed(loading)
                         } finally {
+                            runCatching { extendedEngine?.close() }
                             scheduleClose()
                         }
                     }
@@ -141,8 +155,10 @@ internal object LocalAi {
         return result
     }
 
-    private fun getEngine(context: Context): Engine {
-        engine?.let { return it }
+    private fun getEngine(context: Context): Engine =
+        engine ?: initializeEngine(context, DEFAULT_CONTEXT_TOKENS).also { engine = it }
+
+    private fun initializeEngine(context: Context, contextTokens: Int): Engine {
         val store = ModelStore.get(context)
         check(store.state.value is ModelState.Ready)
         val cache = File(context.cacheDir, "local-gemma").apply { mkdirs() }
@@ -150,15 +166,14 @@ internal object LocalAi {
             EngineConfig(
                 modelPath = store.file(TextModel.GEMMA).path,
                 backend = Backend.CPU(threadCount = 2),
-                maxNumTokens = 1024,
+                maxNumTokens = contextTokens,
                 cacheDir = cache.path
             )
         ).also {
-            try {
-                it.initialize()
-                engine = it
-            } finally {
-                if (engine == null) runCatching { it.close() }
+            try { it.initialize() }
+            catch (failure: Throwable) {
+                runCatching { it.close() }
+                throw failure
             }
         }
     }

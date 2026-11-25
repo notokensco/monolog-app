@@ -76,7 +76,7 @@ internal class DriveConnect(private val context: Context) {
                 var conflicts = 0
                 for (file in existing.filter { it.role == "command" }) {
                     accounts.requireSession(session.accountSession)
-                    if (!ConnectRecords.validOperation(file.operation) || file.size !in 28..1_650_000 ||
+                    if (!ConnectRecords.validOperation(file.operation) || file.size !in 28..ConnectProtocol.MAX_COMMAND_BYTES ||
                         file.createdAt > session.expiresAt) {
                         drive.deleteConnect(file)
                         continue

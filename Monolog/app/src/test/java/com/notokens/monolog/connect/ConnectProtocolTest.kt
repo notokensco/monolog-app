@@ -37,8 +37,13 @@ class ConnectProtocolTest {
         assertEquals(1000L + 2 * 60 * 60_000L, phone.expiresAt)
     }
 
-    @Test fun refusesWrongOriginWrongModeAndAmbiguousQueries() {
+    @Test fun allowsLocalTestingOriginAndRefusesOtherOrigins() {
+        val devUrl = url.replace(ConnectRequest.ORIGIN, ConnectRequest.TEST_ORIGIN)
+        val devRequest = ConnectRequest.parse(devUrl, ConnectMode.LOCAL)
+        assertEquals(ConnectMode.LOCAL, devRequest.mode)
+        assertEquals(session, devRequest.session)
         assertTrue(runCatching { ConnectRequest.parse(url.replace("web.monolog.notokens.co", "example.com"), ConnectMode.LOCAL) }.isFailure)
+        assertTrue(runCatching { ConnectRequest.parse(url.replace("https://", "http://"), ConnectMode.LOCAL) }.isFailure)
         assertTrue(runCatching { ConnectRequest.parse(url, ConnectMode.WEB) }.isFailure)
         assertTrue(runCatching { ConnectRequest.parse("$url&v=1", ConnectMode.LOCAL) }.isFailure)
         assertTrue(runCatching { ConnectRequest.parse(url.substringBefore("&nonce="), ConnectMode.LOCAL) }.isFailure)
@@ -53,5 +58,13 @@ class ConnectProtocolTest {
         assertTrue(runCatching { ConnectProtocol.open(channel.copy(session = "different"), "request", envelope) }.isFailure)
         envelope[envelope.lastIndex] = (envelope.last().toInt() xor 1).toByte()
         assertTrue(runCatching { ConnectProtocol.open(channel, "request", envelope) }.isFailure)
+    }
+
+    @Test fun handoffIsOptInAndAvailableOnlyForLocalConnect() {
+        assertFalse(ConnectRequest.parse(url, ConnectMode.LOCAL).handoff)
+        assertTrue(ConnectRequest.parse("$url&handoff=1", ConnectMode.LOCAL).handoff)
+        assertTrue(runCatching { ConnectRequest.parse("$url&handoff=0", ConnectMode.LOCAL) }.isFailure)
+        val webUrl = url.replace("mode=local", "mode=web")
+        assertTrue(runCatching { ConnectRequest.parse("$webUrl&handoff=1", ConnectMode.WEB) }.isFailure)
     }
 }

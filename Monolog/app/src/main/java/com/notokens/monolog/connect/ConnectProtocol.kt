@@ -20,22 +20,32 @@ import javax.crypto.spec.SecretKeySpec
 internal enum class ConnectMode(val wire: String) { LOCAL("local"), WEB("web") }
 
 internal data class ConnectRequest(
-    val mode: ConnectMode, val session: String, val browserKey: ECPublicKey, val nonce: ByteArray, val stay: Boolean
+    val mode: ConnectMode, val session: String, val browserKey: ECPublicKey, val nonce: ByteArray, val stay: Boolean,
+    val handoff: Boolean = false
 ) {
     companion object {
         const val ORIGIN = "https://web.monolog.notokens.co"
+        const val TEST_ORIGIN = "http://127.0.0.1:5173"
+        val ALLOWED_ORIGINS = setOf(ORIGIN, TEST_ORIGIN)
         private val token = Regex("[A-Za-z0-9_-]{22}")
 
         fun parse(text: String, selected: ConnectMode): ConnectRequest {
             require(text.length in 1..768) { "Scan the Web Connect QR from your browser." }
             val uri = URI(text.trim())
-            require(uri.scheme == "https" && uri.rawAuthority == "web.monolog.notokens.co" &&
-                uri.rawPath == "/pair" && uri.rawFragment == null) { "Open the pairing QR on web.monolog.notokens.co." }
+            val requestOrigin = if (uri.scheme != null && uri.rawAuthority != null) {
+                "${uri.scheme}://${uri.rawAuthority}"
+            } else {
+                null
+            }
+            require(requestOrigin != null && requestOrigin in ALLOWED_ORIGINS &&
+                uri.rawPath == "/pair" && uri.rawFragment == null) {
+                "Scan the pairing QR displayed in Monolog on your computer."
+            }
             val pairs = checkNotNull(uri.rawQuery).split('&').map { entry ->
                 entry.substringBefore('=') to URLDecoder.decode(entry.substringAfter('=', ""), StandardCharsets.UTF_8)
             }
             val parameters = pairs.toMap()
-            require(parameters.size == pairs.size && parameters.keys.all { it in setOf("v", "mode", "session", "key", "nonce", "stay") })
+            require(parameters.size == pairs.size && parameters.keys.all { it in setOf("v", "mode", "session", "key", "nonce", "stay", "handoff") })
             require(parameters["v"] == "1" && parameters["mode"] == selected.wire) { "Choose the same connection mode on both devices." }
             val session = parameters["session"].orEmpty()
             require(token.matches(session) && base64Url(decodeUrl(session)) == session)
@@ -45,7 +55,9 @@ internal data class ConnectRequest(
             require(publicKey.params.curve.field.fieldSize == 256)
             val stay = parameters["stay"]
             require(stay == null || stay == "0" || (stay == "1" && selected == ConnectMode.WEB))
-            return ConnectRequest(selected, session, publicKey, decodeUrl(nonce), stay == "1")
+            val handoff = parameters["handoff"]
+            require(handoff == null || (handoff == "1" && selected == ConnectMode.LOCAL))
+            return ConnectRequest(selected, session, publicKey, decodeUrl(nonce), stay == "1", handoff == "1")
         }
     }
 }
@@ -54,6 +66,7 @@ internal data class ConnectChannel(val session: String, val phoneKey: String, va
 internal data class ConnectPairing(val channel: ConnectChannel, val pin: String, val expiresAt: Long)
 
 internal object ConnectProtocol {
+    const val MAX_COMMAND_BYTES = 7_000_000
     private const val LABEL = "Monolog Connect v1"
     private val random = SecureRandom()
 

@@ -11,7 +11,28 @@ import kotlin.math.roundToInt
 
 object PhotoCodec {
     const val MAX_ATTACHMENTS = 8
-    private const val MAX_PHOTO_BYTES = 480 * 1024
+    const val MAX_PHOTO_BYTES = 480 * 1024
+    private const val NOTE_IMAGE_LIMIT = 5_000_000
+
+    class NoteImageTooLarge : IOException("Choose images smaller than 5 MB.")
+
+    fun checkNoteImageSize(resolver: ContentResolver, uri: Uri) {
+        val size = resolver.openAssetFileDescriptor(uri, "r")?.use { it.length } ?: -1L
+        if (size >= NOTE_IMAGE_LIMIT) throw NoteImageTooLarge()
+        if (size < 0) readNoteImage(resolver, uri)
+    }
+
+    fun noteImage(resolver: ContentResolver, uri: Uri): ByteArray {
+        val image = decode(readNoteImage(resolver, uri), maxEdge = 1600)
+        try { return jpeg(image) } finally { image.recycle() }
+    }
+
+    private fun readNoteImage(resolver: ContentResolver, uri: Uri): ByteArray {
+        val bytes = resolver.openInputStream(uri)?.use { it.readNBytes(NOTE_IMAGE_LIMIT) }
+            ?: throw IOException("Couldn’t open image.")
+        if (bytes.size >= NOTE_IMAGE_LIMIT) throw NoteImageTooLarge()
+        return bytes
+    }
 
     fun decode(resolver: ContentResolver, uri: Uri, maxEdge: Int = 1600): Bitmap {
         return decode(ImageDecoder.createSource(resolver, uri), maxEdge)

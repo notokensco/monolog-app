@@ -56,11 +56,13 @@ internal fun ChatAssistPanel(
     onClose: () -> Unit,
     onInsert: (String) -> Unit
 ) {
-    Surface(modifier, color = MaterialTheme.colorScheme.surface,
-        shape = RoundedCornerShape(topStart = 18.dp, topEnd = 18.dp)) {
-        Column(Modifier.padding(12.dp).verticalScroll(rememberScrollState())) {
+    val colors = MaterialTheme.colorScheme
+    Surface(modifier, color = colors.surfaceContainer,
+        shape = RoundedCornerShape(16.dp)) {
+        Column(Modifier.padding(horizontal = 12.dp, vertical = 2.dp)) {
             Row(verticalAlignment = Alignment.CenterVertically) {
-                Text("Chat Assist", Modifier.weight(1f), style = MaterialTheme.typography.titleMedium)
+                Text(if (session?.reply.isNullOrBlank()) "Chat Assist" else "Suggested reply",
+                    Modifier.weight(1f), style = MaterialTheme.typography.titleSmall)
                 IconControl(Glyph.CLOSE, "Close Chat Assist panel", onClose)
             }
             if (session == null) {
@@ -68,17 +70,20 @@ internal fun ChatAssistPanel(
                     else "Download the Better or Best text model to use Chat Assist.")
                 TextButton(onClick = onStart, enabled = canStart) { Text("Start") }
             } else {
-                Text(session.status, color = MaterialTheme.colorScheme.onSurfaceVariant)
-                if (session.reply.isNotBlank()) {
-                    Text(session.reply, Modifier.padding(top = 8.dp))
-                    TextButton(onClick = { onInsert(session.reply) }) { Text("Insert reply") }
-                }
-                if (session.coaching.isNotBlank()) {
-                    Text(session.coaching, Modifier.padding(top = 8.dp), color = MaterialTheme.colorScheme.onSurfaceVariant)
+                Column(Modifier.fillMaxWidth().heightIn(max = 84.dp).verticalScroll(rememberScrollState())) {
+                    if (session.reply.isNotBlank()) Text(session.reply, style = MaterialTheme.typography.bodyMedium)
+                    else Text(session.status, style = MaterialTheme.typography.bodySmall, color = colors.onSurfaceVariant)
+                    if (session.coaching.isNotBlank()) {
+                        Text(session.coaching, Modifier.padding(top = 4.dp), style = MaterialTheme.typography.bodySmall,
+                            color = colors.onSurfaceVariant)
+                    }
                 }
                 Row {
+                    if (!session.paused && !session.busy && session.reply.isNotBlank()) {
+                        TextButton(onClick = { onInsert(session.reply) }) { Text("Insert") }
+                    }
                     TextButton(onClick = onPause) { Text(if (session.paused) "Resume" else "Pause") }
-                    TextButton(onClick = onStop) { Text("Stop sharing") }
+                    TextButton(onClick = onStop) { Text("Stop") }
                 }
             }
         }

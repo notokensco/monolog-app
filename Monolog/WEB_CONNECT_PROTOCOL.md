@@ -10,7 +10,9 @@ Derive 32 bytes using ECDH (P-256), then HKDF-SHA-256. Use UTF-8 session ID foll
 
 ## Local Connect
 
-The phone displays the LAN address and PIN. Both are entered in the browser. The browser must initiate Local Network Access from a user gesture and allow it when prompted. Use an HTTPS client origin and `fetch` with `targetAddressSpace: "local"`. The phone listens only on its directly connected Wi-Fi address. Journal traffic goes directly over Wi-Fi, protected by the session envelope.
+For local QR codes with `handoff=1`, the phone opens its Wi-Fi listener and posts `{key,envelope}` to `https://web.monolog.notokens.co/api/local-pair/<session>`. `key` is the phone’s base64url SPKI. `envelope` contains the base64url-encoded encrypted `{address,expiresAt}` payload with purpose `local-handoff`. The browser fetches the offer after the user enters the PIN and can then open the envelope. Offers expire after five minutes. Older QR codes omit `handoff` and the phone displays the address and PIN for manual entry.
+
+The browser initiates Local Network Access when the user confirms and grants access if prompted. Use the HTTPS client origin or the allowlisted loopback test origin, and `fetch` with `targetAddressSpace: "local"`. The phone listens only on its directly connected Wi-Fi address. Journal traffic goes directly over Wi-Fi, protected by the session envelope.
 
 - `GET http://<phone address>/v1/pair` returns JSON with `session`, `key` (phone SPKI, unpadded base64url), and `expiresAt` in Unix milliseconds.
 - `POST http://<phone address>/v1/exchange` takes an encrypted command envelope as `application/octet-stream` and returns an encrypted JSON response. Compare the returned session ID with the one in the QR before deriving the key.
@@ -21,11 +23,14 @@ The phone displays the LAN address and PIN. Both are entered in the browser. The
 - `{"op":"sync","since":"<revision>"}` returns `{"snapshot":{...}}` or `{"unchanged":true}`. Omit `since` initially. Poll every two seconds while the browser is visible.
 - `{"op":"photo","id":"<photo ID>"}` returns `{"mime":"image/jpeg","data":"<standard base64>"}`.
 - `{"op":"save","type":"note","operationId":"<UUID>","id":"<note ID>","base":"<version>","title":"...","body":"..."}` updates an existing note. Omit `id` and `base` for a new journal note. Include `kind:"context"` for a new Context note.
+- If the snapshot advertises `notePhotoEditing: true`, a note save may include `photos`, the complete desired attachment list of up to eight items. Use `{"id":"<existing photo ID>"}` to keep an attachment, or `{"data":"<standard base64 JPEG>"}` to add an image. An empty array removes all attachments. Omit `photos` to retain them. Clients accept source images smaller than 5 MB and encode new attachments as JPEG at up to 1600 pixels on the longest side and 480 KiB each. The phone returns `photoIds` in snapshot order on a successful attachment edit. Encrypted requests and Drive command files are limited to 7,000,000 bytes.
 - Save or delete a reminder with `type:"reminder"`, the same id and version fields, and `title` and integer `dueAt` on Save.
 - Save or delete an existing journal memory with `type:"memory"`, its string id and version. Save accepts `body` and `pinned`.
 - Delete uses `op:"delete"`, with `type`, `operationId`, `id`, and `base`. Save and Delete responses are `{"operationId":"...","ok":true,"id":"...","version":"..."}` or `{"operationId":"...","ok":false,"error":"..."}`. Refresh the record when the phone rejects a stale version.
 
 Snapshot fields are `revision`, `zone` (IANA time zone), `notes`, `memories`, and `reminders`. All IDs and versions are strings. Times are Unix milliseconds. Notes have `id`, `version`, `kind` (`journal` or `context`), `title`, `body`, `createdAt`, `updatedAt`, and a list of `photos` with `id` and `mime`. Context notes can also contain tags and voice annotations. Audio uses a standard base64 payload. Memories have `id`, `version`, `body`, `timestamp`, `day`, `source`, `pinned`, and optional `noteId` or `reminderId`. Reminders have `id`, `version`, `title`, and `dueAt`. Build Today from saved entries in the snapshot's time zone. The client supplies its own editor and display. AI is phone-only.
+
+`dayBrief` is the latest available saved daily summary from the phone and contains `day` (ISO date), `text`, and `updatedAt`, or `null` if none exists. Web Connect uses the brief from the last published snapshot.
 
 ## Web Connect
 

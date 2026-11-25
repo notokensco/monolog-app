@@ -246,6 +246,20 @@ internal fun MonologKeyboardView(
     val chatModel = remember(context) { ModelStore.get(context) }
     val chatModelActive by chatModel.active.collectAsState()
     val chatModelState by chatModel.state.collectAsState()
+    val canStartChat = chatSession == null && chatModelActive?.isGguf == true && chatModelState is ModelState.Ready
+    fun startChatAssist() {
+        val target = editorContext.packageName ?: return
+        if (!chatAllowed || !canStartChat) return
+        chatOpen = false
+        runCatching {
+            context.startActivity(Intent(context, ChatAssistSetupActivity::class.java)
+                .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+                .putExtra(ChatAssistService.TARGET, target))
+        }.onFailure {
+            ChatAssist.stop("Couldn’t open Android’s sharing setup.")
+            chatOpen = true
+        }
+    }
     val rescueAllowed = !privateMode && !editorContext.isRestrictedField
     val rescueBadge by com.notokens.monolog.ime.DraftRescue.hasBadge.collectAsState()
     var rescuePreview by remember(layoutSession) { mutableStateOf<com.notokens.monolog.ime.RescueDraft?>(null) }
@@ -326,7 +340,13 @@ internal fun MonologKeyboardView(
             DashboardTile.CLIPBOARD -> { panel = null; dashboardClips = true; dashboardOpen = true }
             DashboardTile.EDIT_TEXT -> { dashboardOpen = false; panel = KeyboardPanel.EDIT_TEXT }
             DashboardTile.LANGUAGE -> { dashboardOpen = false; panel = KeyboardPanel.LANGUAGES }
-            DashboardTile.CHAT_ASSIST -> { if (chatAllowed) chatOpen = true; dashboardOpen = false }
+            DashboardTile.CHAT_ASSIST -> {
+                dashboardOpen = false
+                if (chatAllowed) {
+                    panel = null
+                    if (canStartChat) startChatAssist() else chatOpen = true
+                }
+            }
             DashboardTile.APPEARANCE -> onAppearance()
             DashboardTile.TRANSLATE -> {
                 if (editorContext.isNumber) return
@@ -469,6 +489,26 @@ internal fun MonologKeyboardView(
                 KeyboardAiControls(ai, language)
             }
 
+            if (chatOpen && chatAllowed && searchQuery == null && !isShortcutsOpen && !mediaWorkspace) {
+                ChatAssistPanel(
+                    Modifier.fillMaxWidth().padding(horizontal = 6.dp, vertical = 3.dp), chatHere, canStartChat,
+                    if (chatSession != null && chatHere == null) "Chat Assist is sharing a different app." else chatError,
+                    onStart = ::startChatAssist,
+                    onPause = ChatAssist::pause, onStop = {
+                        ChatAssist.stop()
+                        context.stopService(Intent(context, ChatAssistService::class.java))
+                        chatOpen = false
+                    }, onClose = { chatOpen = false }, onInsert = { text ->
+                        val active = ChatAssist.session.value
+                        if (text.isNotBlank() && active != null && !active.busy && !active.paused &&
+                            active.target == editorContext.packageName && ChatAssist.editor == active.target && active.reply == text) {
+                            onPasteText(text)
+                            chatOpen = false
+                        }
+                    }
+                )
+            }
+
             BoxWithConstraints(Modifier.fillMaxWidth()) {
                 if (mediaWorkspace) {
                     val stickers = mediaTab == KeyboardMediaTab.STICKERS
@@ -568,32 +608,6 @@ internal fun MonologKeyboardView(
                         }
                     }
                 )
-                if (chatOpen && chatAllowed && searchQuery == null && !isShortcutsOpen && !mediaWorkspace) {
-                    Popup(AboveKeyboardHeader, onDismissRequest = { chatOpen = false },
-                        properties = PopupProperties(focusable = false, clippingEnabled = false)) {
-                        ChatAssistPanel(
-                            Modifier.width(maxWidth).height(overlayHeight), chatHere,
-                            chatSession == null && chatModelActive?.isGguf == true && chatModelState is ModelState.Ready,
-                            chatError, onStart = {
-                                runCatching {
-                                    context.startActivity(Intent(context, ChatAssistSetupActivity::class.java)
-                                        .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
-                                        .putExtra(ChatAssistService.TARGET, editorContext.packageName))
-                                    chatOpen = false
-                                }.onFailure { ChatAssist.stop("Couldn’t open Android’s sharing setup.") }
-                            }, onPause = ChatAssist::pause, onStop = {
-                                ChatAssist.stop()
-                                context.stopService(Intent(context, ChatAssistService::class.java))
-                                chatOpen = false
-                            }, onClose = { chatOpen = false }, onInsert = { text ->
-                                if (ChatAssist.editor == editorContext.packageName && ChatAssist.session.value?.reply == text) {
-                                    onPasteText(text)
-                                    chatOpen = false
-                                }
-                            }
-                        )
-                    }
-                }
                 rescuePreview?.takeIf { rescueAllowed && panel == KeyboardPanel.DRAFT_RESCUE }?.let { draft ->
                     Popup(AboveKeyboardHeader, onDismissRequest = { rescuePreview = null },
                         properties = PopupProperties(focusable = false, clippingEnabled = false)) {

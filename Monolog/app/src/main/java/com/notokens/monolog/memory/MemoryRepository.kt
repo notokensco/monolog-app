@@ -90,7 +90,6 @@ internal class MemoryRepository(private val context: Context,
                 (previous?.revision ?: 0) + 1, source, JournalCipher.seal(plain, "memory-payload"), dedup,
                 previous?.pinned ?: false, noteId, reminderId)
             if (previous == null) db.memories().insert(row) else db.memories().update(row)
-            db.memories().clearRecaps()
             row.id
         }
         if (id != null) MemoryIndexWork.enqueue(context)
@@ -106,19 +105,20 @@ internal class MemoryRepository(private val context: Context,
             db.memories().update(current.copy(revision = current.revision + 1, pinned = pinned,
                 payload = JournalCipher.seal(encode(evidence), "memory-payload"), embedding = null,
                 encoderVersion = null, vectorRevision = 0, cacheOwner = null, cacheYear = null, cacheExpiresAt = null))
-            db.memories().clearRecaps()
         }
         MemoryIndexWork.enqueue(context)
     }
     suspend fun delete(id: String) = withContext(Dispatchers.IO) {
-        db.memories().get(id)?.let { row ->
+        db.withTransaction {
+            val row = db.memories().get(id) ?: return@withTransaction
             val prefs = context.getSharedPreferences("journal_memory_deleted", Context.MODE_PRIVATE)
             val sources = prefs.getStringSet("sources", emptySet()).orEmpty().toMutableSet()
             row.noteId?.let { sources.add("note:$it") }
             row.reminderId?.let { sources.add("reminder:$it") }
             check(prefs.edit().putStringSet("sources", sources).commit())
+            db.memories().delete(id)
+            invalidateBriefSources(db, row.localDay, setOf("memory:${row.id}"))
         }
-        db.withTransaction { db.memories().delete(id); db.memories().clearRecaps() }
     }
 
     companion object {

@@ -8,6 +8,7 @@ import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.material3.Checkbox
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
@@ -21,6 +22,8 @@ import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.AnnotatedString
 import androidx.compose.ui.text.LinkAnnotation
 import androidx.compose.ui.text.SpanStyle
@@ -39,29 +42,58 @@ import com.notokens.monolog.data.PhotoCodec
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import org.commonmark.node.*
+import org.commonmark.parser.IncludeSourceSpans
 import org.commonmark.parser.Parser
 import org.commonmark.renderer.text.TextContentRenderer
 
-private val markdownParser = Parser.builder().build()
+private val markdownParser = Parser.builder().includeSourceSpans(IncludeSourceSpans.BLOCKS).build()
 private val markdownText = TextContentRenderer.builder().build()
 private val whitespace = Regex("\\s+")
+private val taskMarker = Regex("^\\[([ xX])\\](?:[ \\t]+|$)")
+
+internal data class MarkdownTask(val offset: Int, val checked: Boolean)
+internal data class NoteMarkdown(val root: Node, val tasks: Map<Node, MarkdownTask>)
+
+internal fun parseNoteMarkdown(source: String): NoteMarkdown {
+    val root = markdownParser.parse(source)
+    val tasks = buildMap<Node, MarkdownTask> {
+        fun visit(node: Node) {
+            if (node is ListItem && node.parent is BulletList) {
+                val paragraph = node.firstChild as? Paragraph
+                val span = paragraph?.sourceSpans?.firstOrNull()
+                val text = paragraph?.firstChild as? org.commonmark.node.Text
+                if (span != null && text != null) {
+                    val match = taskMarker.find(source.substring(span.inputIndex, span.inputIndex + span.length))
+                    val literal = taskMarker.find(text.literal)
+                    if (match != null && literal != null) {
+                        put(node, MarkdownTask(span.inputIndex + 1, !match.groupValues[1].isBlank()))
+                        text.literal = text.literal.drop(literal.value.length)
+                    }
+                }
+            }
+            node.children().forEach(::visit)
+        }
+        visit(root)
+    }
+    return NoteMarkdown(root, tasks)
+}
 
 internal fun markdownExcerpt(source: String): String =
-    markdownText.render(markdownParser.parse(source.take(2048))).trim().replace(whitespace, " ")
+    markdownText.render(parseNoteMarkdown(source.take(2048)).root).trim().replace(whitespace, " ")
 
 @Composable
-internal fun JournalMarkdown(source: String, modifier: Modifier = Modifier) {
-    var document by remember(source) { mutableStateOf<Node?>(null) }
+internal fun JournalMarkdown(source: String, modifier: Modifier = Modifier, onTaskChange: ((Int, Boolean) -> Unit)? = null) {
+    var document by remember(if (onTaskChange == null) source else null) { mutableStateOf<NoteMarkdown?>(null) }
     LaunchedEffect(source) {
-        document = withContext(Dispatchers.Default) { markdownParser.parse(source) }
+        document = withContext(Dispatchers.Default) { parseNoteMarkdown(source) }
     }
     Column(modifier, verticalArrangement = Arrangement.spacedBy(8.dp)) {
-        document?.let { for (child in it.children()) MarkdownBlock(child) }
+        document?.let { for (child in it.root.children()) MarkdownBlock(child, it.tasks, onTaskChange) }
     }
 }
 
 @Composable
-private fun MarkdownBlock(node: Node) {
+private fun MarkdownBlock(node: Node, tasks: Map<Node, MarkdownTask>, onTaskChange: ((Int, Boolean) -> Unit)?) {
     val colors = MaterialTheme.colorScheme
     val type = MaterialTheme.typography
     when (node) {
@@ -76,10 +108,17 @@ private fun MarkdownBlock(node: Node) {
         is Paragraph -> Text(inlineMarkdown(node), color = colors.onSurface, style = type.bodyLarge)
         is BulletList, is OrderedList -> Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
             node.children().forEachIndexed { index, item ->
-                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                    Text(if (node is OrderedList) "${(node.markerStartNumber ?: 1) + index}." else "•", color = colors.primary)
+                Row(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {
+                    val task = tasks[item]
+                    if (task != null) {
+                        Checkbox(task.checked, onTaskChange?.let { update -> { checked -> update(task.offset, checked) } },
+                            modifier = Modifier.semantics { contentDescription = "Checklist item" })
+                    } else {
+                        Text(if (node is OrderedList) "${(node.markerStartNumber ?: 1) + index}." else "•",
+                            Modifier.align(Alignment.Top), color = colors.primary)
+                    }
                     Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(4.dp)) {
-                        for (child in item.children()) MarkdownBlock(child)
+                        for (child in item.children()) MarkdownBlock(child, tasks, onTaskChange)
                     }
                 }
             }
@@ -88,7 +127,7 @@ private fun MarkdownBlock(node: Node) {
             Modifier.fillMaxWidth().glassSurface(14, GlassAccent.LAVENDER).padding(12.dp),
             verticalArrangement = Arrangement.spacedBy(4.dp)
         ) {
-            for (child in node.children()) MarkdownBlock(child)
+            for (child in node.children()) MarkdownBlock(child, tasks, onTaskChange)
         }
         is FencedCodeBlock -> MarkdownCode(node.literal)
         is IndentedCodeBlock -> MarkdownCode(node.literal)

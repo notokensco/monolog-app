@@ -12,7 +12,8 @@
 
 namespace {
 using Clock = std::chrono::steady_clock;
-constexpr int context_length = 1024;
+constexpr int default_context_length = 1024;
+constexpr int max_context_length = 16384;
 
 std::mutex model_mutex;
 std::atomic<jlong> cancelled_through(0);
@@ -71,9 +72,12 @@ Java_com_notokens_monolog_ai_GgufRuntime_cancel(JNIEnv*, jobject, jlong request)
 
 extern "C" JNIEXPORT jbyteArray JNICALL
 Java_com_notokens_monolog_ai_GgufRuntime_generate(
-    JNIEnv* env, jobject, jstring path, jbyteArray prompt, jint count, jlong request) {
+    JNIEnv* env, jobject, jstring path, jbyteArray prompt, jint count, jint context_limit,
+    jlong request, jlong timeout_ms) {
     const auto size = env->GetArrayLength(prompt);
-    if (size <= 0 || size > 16000 || count < 1 || count > 192) return nullptr;
+    if (size <= 0 || size > 66000 || count < 1 || count > 192 ||
+        context_limit < default_context_length || context_limit > max_context_length ||
+        timeout_ms < 1 || timeout_ms > 90000) return nullptr;
     std::vector<jbyte> input(size);
     env->GetByteArrayRegion(prompt, 0, size, input.data());
     if (env->ExceptionCheck()) return nullptr;
@@ -84,24 +88,30 @@ Java_com_notokens_monolog_ai_GgufRuntime_generate(
     if (model == nullptr) return nullptr;
     const auto* vocabulary = llama_model_get_vocab(model);
 
-    std::vector<llama_token> tokens(context_length);
+    std::vector<llama_token> tokens(context_limit);
     const int token_count = llama_tokenize(vocabulary, reinterpret_cast<const char*>(input.data()), size,
         tokens.data(), static_cast<int>(tokens.size()), false, true);
-    if (token_count <= 0 || token_count + count > context_length) return nullptr;
+    if (token_count <= 0 || token_count + count > context_limit) return nullptr;
+    const int context_length = std::min(context_limit,
+        std::max(default_context_length, ((token_count + count + 255) / 256) * 256));
+    const int batch_size = context_length == default_context_length ? context_length : 512;
     auto config = llama_context_default_params();
     config.n_ctx = context_length;
-    config.n_batch = context_length;
+    config.n_batch = batch_size;
     config.n_threads = static_cast<int>(std::clamp(std::thread::hardware_concurrency(), 1u, 2u));
     config.n_threads_batch = config.n_threads;
-    auto generation = Generation{request, Clock::now() + std::chrono::seconds(28)};
+    auto generation = Generation{request, Clock::now() + std::chrono::milliseconds(timeout_ms)};
     config.abort_callback = expired;
     config.abort_callback_data = &generation;
     std::unique_ptr<llama_context, decltype(&llama_free)> session(
         llama_init_from_model(model, config), llama_free);
     std::unique_ptr<llama_sampler, decltype(&llama_sampler_free)> sampler(
         llama_sampler_init_greedy(), llama_sampler_free);
-    if (!session || !sampler || llama_decode(session.get(), llama_batch_get_one(tokens.data(), token_count)) != 0) {
-        return nullptr;
+    if (!session || !sampler) return nullptr;
+    for (int offset = 0; offset < token_count; offset += batch_size) {
+        const int size = std::min(batch_size, token_count - offset);
+        if (expired(&generation) ||
+            llama_decode(session.get(), llama_batch_get_one(tokens.data() + offset, size)) != 0) return nullptr;
     }
 
     std::string output;

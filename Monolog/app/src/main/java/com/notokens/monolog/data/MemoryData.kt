@@ -64,8 +64,15 @@ interface MemoryDao {
     @Query("DELETE FROM memories WHERE id = :id") suspend fun delete(id: String)
     @Query("UPDATE memories SET noteId = NULL WHERE noteId = :id") suspend fun detachNote(id: Long)
     @Query("SELECT * FROM memory_recaps WHERE period = :period") suspend fun recap(period: String): MemoryRecap?
+    @Query("SELECT * FROM memory_recaps WHERE period LIKE ('brief-v2:%:' || :period)")
+    suspend fun legacyRecaps(period: String): List<MemoryRecap>
+    @Query("SELECT * FROM memory_recaps WHERE period LIKE 'brief-v3:Day:%' OR period LIKE 'brief-v2:%:Day:%' ORDER BY rowid DESC LIMIT 8")
+    suspend fun recentDayRecaps(): List<MemoryRecap>
     @Insert(onConflict = OnConflictStrategy.REPLACE) suspend fun saveRecap(recap: MemoryRecap)
-    @Query("DELETE FROM memory_recaps") suspend fun clearRecaps()
+    @Query("SELECT * FROM memory_recaps WHERE period LIKE ('%:Day:' || :day) OR period LIKE ('%:Month:' || substr(:day, 1, 7)) OR period LIKE ('%:Year:' || substr(:day, 1, 4))")
+    suspend fun recapsForDay(day: String): List<MemoryRecap>
+    @Query("DELETE FROM memory_recaps WHERE period IN (:periods)") suspend fun deleteRecaps(periods: List<String>)
+    @Query("SELECT COUNT(*) FROM memories WHERE id IN (:ids)") suspend fun countExisting(ids: List<String>): Int
     @Insert(onConflict = OnConflictStrategy.REPLACE) suspend fun receipt(receipts: List<MemoryBackupReceipt>)
     @Query("SELECT * FROM memory_backup_receipts WHERE owner = :owner") fun receipts(owner: String): Flow<List<MemoryBackupReceipt>>
     @Query("SELECT * FROM year_downloads WHERE owner = :owner") fun downloads(owner: String): Flow<List<YearDownload>>

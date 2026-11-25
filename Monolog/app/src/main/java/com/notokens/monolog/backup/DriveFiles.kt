@@ -1,6 +1,7 @@
 package com.notokens.monolog.backup
 
 import android.net.Uri
+import com.notokens.monolog.connect.ConnectProtocol
 import java.io.ByteArrayOutputStream
 import java.io.IOException
 import java.net.URL
@@ -102,8 +103,8 @@ internal class DriveFiles(private val token: String, private val source: String,
     }
 
     suspend fun downloadConnect(file: DriveConnectFile): ByteArray {
-        require(file.id.matches(Regex("[A-Za-z0-9_-]+")) && file.size in 28..1_650_000)
-        return request("https://www.googleapis.com/drive/v3/files/${file.id}?alt=media", limitBytes = 1_650_000)
+        require(file.id.matches(Regex("[A-Za-z0-9_-]+")) && file.size in 28..ConnectProtocol.MAX_COMMAND_BYTES)
+        return request("https://www.googleapis.com/drive/v3/files/${file.id}?alt=media", limitBytes = ConnectProtocol.MAX_COMMAND_BYTES.toLong())
     }
 
     suspend fun deleteConnect(file: DriveConnectFile) {

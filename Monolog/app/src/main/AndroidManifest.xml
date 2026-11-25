@@ -60,6 +60,11 @@
             android:label="@string/keyboard_settings"
             android:targetActivity=".MainActivity" />
         <activity
+            android:name=".ui.PairingScannerActivity"
+            android:exported="false"
+            android:screenOrientation="portrait"
+            android:theme="@style/zxing_CaptureTheme" />
+        <activity
             android:name=".capture.CaptureSetupActivity"
             android:exported="false"
             android:excludeFromRecents="true"
@@ -68,7 +73,9 @@
             android:name=".ime.ChatAssistSetupActivity"
             android:exported="false"
             android:configChanges="keyboardHidden|orientation|screenSize"
-            android:excludeFromRecents="true" />
+            android:excludeFromRecents="true"
+            android:taskAffinity=""
+            android:theme="@style/Theme.Monolog.Capture" />
         <service
             android:name=".ime.ChatAssistService"
             android:exported="false"

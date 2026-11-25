@@ -8,6 +8,7 @@ import androidx.activity.compose.BackHandler
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.PickVisualMediaRequest
 import androidx.activity.result.contract.ActivityResultContracts
+import androidx.compose.animation.core.animateDpAsState
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.ScrollState
@@ -17,6 +18,7 @@ import androidx.compose.foundation.clickable
 import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.text.KeyboardActions
+import androidx.compose.foundation.text.BasicTextField
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
@@ -39,6 +41,7 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.SolidColor
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.platform.LocalDensity
@@ -53,7 +56,6 @@ import androidx.compose.ui.semantics.liveRegion
 import androidx.compose.ui.semantics.selected
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.font.FontWeight
-import androidx.compose.ui.text.TextRange
 import androidx.compose.ui.text.input.TextFieldValue
 import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.text.style.TextOverflow
@@ -338,10 +340,10 @@ fun CompanionApp(
                         navArgument("ask") { type = NavType.BoolType; defaultValue = false },
                         navArgument("day") { type = NavType.StringType; nullable = true; defaultValue = null }
                     )) { journalEntry ->
-                        val allNotes by repo.notes.collectAsState(initial = emptyList())
+                        val allNotes by repo.notes.collectAsState<List<Note>, List<Note>?>(initial = null)
                         val journalScroll = rememberLazyListState()
                         val journalScope = rememberCoroutineScope()
-                        val notes = visibleBackupYears(allNotes)
+                        val notes = visibleBackupYears(allNotes.orEmpty())
                         val photoRefs by repo.notePhotos.collectAsState(initial = emptyList())
                         val photosByNote = remember(photoRefs) { photoRefs.groupBy { it.noteId } }
                         var query by rememberSaveable { mutableStateOf("") }
@@ -363,7 +365,7 @@ fun CompanionApp(
                                     onOpenNote = { nav.navigate("note/$it") },
                                     onOpenReminder = { nav.navigate("reminder/edit/$it") },
                                     onNewNote = { nav.navigate("note/new") },
-                                    visibleNotes = notes, photos = photosByNote,
+                                    visibleNotes = notes, photos = photosByNote, notesLoaded = allNotes != null,
                                     query = query, onClearQuery = { query = "" },
                                     onFocusSearch = { searchField.requestFocus(); keyboard?.show() },
                                     askRequest = askRequest, onAnswering = { answering = it },
@@ -734,19 +736,19 @@ fun CompanionApp(
                     composable("settings") {
                         var searching by rememberSaveable { mutableStateOf(false) }
                         var settingsQuery by rememberSaveable { mutableStateOf("") }
-                        Screen("Settings", onBack = navigateBack, scrollState = settingsScroll) {
+                        fun closeSearch() {
+                            focusManager.clearFocus()
+                            keyboard?.hide()
+                            searching = false
+                            settingsQuery = ""
+                        }
+                        BackHandler(enabled = searching, onBack = ::closeSearch)
+                        Screen("Settings", onBack = if (searching) ::closeSearch else navigateBack,
+                            scrollState = settingsScroll, heading = {
+                                SettingsSearchHeading(searching, settingsQuery, { settingsQuery = it },
+                                    onOpen = { searching = true }, onClose = ::closeSearch)
+                            }) {
                             Column(verticalArrangement = Arrangement.spacedBy(14.dp)) {
-                                Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.End) {
-                                    IconControl(if (searching) Glyph.CLOSE else Glyph.SEARCH,
-                                        if (searching) "Close settings search" else "Search settings", {
-                                            searching = !searching
-                                            if (!searching) settingsQuery = ""
-                                        })
-                                }
-                                if (searching) {
-                                    OutlinedTextField(settingsQuery, { settingsQuery = it }, modifier = Modifier.fillMaxWidth(),
-                                        label = { Text("Search settings") }, singleLine = true)
-                                }
                                 if (settingsQuery.isNotBlank()) {
                                     val query = settingsQuery.trim()
                                     val matches = SettingsPage.entries.filter {
@@ -1012,15 +1014,71 @@ private fun Screen(
     onBack: (() -> Unit)? = null,
     scrollState: ScrollState = rememberScrollState(),
     footer: (@Composable () -> Unit)? = null,
+    heading: (@Composable () -> Unit)? = null,
     content: @Composable () -> Unit
 ) {
     ScreenFrame(onBack, showWeatherAndDate = showWeatherAndDate) {
         Column(Modifier.weight(1f).fillMaxWidth().verticalScroll(scrollState).padding(vertical = 12.dp)) {
-            ScreenTitle(title)
+            if (heading != null) heading() else ScreenTitle(title)
             Spacer(Modifier.height(12.dp))
             content()
         }
         footer?.invoke()
+    }
+}
+
+@Composable
+private fun SettingsSearchHeading(
+    expanded: Boolean,
+    query: String,
+    onQuery: (String) -> Unit,
+    onOpen: () -> Unit,
+    onClose: () -> Unit
+) {
+    val focus = remember { FocusRequester() }
+    val keyboard = LocalSoftwareKeyboardController.current
+    LaunchedEffect(expanded) {
+        if (expanded) {
+            withFrameNanos { }
+            focus.requestFocus()
+            keyboard?.show()
+        }
+    }
+    BoxWithConstraints(Modifier.fillMaxWidth().height(48.dp)) {
+        val searchWidth by animateDpAsState(if (expanded) maxWidth else 48.dp, label = "Settings search width")
+        if (!expanded) Box(Modifier.align(Alignment.CenterStart)) { ScreenTitle("Settings") }
+        Row(Modifier.align(Alignment.CenterEnd).width(searchWidth).fillMaxHeight(),
+            verticalAlignment = Alignment.CenterVertically) {
+            if (!expanded) {
+                Spacer(Modifier.weight(1f))
+                IconControl(Glyph.SEARCH, "Search settings", onOpen)
+            } else {
+                BasicTextField(
+                    value = query,
+                    onValueChange = onQuery,
+                    singleLine = true,
+                    keyboardOptions = KeyboardOptions(imeAction = ImeAction.Search),
+                    keyboardActions = KeyboardActions(onSearch = { keyboard?.hide() }),
+                    textStyle = MaterialTheme.typography.bodyMedium.copy(color = ink),
+                    cursorBrush = SolidColor(MaterialTheme.colorScheme.primary),
+                    modifier = Modifier.weight(1f).fillMaxHeight().glassSurface(18)
+                        .focusRequester(focus).semantics { contentDescription = "Search settings" },
+                    decorationBox = { inner ->
+                        Row(Modifier.fillMaxSize().padding(horizontal = 10.dp),
+                            horizontalArrangement = Arrangement.spacedBy(8.dp),
+                            verticalAlignment = Alignment.CenterVertically) {
+                            MonologIcon(Glyph.SEARCH, Modifier.size(16.dp), muted)
+                            Box(Modifier.weight(1f)) {
+                                if (query.isEmpty()) Text("Search settings", color = muted,
+                                    style = MaterialTheme.typography.bodyMedium, maxLines = 1)
+                                inner()
+                            }
+                        }
+                    }
+                )
+                IconControl(Glyph.CLOSE, "Close settings search", onClose)
+            }
+        }
     }
 }
 
@@ -1480,14 +1538,42 @@ private fun NoteEditor(initial: Note?, savedPhotos: List<NotePhotoRef>, onCancel
     var voiceBusy by remember { mutableStateOf(false) }
     val micPermission = rememberLauncherForActivityResult(ActivityResultContracts.RequestPermission()) { }
     var saving by remember { mutableStateOf(false) }
+    var checkingPhotos by remember { mutableStateOf(false) }
     var error by remember { mutableStateOf<String?>(null) }
     val titleFocus = rememberEditorFocusRequester()
+    val bodyFocus = remember { FocusRequester() }
     val photos = savedPhotos.filterNot { it.id in removed }.map { JournalPhoto.Saved(it.id) } + picked.map { JournalPhoto.Picked(it) }
     val picker = rememberLauncherForActivityResult(ActivityResultContracts.PickMultipleVisualMedia(PhotoCodec.MAX_ATTACHMENTS)) { uris ->
         val freeSlots = (PhotoCodec.MAX_ATTACHMENTS - photos.size).coerceAtLeast(0)
         val next = uris.map { it.toString() }.distinct().filterNot { it in picked }
-        picked = ArrayList(picked + next.take(freeSlots))
-        error = if (next.size > freeSlots) "You can attach up to ${PhotoCodec.MAX_ATTACHMENTS} photos per entry." else null
+        if (next.isNotEmpty()) {
+            checkingPhotos = true
+            scope.launch {
+                try {
+                    val results = withContext(Dispatchers.IO) {
+                        next.map { uri ->
+                            uri to try {
+                                PhotoCodec.checkNoteImageSize(context.contentResolver, Uri.parse(uri))
+                                null
+                            } catch (failure: CancellationException) {
+                                throw failure
+                            } catch (failure: PhotoCodec.NoteImageTooLarge) {
+                                failure.message
+                            } catch (_: Exception) {
+                                "Couldn’t open one of the selected images."
+                            }
+                        }
+                    }
+                    val valid = results.filter { it.second == null }.map { it.first }
+                    picked = ArrayList(picked + valid.take(freeSlots))
+                    error = results.firstNotNullOfOrNull { it.second } ?: if (valid.size > freeSlots) {
+                        "You can attach up to ${PhotoCodec.MAX_ATTACHMENTS} photos per entry."
+                    } else null
+                } finally {
+                    checkingPhotos = false
+                }
+            }
+        }
     }
     val cancel = { if (!saving) onCancel() }
     val editorFieldColors = TextFieldDefaults.colors(
@@ -1533,22 +1619,28 @@ private fun NoteEditor(initial: Note?, savedPhotos: List<NotePhotoRef>, onCancel
             if (preview) {
                 Box(Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 12.dp)) {
                     if (body.text.isBlank()) Text("Your formatted entry will appear here.", color = muted)
-                    else JournalMarkdown(body.text, Modifier.fillMaxWidth())
+                    else JournalMarkdown(body.text, Modifier.fillMaxWidth()) { index, checked ->
+                        body = body.copy(text = body.text.replaceRange(index, index + 1, if (checked) "x" else " "))
+                    }
                 }
             } else {
                 if (!isCapture && formatting) FlowRow(
                     Modifier.padding(horizontal = 8.dp),
                     horizontalArrangement = Arrangement.spacedBy(4.dp)
                 ) {
-                    TextButton(onClick = { body = formatSelection(body, "\n## ", "", "Heading") }) { Text("Heading") }
-                    TextButton(onClick = { body = formatSelection(body, "**", "**", "Bold text") }) { Text("Bold", fontWeight = FontWeight.Bold) }
-                    TextButton(onClick = { body = formatSelection(body, "\n- ", "", "List item") }) { Text("List") }
+                    NoteFormat.entries.forEach { format ->
+                        TextButton(onClick = {
+                            body = formatNote(body, format)
+                            bodyFocus.requestFocus()
+                            keyboard?.show()
+                        }) { Text(format.label, fontWeight = if (format == NoteFormat.Bold) FontWeight.Bold else null) }
+                    }
                 }
                 TextField(
                     value = body,
-                    onValueChange = { body = it },
+                    onValueChange = { body = if (isCapture) it else continueNoteList(body, it) },
                     placeholder = { Text("What would you like to remember?", color = muted) },
-                    modifier = Modifier.fillMaxWidth().semantics { contentDescription = "Your note" },
+                    modifier = Modifier.fillMaxWidth().focusRequester(bodyFocus).semantics { contentDescription = "Your note" },
                     minLines = 5,
                     maxLines = 12,
                     textStyle = MaterialTheme.typography.bodyLarge,
@@ -1591,7 +1683,7 @@ private fun NoteEditor(initial: Note?, savedPhotos: List<NotePhotoRef>, onCancel
                         keyboard?.hide()
                         picker.launch(PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.ImageOnly))
                     },
-                    enabled = photos.size < PhotoCodec.MAX_ATTACHMENTS && !saving
+                    enabled = photos.size < PhotoCodec.MAX_ATTACHMENTS && !saving && !checkingPhotos
                 ) {
                     MonologIcon(Glyph.PHOTO, Modifier.size(18.dp), PaperAccentBlue)
                     Spacer(Modifier.width(8.dp))
@@ -1603,12 +1695,14 @@ private fun NoteEditor(initial: Note?, savedPhotos: List<NotePhotoRef>, onCancel
                     })
                 (if (isCapture) captureAudio else voiceAudio)?.let { VoiceNotePlayback(it) }
             }
+            Text("Images must be smaller than 5 MB each.", Modifier.padding(start = 16.dp, bottom = 4.dp),
+                color = muted, style = MaterialTheme.typography.bodySmall)
         }
         error?.let { Text(it, color = MaterialTheme.colorScheme.error, modifier = Modifier.padding(top = 8.dp)) }
         Spacer(Modifier.height(12.dp))
         Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
             Button(
-                enabled = !saving && !voiceBusy && (title.isNotBlank() || body.text.isNotBlank() || photos.isNotEmpty() || voiceAudio != null || captureAudio != null),
+                enabled = !saving && !checkingPhotos && !voiceBusy && (title.isNotBlank() || body.text.isNotBlank() || photos.isNotEmpty() || voiceAudio != null || captureAudio != null),
                 onClick = {
                     saving = true
                     error = null
@@ -1619,10 +1713,7 @@ private fun NoteEditor(initial: Note?, savedPhotos: List<NotePhotoRef>, onCancel
                     scope.launch {
                         try {
                             val bytes = withContext(Dispatchers.IO) {
-                                changes.map { uri ->
-                                    val image = PhotoCodec.decode(context.contentResolver, Uri.parse(uri))
-                                    try { PhotoCodec.jpeg(image) } finally { image.recycle() }
-                                }
+                                changes.map { uri -> PhotoCodec.noteImage(context.contentResolver, Uri.parse(uri)) }
                             }
                             val savedBody = if (isCapture) {
                                 TagMetadataCodec.encodeCapture(capture.tags, capture.bottomIsVoice || captureAudio != null,
@@ -1638,6 +1729,8 @@ private fun NoteEditor(initial: Note?, savedPhotos: List<NotePhotoRef>, onCancel
                             onCancel()
                         } catch (error: CancellationException) {
                             throw error
+                        } catch (failure: PhotoCodec.NoteImageTooLarge) {
+                            error = failure.message
                         } catch (_: Exception) {
                             error = "Couldn’t save this entry. Check your photos and try again."
                         } finally {
@@ -1649,15 +1742,6 @@ private fun NoteEditor(initial: Note?, savedPhotos: List<NotePhotoRef>, onCancel
             OutlinedButton(onClick = cancel, enabled = !saving) { Text("Cancel") }
         }
     }
-}
-
-private fun formatSelection(value: TextFieldValue, prefix: String, suffix: String, placeholder: String): TextFieldValue {
-    val start = value.selection.min
-    val end = value.selection.max
-    val content = value.text.substring(start, end).ifEmpty { placeholder }
-    val opening = if (prefix.startsWith('\n') && (start == 0 || value.text.getOrNull(start - 1) == '\n')) prefix.drop(1) else prefix
-    val text = value.text.replaceRange(start, end, opening + content + suffix)
-    return TextFieldValue(text, TextRange(start + opening.length, start + opening.length + content.length))
 }
 
 @Composable

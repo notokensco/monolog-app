@@ -1,14 +1,13 @@
 package com.notokens.monolog.ime
 
 import android.app.Activity
+import android.app.AlertDialog
 import android.content.Intent
 import android.media.projection.MediaProjectionManager
 import android.os.Bundle
 import android.view.WindowManager
-import android.widget.Button
 import android.widget.EditText
-import android.widget.LinearLayout
-import android.widget.TextView
+import android.widget.FrameLayout
 import androidx.activity.ComponentActivity
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.core.widget.doAfterTextChanged
@@ -41,18 +40,12 @@ internal class ChatAssistSetupActivity : ComponentActivity() {
             finish()
             return
         }
-        val margin = (24 * resources.displayMetrics.density).toInt()
-        val layout = LinearLayout(this).apply {
-            orientation = LinearLayout.VERTICAL
-            setPadding(margin, margin * 2, margin, margin)
-        }
-        layout.addView(TextView(this).apply { text = "Chat Assist"; textSize = 24f })
-        layout.addView(TextView(this).apply {
-            text = "Monolog reads visible chat text to suggest replies and feedback. "
-                .plus("Choose A single app and select the chat app in Android’s sharing dialog. ")
-                .plus("Session context stays on this device and is discarded when you stop.")
-        })
-        val input = EditText(this).apply {
+        val night = resources.configuration.uiMode and android.content.res.Configuration.UI_MODE_NIGHT_MASK
+        val dialogTheme = if (night == android.content.res.Configuration.UI_MODE_NIGHT_YES) {
+            android.R.style.Theme_Material_Dialog_Alert
+        } else android.R.style.Theme_Material_Light_Dialog_Alert
+        val builder = AlertDialog.Builder(this, dialogTheme)
+        val input = EditText(builder.context).apply {
             id = android.R.id.edit
             importantForAutofill = android.view.View.IMPORTANT_FOR_AUTOFILL_NO_EXCLUDE_DESCENDANTS
             inputType = android.text.InputType.TYPE_CLASS_TEXT or
@@ -60,23 +53,42 @@ internal class ChatAssistSetupActivity : ComponentActivity() {
                 android.text.InputType.TYPE_TEXT_FLAG_NO_SUGGESTIONS
             imeOptions = android.view.inputmethod.EditorInfo.IME_FLAG_NO_PERSONALIZED_LEARNING
             isSaveEnabled = false
-            hint = "What should Chat Assist help with?"
+            hint = "Your goal for this chat"
             filters = arrayOf(android.text.InputFilter.LengthFilter(400))
-            setText(goal)
+            minLines = 2
+            maxLines = 4
         }
-        val share = Button(this).apply {
-            text = "Choose chat app"
-            isEnabled = goal.isNotBlank()
-            setOnClickListener {
-                goal = input.text.toString().trim()
+        val margin = (24 * resources.displayMetrics.density).toInt()
+        val field = FrameLayout(builder.context).apply {
+            setPadding(margin, 0, margin, 0)
+            addView(input, FrameLayout.LayoutParams(FrameLayout.LayoutParams.MATCH_PARENT, FrameLayout.LayoutParams.WRAP_CONTENT))
+        }
+        val dialog = builder.setTitle("Chat Assist")
+            .setMessage("Tell Monolog what you want help with. Next, choose a single app in Android’s sharing dialog and select this chat app.")
+            .setView(field)
+            .setNegativeButton("Cancel") { _, _ -> finish() }
+            .setPositiveButton("Share chat app", null)
+            .setOnCancelListener { finish() }
+            .create()
+        dialog.window?.apply {
+            addFlags(WindowManager.LayoutParams.FLAG_SECURE)
+            setSoftInputMode(WindowManager.LayoutParams.SOFT_INPUT_STATE_ALWAYS_HIDDEN)
+        }
+        dialog.show()
+        val share = dialog.getButton(AlertDialog.BUTTON_POSITIVE)
+        share.isEnabled = false
+        input.doAfterTextChanged { share.isEnabled = !it.isNullOrBlank() }
+        share.setOnClickListener {
+            goal = input.text.toString().trim()
+            if (goal.isBlank()) return@setOnClickListener
+            dialog.dismiss()
+            runCatching {
                 picker.launch(getSystemService(MediaProjectionManager::class.java).createScreenCaptureIntent())
+            }.onFailure {
+                ChatAssist.stop("Couldn’t open Android’s sharing setup.")
+                finish()
             }
         }
-        input.doAfterTextChanged { share.isEnabled = !it.isNullOrBlank() }
-        layout.addView(input)
-        layout.addView(share)
-        layout.addView(Button(this).apply { text = "Cancel"; setOnClickListener { finish() } })
-        setContentView(layout)
     }
 
 }

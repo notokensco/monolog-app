@@ -95,6 +95,7 @@ interface NoteDao {
     fun observeLatestBetween(start: Long, end: Long): Flow<Note?>
     @Query("SELECT * FROM notes WHERE id = :id LIMIT 1") fun observe(id: Long): Flow<Note?>
     @Query("SELECT * FROM notes WHERE id = :id LIMIT 1") suspend fun current(id: Long): Note?
+    @Query("SELECT COUNT(*) FROM notes WHERE id IN (:ids)") suspend fun countExisting(ids: List<Long>): Int
     @Insert suspend fun insert(note: Note): Long
     @Update suspend fun update(note: Note): Int
     @Delete suspend fun delete(note: Note)
@@ -107,6 +108,8 @@ interface NotePhotoDao {
     fun observeRefs(): Flow<List<NotePhotoRef>>
     @Query("SELECT id, noteId FROM note_photos WHERE noteId = :noteId ORDER BY id")
     fun observeRefs(noteId: Long): Flow<List<NotePhotoRef>>
+    @Query("SELECT id FROM note_photos WHERE noteId = :noteId ORDER BY id")
+    suspend fun ids(noteId: Long): List<Long>
 
     @Query("SELECT image FROM note_photos WHERE id = :id")
     suspend fun image(id: Long): ByteArray?

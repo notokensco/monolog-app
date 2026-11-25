@@ -308,7 +308,6 @@ internal class BackupCoordinator(
                 for (year in payloads.map { it.year }.distinct().filter { it < java.time.LocalDate.now().year }) {
                     db.memories().download(YearDownload(account.id, year, System.currentTimeMillis() + 7L * 86400000))
                 }
-                db.memories().clearRecaps()
                 accounts.requireSession(account.session)
                 RestoreReport(imported, skipped, conflicts)
             }
