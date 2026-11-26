@@ -146,7 +146,7 @@ interface ReminderDao {
     @Query("SELECT * FROM reminders") suspend fun all(): List<Reminder>
     @Query("SELECT * FROM reminders WHERE dueAt > :now ORDER BY dueAt ASC") suspend fun future(now: Long): List<Reminder>
     @Insert suspend fun insert(reminder: Reminder): Long
-    @Update suspend fun update(reminder: Reminder)
+    @Update suspend fun update(reminder: Reminder): Int
     @Delete suspend fun delete(reminder: Reminder)
 }
 

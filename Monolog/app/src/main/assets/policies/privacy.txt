@@ -11,6 +11,8 @@ If Journal memory is on, Monolog can save summaries of eligible drafts, includin
 
 Use Settings → Privacy & data → Personalise for you to control keyboard word learning. Monolog can keep words you use, word pairs learned from typing and corrections, and totals such as key presses and accepted suggestions. Incognito and protected fields are excluded. Enabling the optional Keyboard profile in Account & backup includes your dictionary, learned word pairs, counts and keyboard preferences in encrypted Google Drive backups.
 
+If you link a phone calendar in the reminder editor, Monolog copies reminder titles and due times to the calendar you select. The calendar account may sync those entries under its own settings. You can stop adding new calendar entries from the reminder editor or revoke calendar access in Android settings.
+
 Microphone, screenshots and clipboard
 
 Microphone access supports voice typing and voice notes when you start recording. Downloaded voice packs process speech on your device. If you select Android speech recognition, the app requests the device's on-device recognition service. Audio is kept with voice notes you choose to save. You can revoke microphone access in Android settings.

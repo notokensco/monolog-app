@@ -176,6 +176,8 @@ internal fun KeyboardStyleSettings(settings: SettingsStore) {
     val size by settings.keyboardFontSize.collectAsState(100)
     val emojiColumns by settings.emojiColumns.collectAsState(8)
     val sound by settings.keyTapSound.collectAsState(KeyTapSound.OFF)
+    val soundRevision by settings.keyTapSoundRevision.collectAsState(0L)
+    val previewSound = com.notokens.monolog.ime.ui.rememberKeySound(sound, soundRevision)
     var sizePreview by remember(size) { mutableIntStateOf(size) }
     var columnsPreview by remember(emojiColumns) { mutableIntStateOf(emojiColumns) }
     var message by remember { mutableStateOf<String?>(null) }
@@ -213,6 +215,7 @@ internal fun KeyboardStyleSettings(settings: SettingsStore) {
                 else scope.launch { settings.setKeyTapSound(choice) }
             }, label = { Text(choice.label) })
         }
+        if (previewSound != null) TextButton(onClick = previewSound) { Text("Play preview") }
         message?.let { Text(it, color = MaterialTheme.colorScheme.error) }
     }
 }

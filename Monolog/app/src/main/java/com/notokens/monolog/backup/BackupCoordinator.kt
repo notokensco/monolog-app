@@ -8,6 +8,7 @@ import com.notokens.monolog.data.BackupRecord
 import com.notokens.monolog.data.BackupVersion
 import com.notokens.monolog.data.JournalCipher
 import com.notokens.monolog.data.MonologDatabase
+import com.notokens.monolog.data.MonologData
 import com.notokens.monolog.data.Note
 import com.notokens.monolog.data.NotePhoto
 import com.notokens.monolog.data.MemoryBackupReceipt
@@ -308,6 +309,8 @@ internal class BackupCoordinator(
                 }
                 accounts.requireSession(account.session)
                 RestoreReport(imported, skipped, conflicts)
+            }.also { report ->
+                if (report.imported > 0) MonologData.repository(context).rescheduleFutureReminders()
             }
         }
 

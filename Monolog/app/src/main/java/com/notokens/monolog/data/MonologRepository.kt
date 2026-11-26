@@ -5,11 +5,14 @@ import androidx.core.app.NotificationManagerCompat
 import androidx.room.withTransaction
 import com.notokens.monolog.memory.invalidateBriefSources
 import com.notokens.monolog.reminders.ReminderScheduler
+import com.notokens.monolog.reminders.ReminderCalendar
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.flowOn
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
 import java.time.Instant
 import java.time.ZoneId
 
@@ -39,6 +42,8 @@ data class NotePhotoChanges(val removed: List<Long> = emptyList(), val added: Li
 class RoomMonologRepository(private val context: Context) : MonologRepository {
     private val database = MonologDatabase.get(context)
     private val scheduler = ReminderScheduler(context.applicationContext)
+    private val calendar = ReminderCalendar(context.applicationContext)
+    private val reminderWrites = Mutex()
     override val notes = database.notes().observeAll().map { rows -> rows.map(::openNote) }.flowOn(Dispatchers.IO)
     override val latestNote = database.notes().observeLatest().map { it?.let(::openNote) }.flowOn(Dispatchers.IO)
     override val notePhotos = database.photos().observeRefs()
@@ -96,33 +101,43 @@ class RoomMonologRepository(private val context: Context) : MonologRepository {
         }
     }
 
-    override suspend fun saveReminder(title: String, dueAt: Long, existing: Reminder?): Long {
+    override suspend fun saveReminder(title: String, dueAt: Long, existing: Reminder?): Long = reminderWrites.withLock {
         require(title.isNotBlank())
         require(dueAt > System.currentTimeMillis())
         val reminder = existing?.copy(title = title.trim(), dueAt = dueAt)
         val id = if (reminder == null) database.reminders().insert(Reminder(title = title.trim(), dueAt = dueAt))
-        else { scheduler.cancel(reminder.id); database.reminders().update(reminder); reminder.id }
-        scheduler.schedule(Reminder(id = id, title = title.trim(), dueAt = dueAt))
+        else {
+            check(database.reminders().update(reminder) == 1) { "This reminder was deleted" }
+            scheduler.cancel(reminder.id)
+            reminder.id
+        }
+        val saved = Reminder(id = id, title = title.trim(), dueAt = dueAt)
+        scheduler.schedule(saved)
         com.notokens.monolog.memory.MemoryRepository.queueReminder(context, id)
-        return id
+        if (!calendar.save(saved)) withContext(Dispatchers.Main.immediate) {
+            android.widget.Toast.makeText(context, "Reminder saved in Monolog. Its calendar entry couldn’t be updated.",
+                android.widget.Toast.LENGTH_LONG).show()
+        }
+        id
     }
 
-    override suspend fun deleteReminder(reminder: Reminder) {
+    override suspend fun deleteReminder(reminder: Reminder) = reminderWrites.withLock {
         scheduler.cancel(reminder.id)
         database.withTransaction {
             val memory = database.memories().forReminder(reminder.id)
             database.reminders().delete(reminder)
             if (memory != null) invalidateBriefSources(database, memory.localDay, setOf("memory:${memory.id}"))
         }
+        calendar.remove(reminder.id)
     }
 
-    override suspend fun rescheduleFutureReminders() {
+    override suspend fun rescheduleFutureReminders() = reminderWrites.withLock {
         database.reminders().future(System.currentTimeMillis()).forEach(scheduler::schedule)
     }
 
-    override suspend fun clearAllData() {
+    override suspend fun clearAllData() = reminderWrites.withLock {
         com.notokens.monolog.memory.MemoryPreferences(context).markCleared()
-        database.reminders().all().forEach { scheduler.cancel(it.id) }
+        database.reminders().all().forEach { scheduler.cancel(it.id); calendar.remove(it.id) }
         NotificationManagerCompat.from(context).cancelAll()
         withContext(Dispatchers.IO) { database.clearAllTables() }
     }

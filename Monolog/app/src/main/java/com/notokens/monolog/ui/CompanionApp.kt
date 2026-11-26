@@ -1853,6 +1853,8 @@ private fun ReminderEditor(initial: Reminder?, onSave: (String, Long) -> Unit, o
             MonologIcon(Glyph.ARROW, Modifier.size(16.dp), PaperAccentBlue)
         }
         if (invalidTime) Text("Choose a time in the future.", color = MaterialTheme.colorScheme.error, modifier = Modifier.padding(top = 8.dp))
+        Spacer(Modifier.height(12.dp))
+        ReminderDeliverySettings()
         Spacer(Modifier.height(20.dp))
         Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
             Button(onClick = {

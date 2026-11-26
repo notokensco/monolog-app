@@ -188,7 +188,7 @@ fun KeyButton(
             .semantics {
                 val description = label ?: glyph?.name?.lowercase()
                 if (description != null) contentDescription = description
-                semanticsClick { onClick(); true }
+                semanticsClick { tapSound?.invoke(); onClick(); true }
                 if (onLongClick != null) semanticsLongClick(longClickLabel) { onLongClick(); true }
                 if (hasAlternates) {
                     customActions = alternates.map { alternate ->
