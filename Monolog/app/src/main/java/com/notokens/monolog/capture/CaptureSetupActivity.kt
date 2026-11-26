@@ -42,7 +42,8 @@ class CaptureSetupActivity : ComponentActivity() {
 
     companion object {
         private const val disclosure =
-            "Monolog uses Android Accessibility to take a screenshot when you activate Quick Capture " +
+            "Enable Monolog Keyboard Context to use the keyboard’s M key for screenshots. Enable the separate Quick Capture shortcut only if you want Android’s floating button. " +
+                "Monolog uses Android Accessibility to take a screenshot when you activate Quick Capture " +
                 "and to locate the Android shortcut button so actions can appear beside it. " +
                 "Screenshots are processed on your device and kept in your journal only when you save them. " +
                 "If you enable Drive backup separately, saved captures can be included in the encrypted backup. " +

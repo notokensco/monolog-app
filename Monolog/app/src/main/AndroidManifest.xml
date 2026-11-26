@@ -76,17 +76,6 @@
             android:excludeFromRecents="true"
             android:theme="@style/Theme.Monolog.Capture" />
         <activity
-            android:name=".ime.ChatAssistSetupActivity"
-            android:exported="false"
-            android:configChanges="keyboardHidden|orientation|screenSize"
-            android:excludeFromRecents="true"
-            android:taskAffinity=""
-            android:theme="@style/Theme.Monolog.Capture" />
-        <service
-            android:name=".ime.ChatAssistService"
-            android:exported="false"
-            android:foregroundServiceType="mediaProjection" />
-        <activity
             android:name=".capture.CaptureAnnotationActivity"
             android:exported="false"
             android:excludeFromRecents="true"
@@ -102,6 +91,16 @@
             </intent-filter>
             <meta-data android:name="android.accessibilityservice" android:resource="@xml/quick_capture_service" />
         </service>
+        <service
+            android:name=".capture.CaptureShortcutService"
+            android:exported="true"
+            android:label="@string/capture_shortcut_name"
+            android:permission="android.permission.BIND_ACCESSIBILITY_SERVICE">
+            <intent-filter>
+                <action android:name="android.accessibilityservice.AccessibilityService" />
+            </intent-filter>
+            <meta-data android:name="android.accessibilityservice" android:resource="@xml/capture_shortcut_service" />
+        </service>
 
         <service
             android:name=".ime.MonologInputMethodService"
@@ -115,10 +114,6 @@
                 android:name="android.view.im"
                 android:resource="@xml/method" />
         </service>
-        <service
-            android:name=".memory.BriefSummarizerService"
-            android:exported="false"
-            android:process=":journal_brief" />
 
         <receiver android:name=".reminders.ReminderReceiver" android:exported="false" />
         <receiver android:name=".reminders.ReminderRescheduleReceiver" android:exported="true">

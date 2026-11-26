@@ -1,24 +1,27 @@
 package com.notokens.monolog.ime.vox
 
 import android.annotation.SuppressLint
+import android.content.Context
 import android.media.AudioFormat
 import android.media.AudioRecord
 import android.media.MediaCodec
-import android.media.MediaCodecInfo
 import android.media.MediaFormat
+import android.media.MediaMuxer
 import android.media.MediaRecorder
 import android.util.Base64
 import java.io.ByteArrayOutputStream
+import java.io.File
 import kotlinx.coroutines.*
 
 internal data class RecordedVoice(val transcript: String, val audio: String?)
 
-/** A single microphone session. PCM stays in memory and the saved clip uses mono AAC. */
-internal class VoiceRecorder(private val scope: CoroutineScope) {
+/** A single microphone session. PCM stays in memory and the saved clip uses mono Opus in Ogg. */
+internal class VoiceRecorder(private val context: Context, private val scope: CoroutineScope) {
     private var record: AudioRecord? = null
     private var reading: Deferred<ByteArray>? = null
 
     @SuppressLint("MissingPermission")
+    @OptIn(ExperimentalCoroutinesApi::class)
     fun start(
         onEnd: () -> Unit = {},
         onSamples: ((ByteArray, Int) -> Unit)? = null
@@ -37,7 +40,7 @@ internal class VoiceRecorder(private val scope: CoroutineScope) {
             throw e
         }
         record = audio
-        reading = scope.async(Dispatchers.IO) {
+        reading = scope.async(Dispatchers.IO, start = CoroutineStart.ATOMIC) {
             val samples = ByteArrayOutputStream()
             val buffer = ByteArray(2048)
             try {
@@ -46,21 +49,24 @@ internal class VoiceRecorder(private val scope: CoroutineScope) {
                     if (count <= 0) break
                     samples.write(buffer, 0, count)
                     onSamples?.invoke(buffer, count)
-
                 }
-                samples.toByteArray()
+            } catch (cancelled: CancellationException) {
+                throw cancelled
+            } catch (_: Exception) {
+                // Preserve successfully captured audio when the recorder is interrupted.
             } finally {
                 runCatching { audio.stop() }
-                audio.release()
+                runCatching { audio.release() }
                 onEnd()
             }
+            samples.toByteArray()
         }
     }
 
     suspend fun finishAudio(): String {
         val pcm = finishPcm()
-        val aac = withContext(Dispatchers.Default) { encode(pcm) }
-        return Base64.encodeToString(aac, Base64.NO_WRAP)
+        val ogg = withContext(Dispatchers.IO) { encode(pcm, context.cacheDir) }
+        return Base64.encodeToString(ogg, Base64.NO_WRAP)
     }
 
     private suspend fun finishPcm(): ByteArray {
@@ -87,56 +93,65 @@ internal class VoiceRecorder(private val scope: CoroutineScope) {
         const val SECONDS = 30
         private const val LIMIT = RATE * 2 * SECONDS
 
-        private fun encode(pcm: ByteArray): ByteArray {
-            val format = MediaFormat.createAudioFormat(MediaFormat.MIMETYPE_AUDIO_AAC, RATE, 1).apply {
-                setInteger(MediaFormat.KEY_AAC_PROFILE, MediaCodecInfo.CodecProfileLevel.AACObjectLC)
-                setInteger(MediaFormat.KEY_BIT_RATE, 24_000)
+        private suspend fun encode(pcm: ByteArray, cache: File): ByteArray {
+            val format = MediaFormat.createAudioFormat(MediaFormat.MIMETYPE_AUDIO_OPUS, RATE, 1).apply {
+                setInteger(MediaFormat.KEY_BIT_RATE, 16_000)
             }
-            val codec = MediaCodec.createEncoderByType(MediaFormat.MIMETYPE_AUDIO_AAC)
-            val output = ByteArrayOutputStream()
+            val file = File.createTempFile("monolog-audio-", ".ogg", cache)
             try {
-                codec.configure(format, null, null, MediaCodec.CONFIGURE_FLAG_ENCODE)
-                codec.start()
-                val info = MediaCodec.BufferInfo()
-                var offset = 0
-                var queuedEnd = false
-                val deadline = android.os.SystemClock.elapsedRealtime() + 8_000
-                while (android.os.SystemClock.elapsedRealtime() < deadline) {
-                    if (!queuedEnd) {
-                        val id = codec.dequeueInputBuffer(5_000)
-                        if (id >= 0) {
-                            val input = checkNotNull(codec.getInputBuffer(id))
-                            input.clear()
-                            val size = minOf(input.remaining(), pcm.size - offset)
-                            input.put(pcm, offset, size)
-                            val flags = if (offset + size == pcm.size) MediaCodec.BUFFER_FLAG_END_OF_STREAM else 0
-                            codec.queueInputBuffer(id, 0, size, offset * 500_000L / RATE, flags)
-                            offset += size
-                            queuedEnd = flags != 0
+                val codec = MediaCodec.createEncoderByType(MediaFormat.MIMETYPE_AUDIO_OPUS)
+                try {
+                    val muxer = MediaMuxer(file.absolutePath, MediaMuxer.OutputFormat.MUXER_OUTPUT_OGG)
+                    try {
+                        codec.configure(format, null, null, MediaCodec.CONFIGURE_FLAG_ENCODE)
+                        codec.start()
+                        val info = MediaCodec.BufferInfo()
+                        var track = -1
+                        var offset = 0
+                        var inputEnded = false
+                        val deadline = android.os.SystemClock.elapsedRealtime() + 8_000
+                        while (android.os.SystemClock.elapsedRealtime() < deadline) {
+                            currentCoroutineContext().ensureActive()
+                            if (!inputEnded) {
+                                val index = codec.dequeueInputBuffer(5_000)
+                                if (index >= 0) {
+                                    val input = checkNotNull(codec.getInputBuffer(index))
+                                    input.clear()
+                                    val size = minOf(input.remaining(), pcm.size - offset) and -2
+                                    input.put(pcm, offset, size)
+                                    val flags = if (offset + size >= pcm.size - 1) MediaCodec.BUFFER_FLAG_END_OF_STREAM else 0
+                                    codec.queueInputBuffer(index, 0, size, offset * 500_000L / RATE, flags)
+                                    offset += size
+                                    inputEnded = flags != 0
+                                }
+                            }
+                            val index = codec.dequeueOutputBuffer(info, 5_000)
+                            if (index == MediaCodec.INFO_OUTPUT_FORMAT_CHANGED) {
+                                track = muxer.addTrack(codec.outputFormat)
+                                muxer.start()
+                            }
+                            if (index < 0) continue
+                            val ended = info.flags and MediaCodec.BUFFER_FLAG_END_OF_STREAM != 0
+                            try {
+                                if (info.size > 0 && info.flags and MediaCodec.BUFFER_FLAG_CODEC_CONFIG == 0) {
+                                    check(track >= 0)
+                                    muxer.writeSampleData(track, checkNotNull(codec.getOutputBuffer(index)), info)
+                                }
+                            } finally {
+                                codec.releaseOutputBuffer(index, false)
+                            }
+                            if (ended) {
+                                check(track >= 0)
+                                muxer.stop()
+                                check(file.length() in 1..160_000)
+                                return file.readBytes()
+                            }
                         }
-                    }
-                    val id = codec.dequeueOutputBuffer(info, 5_000)
-                    if (id < 0) continue
-                    if (info.size > 0 && (info.flags and MediaCodec.BUFFER_FLAG_CODEC_CONFIG) == 0) {
-                        val packet = ByteArray(info.size)
-                        checkNotNull(codec.getOutputBuffer(id)).apply { position(info.offset); get(packet) }
-                        val length = packet.size + 7
-                        // ADTS, AAC LC, 16 kHz sample index 8, one channel.
-                        output.write(byteArrayOf(0xff.toByte(), 0xf1.toByte(), 0x60,
-                            ((1 shl 6) or (length shr 11)).toByte(), (length shr 3).toByte(),
-                            (((length and 7) shl 5) or 0x1f).toByte(), 0xfc.toByte()))
-                        output.write(packet)
-                    }
-                    codec.releaseOutputBuffer(id, false)
-                    if ((info.flags and MediaCodec.BUFFER_FLAG_END_OF_STREAM) != 0) {
-                        check(output.size() in 1..160_000)
-                        return output.toByteArray()
-                    }
-                }
-                error("The audio encoder timed out.")
-            } finally { codec.release() }
+                        error("The audio encoder timed out.")
+                    } finally { muxer.release() }
+                } finally { codec.release() }
+            } finally { file.delete() }
         }
-
     }
 }
 

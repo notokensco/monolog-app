@@ -18,6 +18,8 @@ import kotlinx.coroutines.withContext
 
 internal object OfflineMoonshine {
     private const val ARCH = JNI.MOONSHINE_MODEL_ARCH_SMALL_STREAMING
+    // Moonshine 0.1.5's quantized English pack without spelling or word timestamps.
+    const val DOWNLOAD_MB = 142
     private val spec = ModelSpec.stt("en", ARCH, false)
     private val downloader by lazy { AssetDownloader() }
     private val modelAccess = Mutex()

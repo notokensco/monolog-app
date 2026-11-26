@@ -78,8 +78,8 @@ internal fun parseNoteMarkdown(source: String): NoteMarkdown {
     return NoteMarkdown(root, tasks)
 }
 
-internal fun markdownExcerpt(source: String): String =
-    markdownText.render(parseNoteMarkdown(source.take(2048)).root).trim().replace(whitespace, " ")
+internal fun markdownExcerpt(source: String, limit: Int = 2048): String =
+    markdownText.render(parseNoteMarkdown(source.take(limit)).root).trim().replace(whitespace, " ")
 
 @Composable
 internal fun JournalMarkdown(source: String, modifier: Modifier = Modifier, onTaskChange: ((Int, Boolean) -> Unit)? = null) {

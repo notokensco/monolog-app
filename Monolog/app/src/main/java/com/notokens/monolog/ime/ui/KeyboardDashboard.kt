@@ -149,7 +149,7 @@ internal enum class DashboardTile(val label: String, val glyph: Glyph, val extra
     REDO("Redo", Glyph.ARROW, true), AUTOFILL("Autofill", Glyph.SHIELD, true),
     LANGUAGE("Languages", Glyph.GLOBE, true), APPEARANCE("Appearance", Glyph.PAPER, true),
     TRANSLATE("Translate", Glyph.GLOBE, true), GIFS("GIFs", Glyph.PHOTO, true),
-    STICKERS("Stickers", Glyph.SMILE, true), CHAT_ASSIST("Chat Assist", Glyph.BOLT);
+    STICKERS("Stickers", Glyph.SMILE, true);
 
     fun allowed(privateMode: Boolean, restricted: Boolean) =
         (!privateMode && !restricted) || this in setOf(

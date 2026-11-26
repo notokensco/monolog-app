@@ -17,8 +17,6 @@ Microphone access supports voice typing and voice notes when you start recording
 
 Quick Capture uses Android Accessibility if you enable it. It requests a screenshot when you activate capture and may use the position of Android's accessibility shortcut to place its menu nearby. Screenshots and accompanying notes are kept when you save them. You can discard a capture or disable the service in Android settings.
 
-Chat Assist starts when you enter a goal and allow Android screen sharing. Select only the chat app you intend to share. While Monolog is active in that app, Chat Assist reads visible text from the shared screen and uses a downloaded model to suggest replies and feedback on your device. The session goal and chat context are temporary and are excluded from journal and Drive backups. You can pause or end the session in the keyboard, or stop sharing in Android.
-
 Draft Rescue is optional. When enabled, it holds up to 10 recent text drafts on this device in memory for 30 minutes or until the Monolog process closes. Drafts are excluded from Drive backup. You can view, insert or copy them. When you copy or insert a draft, Android or the receiving app handles that text.
 
 Clipboard history is optional and off by default. Clipboard history uses copied text and images for pasting. If clipboard action suggestions are enabled, Monolog can also read copied information to suggest an action. Unpinned history expires after one hour. Pinned items remain until removed or cleared. Android manages its system clipboard separately. If you enable system spell checking in Monolog, the selected Android spell-checking service may receive the word being checked.

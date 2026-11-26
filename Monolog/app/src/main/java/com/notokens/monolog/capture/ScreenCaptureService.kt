@@ -1,7 +1,6 @@
 package com.notokens.monolog.capture
 
 import android.accessibilityservice.AccessibilityService
-import android.accessibilityservice.AccessibilityButtonController
 import android.content.res.Configuration
 import android.graphics.Bitmap
 import android.graphics.Rect
@@ -38,34 +37,30 @@ class ScreenCaptureService : AccessibilityService() {
             shortcutMenu.hide()
         }
     }
-    private val contextButton = object : AccessibilityButtonController.AccessibilityButtonCallback() {
-        override fun onClicked(controller: AccessibilityButtonController) {
-            if (shortcutTap?.isActive == true) {
-                shortcutTap?.cancel()
+    private fun handleShortcutClick() {
+        if (shortcutTap?.isActive == true) {
+            shortcutTap?.cancel()
+            shortcutTap = null
+            showSystemShortcutMenu()
+        } else {
+            shortcutTap = scope.launch {
+                delay(android.view.ViewConfiguration.getDoubleTapTimeout().toLong())
                 shortcutTap = null
-                showSystemShortcutMenu()
-            } else {
-                shortcutTap = scope.launch {
-                    delay(android.view.ViewConfiguration.getDoubleTapTimeout().toLong())
-                    shortcutTap = null
-                    saveScreenshot(Display.DEFAULT_DISPLAY, hideKeyboard = true)
-                }
+                saveScreenshot(Display.DEFAULT_DISPLAY, hideKeyboard = true)
             }
         }
+    }
 
-        override fun onAvailabilityChanged(controller: AccessibilityButtonController, available: Boolean) {
-            if (!available) {
-                shortcutTap?.cancel()
-                shortcutTap = null
-                shortcutMenu.hide()
-            }
-        }
+    private fun dismissShortcut() {
+        shortcutTap?.cancel()
+        shortcutTap = null
+        lastSystemButtonClick = null
+        shortcutMenu.hide()
     }
 
     override fun onServiceConnected() {
         super.onServiceConnected()
         connected = this
-        accessibilityButtonController.registerAccessibilityButtonCallback(contextButton)
         if (!screenRegistered) {
             registerReceiver(screen, android.content.IntentFilter(android.content.Intent.ACTION_SCREEN_OFF),
                 RECEIVER_NOT_EXPORTED)
@@ -76,7 +71,7 @@ class ScreenCaptureService : AccessibilityService() {
     private var screenRegistered = false
 
     override fun onAccessibilityEvent(event: AccessibilityEvent?) {
-        if (event?.packageName?.toString() != "com.android.systemui") return
+        if (!CaptureShortcutService.enabled || event?.packageName?.toString() != "com.android.systemui") return
         if (event.eventType != AccessibilityEvent.TYPE_VIEW_CLICKED &&
             event.eventType != AccessibilityEvent.TYPE_VIEW_LONG_CLICKED) return
         val anchor = shortcutAnchor.clicked(event.source) ?: return
@@ -118,7 +113,6 @@ class ScreenCaptureService : AccessibilityService() {
     }
 
     override fun onDestroy() {
-        accessibilityButtonController.unregisterAccessibilityButtonCallback(contextButton)
         if (connected === this) connected = null
         if (screenRegistered) unregisterReceiver(screen)
         scope.cancel()
@@ -181,6 +175,9 @@ class ScreenCaptureService : AccessibilityService() {
     companion object {
         private var connected: ScreenCaptureService? = null
         val isReady: Boolean get() = connected != null
+
+        internal fun shortcutClicked() { connected?.handleShortcutClick() }
+        internal fun closeShortcutMenu() { connected?.dismissShortcut() }
 
         fun capture(displayId: Int = Display.DEFAULT_DISPLAY, hideKeyboard: Boolean = false): Boolean {
             val service = connected ?: return false

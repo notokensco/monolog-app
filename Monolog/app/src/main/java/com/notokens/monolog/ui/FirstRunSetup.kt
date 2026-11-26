@@ -3,6 +3,9 @@ package com.notokens.monolog.ui
 import android.Manifest
 import android.content.Intent
 import android.content.pm.PackageManager
+import android.database.ContentObserver
+import android.os.Handler
+import android.os.Looper
 import android.provider.Settings
 import android.view.inputmethod.InputMethodManager
 import androidx.activity.compose.BackHandler
@@ -18,6 +21,8 @@ import androidx.compose.runtime.saveable.rememberSaveableStateHolder
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.core.content.ContextCompat
 import androidx.lifecycle.Lifecycle
@@ -28,6 +33,7 @@ import com.notokens.monolog.ai.KeyboardLanguage
 import com.notokens.monolog.data.KeyboardPlacement
 import com.notokens.monolog.data.SettingsStore
 import com.notokens.monolog.data.ThemeMode
+import com.notokens.monolog.ime.vox.VoxWordmarkFont
 import com.notokens.monolog.memory.MemoryPreferences
 import com.notokens.monolog.setup.checkImeEnabled
 import com.notokens.monolog.setup.checkImeSelected
@@ -36,9 +42,17 @@ import com.notokens.monolog.ui.theme.PaperKeySubText
 import com.notokens.monolog.ui.theme.PaperKeyText
 import kotlinx.coroutines.launch
 
+private enum class SetupStep(val title: String) {
+    WELCOME("Welcome"),
+    KEYBOARD("Set up your keyboard"),
+    PRIVACY("Choose what to keep"),
+    VOICE("VOX"),
+    TEXT("Text model"),
+    BACKUP("Optional backup")
+}
+
 @Composable
-internal fun FirstRunSetup(settings: SettingsStore, onRequestMic: () -> Unit,
-    onFinish: () -> Unit, onModels: () -> Unit, onMemory: () -> Unit) {
+internal fun FirstRunSetup(settings: SettingsStore, onRequestMic: () -> Unit, onFinish: () -> Unit) {
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
     val lifecycle = LocalLifecycleOwner.current
@@ -49,9 +63,10 @@ internal fun FirstRunSetup(settings: SettingsStore, onRequestMic: () -> Unit,
     val placement by settings.keyboardPlacement.collectAsState(KeyboardPlacement.FULL)
     val borders by settings.keyBorders.collectAsState(false)
     var pickLanguage by rememberSaveable { mutableStateOf(false) }
-    var page by rememberSaveable { mutableIntStateOf(0) }
+    var page by rememberSaveable { mutableStateOf(SetupStep.WELCOME) }
     val setupState = rememberSaveableStateHolder()
-    var offlineReady by remember { mutableStateOf(false) }
+    var voiceStatus by remember { mutableStateOf(ModelSetupStatus.OPTIONAL) }
+    var textStatus by remember { mutableStateOf(ModelSetupStatus.OPTIONAL) }
     var rememberMoments by remember { mutableStateOf(memory.enabled) }
     var enabled by remember { mutableStateOf(checkImeEnabled(context)) }
     var selected by remember { mutableStateOf(checkImeSelected(context)) }
@@ -74,36 +89,58 @@ internal fun FirstRunSetup(settings: SettingsStore, onRequestMic: () -> Unit,
         lifecycle.lifecycle.addObserver(observer)
         onDispose { lifecycle.lifecycle.removeObserver(observer) }
     }
-    fun finish(action: () -> Unit) {
-        memory.explained = true
-        action()
-    }
-    BackHandler(page > 0) { page-- }
-    Column(Modifier.fillMaxSize().safeDrawingPadding().padding(24.dp),
-        verticalArrangement = Arrangement.spacedBy(16.dp)) {
-        Row(verticalAlignment = Alignment.CenterVertically) {
-            MonologLogo(Modifier.size(44.dp))
-            Text("Monolog", Modifier.weight(1f), style = MaterialTheme.typography.titleLarge, color = PaperKeyText)
+    DisposableEffect(context) {
+        val observer = object : ContentObserver(Handler(Looper.getMainLooper())) {
+            override fun onChange(selfChange: Boolean) {
+                enabled = checkImeEnabled(context)
+                selected = checkImeSelected(context)
+            }
         }
-        LinearProgressIndicator(progress = { (page + 1) / 5f }, modifier = Modifier.fillMaxWidth())
-        Column(Modifier.weight(1f).verticalScroll(rememberScrollState()),
+        val resolver = context.contentResolver
+        resolver.registerContentObserver(Settings.Secure.getUriFor(Settings.Secure.DEFAULT_INPUT_METHOD), false, observer)
+        resolver.registerContentObserver(Settings.Secure.getUriFor(Settings.Secure.ENABLED_INPUT_METHODS), false, observer)
+        onDispose { resolver.unregisterContentObserver(observer) }
+    }
+    BackHandler(page != SetupStep.WELCOME) { page = SetupStep.entries[page.ordinal - 1] }
+    Column(Modifier.fillMaxSize().safeDrawingPadding().imePadding().padding(horizontal = 24.dp, vertical = 18.dp),
+        verticalArrangement = Arrangement.spacedBy(12.dp)) {
+        Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween,
+            verticalAlignment = Alignment.CenterVertically) {
+            Text("Monolog setup", color = PaperKeyText, style = MaterialTheme.typography.labelLarge)
+            Text("Step ${page.ordinal + 1} of ${SetupStep.entries.size}", color = PaperKeySubText,
+                style = MaterialTheme.typography.labelLarge)
+        }
+        LinearProgressIndicator(progress = { (page.ordinal + 1f) / SetupStep.entries.size }, modifier = Modifier.fillMaxWidth())
+        val scroll = key(page) { rememberScrollState() }
+        Column(Modifier.weight(1f).verticalScroll(scroll).padding(vertical = 4.dp),
             verticalArrangement = Arrangement.spacedBy(16.dp)) {
-            Text(listOf("A little space for your day", "Make Monolog your keyboard",
-                "Capture what matters", "Download offline models", "Set up backup")[page],
-                color = PaperKeyText, style = MaterialTheme.typography.headlineMedium)
+            if (page != SetupStep.WELCOME) Text(page.title, color = PaperKeyText,
+                style = MaterialTheme.typography.headlineMedium,
+                fontFamily = if (page == SetupStep.VOICE) VoxWordmarkFont else null,
+                fontWeight = FontWeight.SemiBold)
             when (page) {
-                0 -> {
-                    Text("Write, save a moment, and find it again in your private journal.", color = PaperKeySubText)
+                SetupStep.WELCOME -> {
+                    Column(Modifier.fillMaxWidth().glassSurface(28, GlassAccent.LAVENDER).padding(22.dp),
+                        horizontalAlignment = Alignment.CenterHorizontally,
+                        verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                        MonologLogo(Modifier.size(72.dp))
+                        Text("Welcome to Monolog", color = PaperKeyText, style = MaterialTheme.typography.headlineMedium,
+                            fontWeight = FontWeight.SemiBold, textAlign = TextAlign.Center)
+                        Text("your side of the day.", color = PaperKeySubText, style = MaterialTheme.typography.titleMedium)
+                    }
+                    Text("A keyboard for what you want to say and a private journal for what you want to keep.",
+                        color = PaperKeyText, style = MaterialTheme.typography.bodyLarge)
+                    Text("Typing, suggestions, and journal search work offline. Downloaded voice and AI models run on your phone. Web features and Google Drive backup are optional.",
+                        color = PaperKeySubText)
                     ProfileNameField(draftName ?: profile.name) { draftName = it }
-                    SettingsCard("Journal memory") {
-                        Text("Turn this on to save meaningful moments from text you type. You can save notes and screenshots with this setting off.",
-                            color = PaperKeyText)
-                        Text("Typed moments are labeled Drafted. Passwords, protected fields, and incognito typing are excluded. You can edit, pin, or delete a moment.",
-                            color = PaperKeySubText, style = MaterialTheme.typography.bodySmall)
-                        Row(verticalAlignment = Alignment.CenterVertically) {
-                            Text("Remember meaningful moments", Modifier.weight(1f), color = PaperKeyText)
-                            Switch(rememberMoments, { rememberMoments = it; memory.enabled = it })
-                        }
+                }
+                SetupStep.KEYBOARD -> {
+                    Text("Enable Monolog in Android, then choose it as your active keyboard.", color = PaperKeySubText)
+                    SetupAction("Enable Monolog", enabled, "Open keyboard settings") {
+                        context.startActivity(Intent(Settings.ACTION_INPUT_METHOD_SETTINGS))
+                    }
+                    if (enabled) SetupAction("Choose Monolog", selected, "Choose keyboard") {
+                        context.getSystemService(InputMethodManager::class.java)?.showInputMethodPicker()
                     }
                     SettingsCard("Keyboard preferences") {
                         OutlinedButton({ pickLanguage = true }) {
@@ -137,56 +174,71 @@ internal fun FirstRunSetup(settings: SettingsStore, onRequestMic: () -> Unit,
                             Switch(borders, { scope.launch { settings.setKeyBorders(it) } })
                         }
                     }
-                }
-                1 -> {
-                    Text("Enable Monolog in Android, then choose it as your active keyboard.", color = PaperKeySubText)
-                    SetupAction("Enable keyboard", enabled, "Open keyboard settings") {
-                        context.startActivity(Intent(Settings.ACTION_INPUT_METHOD_SETTINGS))
-                    }
-                    SetupAction("Choose Monolog", selected, "Choose keyboard") {
-                        context.getSystemService(InputMethodManager::class.java)?.showInputMethodPicker()
-                    }
-                    Text("GIFs and stickers are optional online features. If you enable KLIPY, it receives the searches you submit and may show ads. Ordinary typing stays separate.",
+                    Text("GIF and sticker search is optional. If enabled, KLIPY receives the searches you submit and may show ads.",
                         color = PaperKeySubText, style = MaterialTheme.typography.bodySmall)
-                    Text("Tap M to capture a screen. Hold M for quick shortcuts. Hold the spacebar to open Ask.",
-                        color = PaperKeyText, style = MaterialTheme.typography.bodyLarge)
                 }
-                2 -> {
-                    Text("Enable the tools you want to use. You can change these permissions in Settings.", color = PaperKeySubText)
-                    SetupAction("Quick Capture", capture, "Enable screen capture") {
+                SetupStep.PRIVACY -> {
+                    SettingsCard("Journal memory") {
+                        Text("Opt in to save meaningful moments from what you type. Your notes and captures are available either way.",
+                            color = PaperKeyText)
+                        Text("Typed moments are labeled Drafted. Passwords, protected fields, and incognito typing are excluded. You can edit or delete a saved moment.",
+                            color = PaperKeySubText, style = MaterialTheme.typography.bodySmall)
+                        Row(verticalAlignment = Alignment.CenterVertically) {
+                            Text("Remember meaningful moments", Modifier.weight(1f), color = PaperKeyText)
+                            Switch(rememberMoments, { rememberMoments = it; memory.enabled = it })
+                        }
+                    }
+                    SetupAction("Keyboard Context", capture, "Enable screen capture") {
                         com.notokens.monolog.capture.CaptureSetupActivity.openAccessibilitySettings(context)
                     }
-                    Text("Turn on the Quick Capture shortcut and choose the floating accessibility button to capture even when the keyboard is closed.",
+                    Text("Enable Monolog Keyboard Context for the keyboard’s M key. For capture outside the keyboard, also enable the optional Monolog Quick Capture shortcut in Android Accessibility.",
                         color = PaperKeySubText, style = MaterialTheme.typography.bodySmall)
-                    SetupAction("Voice typing & Audio Notes", microphone, "Enable microphone", onRequestMic)
                     SetupAction("Reminder notifications", notifications, "Enable notifications") {
                         requestNotifications.launch(Manifest.permission.POST_NOTIFICATIONS)
                     }
                 }
-                3 -> setupState.SaveableStateProvider("offline-packs") { OnboardingModels { offlineReady = it } }
-                4 -> {
+                SetupStep.VOICE -> {
+                    Text("Choose a voice pack for on-device dictation and captions. You can add languages later in Settings.",
+                        color = PaperKeySubText)
+                    setupState.SaveableStateProvider("voice") { OnboardingVoice(settings) { voiceStatus = it } }
+                    SetupAction("Microphone for VOX and Audio Notes", microphone, "Allow microphone", onRequestMic)
+                }
+                SetupStep.TEXT -> {
+                    Text("Choose a model for Ask, rewrites, and journal briefs. Once downloaded, it runs on this phone.",
+                        color = PaperKeySubText)
+                    setupState.SaveableStateProvider("text") { OnboardingTextModel { textStatus = it } }
+                }
+                SetupStep.BACKUP -> {
+                    Text("Use your Google Drive to back up Monolog, or finish setup and keep your journal on this phone.",
+                        color = PaperKeySubText)
                     AccountBackupSettings(onboarding = true)
-                    SettingsCard("Offline intelligence") {
-                        Text("Manage text model downloads in Settings. Semantic search is optional and can be added from Journal memory.",
-                            color = PaperKeySubText)
-                        TextButton({ finish(onModels) }) { Text("Set up offline AI") }
-                        TextButton({ finish(onMemory) }) { Text("Set up journal memory & search") }
-                    }
                 }
             }
         }
+        val downloading = (page == SetupStep.VOICE && voiceStatus == ModelSetupStatus.DOWNLOADING) ||
+            (page == SetupStep.TEXT && textStatus == ModelSetupStatus.DOWNLOADING)
         Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(12.dp)) {
-            if (page > 0) OutlinedButton({ page-- }) { Text("Back") }
-            Button(onClick = { if (page == 0) {
-                scope.launch {
-                    draftName?.let { settings.setProfileName(it) }
-                    page = 1
+            if (page != SetupStep.WELCOME) OutlinedButton({ page = SetupStep.entries[page.ordinal - 1] }) { Text("Back") }
+            Button(onClick = {
+                when (page) {
+                    SetupStep.WELCOME -> scope.launch {
+                        draftName?.let { settings.setProfileName(it) }
+                        page = SetupStep.KEYBOARD
+                    }
+                    SetupStep.BACKUP -> {
+                        memory.explained = true
+                        onFinish()
+                    }
+                    else -> page = SetupStep.entries[page.ordinal + 1]
                 }
-            } else if (page < 4) page++ else finish(onFinish) },
-                enabled = page != 3 || offlineReady, modifier = Modifier.weight(1f)) {
+            }, enabled = !downloading, modifier = Modifier.weight(1f)) {
                 Text(when {
-                    page == 4 -> "Start using Monolog"
-                    page == 3 && !offlineReady -> "Finish selected downloads"
+                    downloading -> "Downloading…"
+                    page == SetupStep.WELCOME -> "Get started"
+                    page == SetupStep.KEYBOARD && !selected -> "Continue without keyboard"
+                    page == SetupStep.VOICE && voiceStatus == ModelSetupStatus.OPTIONAL -> "Skip voice for now"
+                    page == SetupStep.TEXT && textStatus == ModelSetupStatus.OPTIONAL -> "Skip text model for now"
+                    page == SetupStep.BACKUP -> "Start using Monolog"
                     else -> "Continue"
                 })
             }

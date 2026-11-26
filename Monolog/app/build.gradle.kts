@@ -142,8 +142,8 @@ android {
         applicationId = "com.notokens.monolog"
         minSdk = 35
         targetSdk = 36
-        versionCode = 18
-        versionName = "0.1.0-alpha.8.2"
+        versionCode = 19
+        versionName = "0.1.0-alpha.8.3"
         buildConfigField("boolean", "MONOLOG_HAS_GGUF", (llamaSource != null).toString())
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
         val webEndpoint = providers.gradleProperty("monologWebEndpoint").orElse("").get()
@@ -244,7 +244,6 @@ monologTestingKeystore?.let { keystore ->
 }
 
 dependencies {
-    implementation("com.google.mediapipe:tasks-text:1.2.3")
     implementation("com.microsoft.onnxruntime:onnxruntime-android:1.23.2") // Matches the Moonshine JNI symbol version.
     moonshineSdk("ai.moonshine:moonshine-voice:0.1.5@aar")
     implementation(files(moonshineRuntimeAar))

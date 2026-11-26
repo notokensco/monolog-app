@@ -8,10 +8,14 @@ import java.util.concurrent.atomic.AtomicLong
 import kotlin.coroutines.resume
 import kotlin.coroutines.resumeWithException
 import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.NonCancellable
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.suspendCancellableCoroutine
+import kotlinx.coroutines.withContext
 
 @Keep
 internal object GgufRuntime {
@@ -47,11 +51,12 @@ internal object GgufRuntime {
         val input = prompt.replace("<|", "< |").replace("<think>", "< think>").replace("</think>", "</ think>")
         val chat = "<|im_start|>user\n$input<|im_end|>\n<|im_start|>assistant\n<think>\n\n</think>\n\n"
         val request = nextRequest.incrementAndGet()
-        return suspendCancellableCoroutine { continuation ->
+        val stopped = CompletableDeferred<Unit>()
+        return try { suspendCancellableCoroutine { continuation ->
             continuation.invokeOnCancellation { cancel(request) }
             inference.launch {
-                if (!continuation.isActive) return@launch
                 try {
+                    if (!continuation.isActive) return@launch
                     val answer = generate(model.path, chat.encodeToByteArray(), tokenLimit.coerceIn(1, 192),
                         contextTokens, request, timeoutMillis)
                         ?.decodeToString()?.trim()?.substringAfterLast("</think>")?.trim()
@@ -60,8 +65,14 @@ internal object GgufRuntime {
                     continuation.resumeWithException(error)
                 } catch (error: LinkageError) {
                     continuation.resumeWithException(error)
+                } finally {
+                    stopped.complete(Unit)
                 }
             }
+        } } catch (cancelled: CancellationException) {
+            // Keep the model lock until native inference actually exits.
+            withContext(NonCancellable) { stopped.await() }
+            throw cancelled
         }
     }
 

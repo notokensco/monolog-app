@@ -19,9 +19,6 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.snapshotFlow
 import androidx.compose.ui.platform.LocalView
-import androidx.compose.ui.text.font.Font
-import androidx.compose.ui.text.font.FontFamily
-import com.notokens.monolog.R
 import com.notokens.monolog.ime.ui.ContextKey
 import com.notokens.monolog.ime.ui.KeyButton
 import com.notokens.monolog.ime.ui.triggerHapticFeedback
@@ -105,6 +102,12 @@ fun VoxPanel(
     onStartListening: () -> Unit,
     onPauseListening: () -> Unit,
     onDeleteWord: () -> Unit,
+    personal: Boolean = false,
+    audioRecording: Boolean = false,
+    savingSpokenNote: Boolean = false,
+    privateActions: Boolean = false,
+    onTogglePersonal: () -> Unit = {},
+    onAudioNote: () -> Unit = {},
     smartFilter: Boolean,
     onToggleSmartFilter: () -> Unit,
     contextEnabled: Boolean,
@@ -121,6 +124,13 @@ fun VoxPanel(
         .filter(String::isNotBlank).joinToString(" ")
     val isListening = voxState.status == VoxStatus.LISTENING
     val preparing = voxState.status == VoxStatus.PREPARING
+    val playDescription = when {
+        !isListening -> "Start listening"
+        audioRecording -> "Save audio note"
+        savingSpokenNote -> "Save dictated note"
+        personal -> "Search journal and library"
+        else -> "Pause listening"
+    }
     var languagesOpen by remember { mutableStateOf(false) }
     val view = LocalView.current
     val vibration = com.notokens.monolog.ime.ui.LocalVibrationHaptics.current
@@ -166,7 +176,7 @@ fun VoxPanel(
                     triggerHapticFeedback(view, enabled = vibration)
                     if (voxState.status == VoxStatus.PERMISSION_REQUIRED) onRequestPermission()
                     else if (isListening) onPauseListening() else onStartListening()
-                }.semantics { contentDescription = if (isListening) "Pause listening" else "Start listening" }
+                }.semantics { contentDescription = playDescription }
                     .padding(10.dp), color = PaperAccentBlue, fontSize = 17.sp)
                 ContextKey(contextEnabled, contextActive, onContext, onContextHold)
             }
@@ -188,7 +198,7 @@ fun VoxPanel(
                 IconControl(Glyph.BACK, "Return to keyboard", onCancel, frosted = true)
             }
             Text("VOX", Modifier.align(Alignment.Center), color = PaperKeyText, fontSize = 22.sp,
-                fontFamily = FontFamily(Font(R.font.science_gothic_vox, FontWeight.SemiBold)),
+                fontFamily = VoxWordmarkFont,
                 fontWeight = FontWeight.SemiBold)
             Row(Modifier.align(Alignment.CenterEnd), verticalAlignment = Alignment.CenterVertically) {
                 IconControl(Glyph.DOUBLE_DOWN, "Minimize Vox", {
@@ -197,6 +207,17 @@ fun VoxPanel(
                     minimized = true
                 })
                 ContextKey(contextEnabled, contextActive, onContext, onContextHold)
+            }
+        }
+
+        if (privateActions || personal || audioRecording) {
+            Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.Center) {
+                androidx.compose.material3.FilterChip(personal, onTogglePersonal, { Text("Personal") },
+                    enabled = privateActions && !savingSpokenNote && !audioRecording)
+                Spacer(Modifier.width(8.dp))
+                androidx.compose.material3.FilterChip(audioRecording, onAudioNote,
+                    { Text(if (audioRecording) "Save audio note" else "Audio Note") },
+                    enabled = (privateActions || audioRecording) && !savingSpokenNote)
             }
         }
 
@@ -218,7 +239,12 @@ fun VoxPanel(
                         )
                         Spacer(modifier = Modifier.width(6.dp))
                         Text(
-                            text = "Listening…",
+                            text = when {
+                                audioRecording -> "Recording audio note…"
+                                savingSpokenNote -> "Listening for your note…"
+                                personal -> "Ask about your journal or library"
+                                else -> "Listening…"
+                            },
                             fontSize = 13.sp,
                             fontWeight = FontWeight.Medium,
                             color = PaperAccentBlue
@@ -306,7 +332,7 @@ fun VoxPanel(
                 Column(
                     Modifier.clip(RoundedCornerShape(13.dp))
                         .background(MaterialTheme.colorScheme.primaryContainer)
-                        .clickable(onClickLabel = "Change speech language") {
+                        .clickable(enabled = !audioRecording && !savingSpokenNote, onClickLabel = "Change speech language") {
                             triggerHapticFeedback(view, enabled = vibration)
                             languagesOpen = true
                         }.padding(horizontal = 9.dp, vertical = 5.dp)
@@ -348,7 +374,7 @@ fun VoxPanel(
                         triggerHapticFeedback(view, enabled = vibration)
                         if (isListening) onPauseListening() else onStartListening()
                     }
-                    .semantics { contentDescription = if (isListening) "Pause listening" else "Start listening" },
+                    .semantics { contentDescription = playDescription },
                 contentAlignment = Alignment.Center
             ) {
                 if (preparing) CircularProgressIndicator(
@@ -366,8 +392,10 @@ fun VoxPanel(
                         onToggleSmartFilter()
                     }.padding(vertical = 10.dp, horizontal = 3.dp),
                     fontSize = 11.sp, color = PaperAccentBlue)
-                KeyButton(Modifier.size(36.dp), glyph = Glyph.BACKSPACE,
-                    label = "Delete previous word", repeatIntervalMs = 220, onClick = onDeleteWord)
+                if (!personal && !audioRecording && !savingSpokenNote) {
+                    KeyButton(Modifier.size(36.dp), glyph = Glyph.BACKSPACE,
+                        label = "Delete previous word", repeatIntervalMs = 220, onClick = onDeleteWord)
+                }
             }
         }
     }

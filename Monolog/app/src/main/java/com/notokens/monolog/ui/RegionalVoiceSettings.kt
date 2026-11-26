@@ -12,12 +12,13 @@ import androidx.compose.ui.platform.LocalContext
 import com.notokens.monolog.data.SettingsStore
 import com.notokens.monolog.data.VoiceInputEngine
 import com.notokens.monolog.ime.vox.RegionalVox
+import com.notokens.monolog.ime.vox.ActiveVoxLabel
 import com.notokens.monolog.ime.vox.VoxLanguage
 import com.notokens.monolog.ui.theme.PaperKeySubText
 import kotlinx.coroutines.launch
 
 @Composable
-internal fun RegionalVoiceSettings(onReady: (Boolean) -> Unit = {}) {
+internal fun RegionalVoiceSettings(embedded: Boolean = false, onReady: (Boolean) -> Unit = {}) {
     val context = LocalContext.current.applicationContext
     val settings = remember(context) { SettingsStore(context) }
     val selected by settings.voiceInputEngine.collectAsState(VoiceInputEngine.NATIVE)
@@ -38,7 +39,7 @@ internal fun RegionalVoiceSettings(onReady: (Boolean) -> Unit = {}) {
     var expanded by remember { mutableStateOf(false) }
 
     LaunchedEffect(anyReady) { onReady(anyReady) }
-    SettingsCard("VOX AI India") {
+    SettingsCard("VOX AI India", embedded = embedded) {
         Text("Download only the languages you use. Hindi also includes English and Hinglish.", color = PaperKeySubText)
         TextButton({ expanded = !expanded }) { Text("Choose language  ·  ${choice.title}  ${if (expanded) "▴" else "▾"}") }
         if (expanded) Column {
@@ -58,7 +59,7 @@ internal fun RegionalVoiceSettings(onReady: (Boolean) -> Unit = {}) {
         val state = install
         when {
             ready && selected == VoiceInputEngine.REGIONAL && choice.pack == activeLanguage.pack ->
-                Text("Active in Vox", color = MaterialTheme.colorScheme.primary)
+                ActiveVoxLabel()
             ready -> TextButton({
                 scope.launch {
                     settings.setVoxLanguage(choice.code)

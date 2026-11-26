@@ -17,14 +17,28 @@ import androidx.room.migration.Migration
 import androidx.sqlite.db.SupportSQLiteDatabase
 import kotlinx.coroutines.flow.Flow
 
-@Entity(tableName = "notes")
+@Entity(tableName = "notes", foreignKeys = [ForeignKey(entity = JournalBook::class, parentColumns = ["id"],
+    childColumns = ["bookId"], onDelete = ForeignKey.SET_NULL)], indices = [Index("bookId")])
 data class Note(
     @PrimaryKey(autoGenerate = true) val id: Long = 0,
     val title: String,
     val body: String,
     val createdAt: Long = System.currentTimeMillis(),
-    val updatedAt: Long = System.currentTimeMillis()
+    val updatedAt: Long = System.currentTimeMillis(),
+    val bookId: Long? = null
 )
+
+@Entity(tableName = "journal_books")
+data class JournalBook(@PrimaryKey(autoGenerate = true) val id: Long = 0, val name: String)
+
+@Dao
+interface BookDao {
+    @Query("SELECT * FROM journal_books ORDER BY id") fun observe(): Flow<List<JournalBook>>
+    @Query("SELECT * FROM journal_books") suspend fun all(): List<JournalBook>
+    @Query("SELECT * FROM journal_books WHERE id = :id") suspend fun get(id: Long): JournalBook?
+    @Insert suspend fun insert(book: JournalBook): Long
+    @Delete suspend fun delete(book: JournalBook)
+}
 
 @Entity(
     tableName = "note_photos",
@@ -96,6 +110,8 @@ interface NoteDao {
     @Query("SELECT * FROM notes WHERE id = :id LIMIT 1") fun observe(id: Long): Flow<Note?>
     @Query("SELECT * FROM notes WHERE id = :id LIMIT 1") suspend fun current(id: Long): Note?
     @Query("SELECT COUNT(*) FROM notes WHERE id IN (:ids)") suspend fun countExisting(ids: List<Long>): Int
+    @Query("SELECT * FROM notes WHERE bookId = :bookId") suspend fun inBook(bookId: Long): List<Note>
+    @Query("UPDATE notes SET bookId = :bookId WHERE id = :id") suspend fun move(id: Long, bookId: Long?)
     @Insert suspend fun insert(note: Note): Long
     @Update suspend fun update(note: Note): Int
     @Delete suspend fun delete(note: Note)
@@ -136,15 +152,17 @@ interface ReminderDao {
 
 @Database(entities = [Note::class, Reminder::class, NotePhoto::class, BackupRecord::class,
     BackupVersion::class, BackupArchive::class, MemoryRecord::class, MemoryRecap::class,
-    MemoryBackupReceipt::class, YearDownload::class, YearDownloadNote::class, WebConnectReceipt::class],
-    version = 6, exportSchema = false)
+    MemoryBackupReceipt::class, YearDownload::class, YearDownloadNote::class, WebConnectReceipt::class, JournalBook::class,
+    JournalHobby::class, HobbyDay::class], version = 8, exportSchema = false)
 abstract class MonologDatabase : RoomDatabase() {
     abstract fun notes(): NoteDao
+    abstract fun books(): BookDao
     abstract fun photos(): NotePhotoDao
     abstract fun reminders(): ReminderDao
     abstract fun backups(): BackupDao
     abstract fun memories(): MemoryDao
     internal abstract fun webConnect(): WebConnectDao
+    internal abstract fun hobbies(): JournalHobbyDao
 
     companion object {
         @Volatile private var instance: MonologDatabase? = null
@@ -220,11 +238,26 @@ abstract class MonologDatabase : RoomDatabase() {
                 db.execSQL("CREATE TABLE IF NOT EXISTS web_connect_receipts (session TEXT NOT NULL, operation TEXT NOT NULL, result TEXT NOT NULL, expiresAt INTEGER NOT NULL, PRIMARY KEY(session, operation))")
             }
         }
+        internal val booksMigration: Migration = object : Migration(6, 7) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                db.execSQL("CREATE TABLE IF NOT EXISTS journal_books (id INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL, name TEXT NOT NULL)")
+                db.execSQL("ALTER TABLE notes ADD COLUMN bookId INTEGER REFERENCES journal_books(id) ON DELETE SET NULL")
+                db.execSQL("CREATE INDEX IF NOT EXISTS index_notes_bookId ON notes(bookId)")
+            }
+        }
+
+        internal val hobbiesMigration: Migration = object : Migration(7, 8) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                db.execSQL("CREATE TABLE IF NOT EXISTS journal_hobbies (id INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL, name TEXT NOT NULL)")
+                db.execSQL("CREATE TABLE IF NOT EXISTS hobby_days (hobbyId INTEGER NOT NULL, day TEXT NOT NULL, PRIMARY KEY(hobbyId, day), FOREIGN KEY(hobbyId) REFERENCES journal_hobbies(id) ON DELETE CASCADE)")
+            }
+        }
 
         fun get(context: Context): MonologDatabase = instance ?: synchronized(this) {
             instance ?: Room.databaseBuilder(
                 context.applicationContext, MonologDatabase::class.java, "monolog.db"
-            ).addMigrations(photosMigration, journalEncryption, backupMigration, memoryMigration, webConnectMigration)
+            ).addMigrations(photosMigration, journalEncryption, backupMigration, memoryMigration, webConnectMigration,
+                booksMigration, hobbiesMigration)
                 .build().also { instance = it }
         }
     }

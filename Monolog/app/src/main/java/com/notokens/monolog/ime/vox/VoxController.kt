@@ -44,6 +44,9 @@ internal class VoxController(
     private var offlineJob: Job? = null
     private var androidSilenceJob: Job? = null
     private var pauseMs = 3200
+    private var audioOnly = false
+    @Volatile var extendedNotePause = false
+    private var checkSpelling = false
 
     // Native SpeechRecognizer components
     private var speechRecognizer: SpeechRecognizer? = null
@@ -54,12 +57,14 @@ internal class VoxController(
     private var languageTag = "en-IN"
     private var languageLabel = "English"
 
-    fun startListening(languageTag: String, languageLabel: String, mode: VoxLanguage? = null) {
+    fun startListening(languageTag: String, languageLabel: String, mode: VoxLanguage? = null, extended: Boolean = false,
+        allowSystemSpellCheck: Boolean = true) {
         if (ContextCompat.checkSelfPermission(context, Manifest.permission.RECORD_AUDIO) != PackageManager.PERMISSION_GRANTED) {
             update(state.copy(status = VoxStatus.PERMISSION_REQUIRED, errorMessage = "Microphone permission required."))
             return
         }
         cleanup()
+        extendedNotePause = extended
         this.languageTag = languageTag
         this.languageLabel = languageLabel
         isListening = true
@@ -70,6 +75,7 @@ internal class VoxController(
             try {
                 val selected = settings.voiceInputEngine.first()
                 pauseMs = settings.voxPause.first()
+                checkSpelling = allowSystemSpellCheck && settings.systemSpellChecker.first()
                 if (recordingNote) smartFilter = settings.smartVoxFilter.first()
                 if (session != generation || !isListening) return@launch
                 regionalMode = mode ?: VoxLanguage.resolve(settings.voxLanguage.first(), languageTag)
@@ -134,7 +140,7 @@ internal class VoxController(
                 setRecognitionListener(createNativeListener(session))
             }
             androidSilenceJob = scope.launch {
-                delay(9000)
+                delay(if (extendedNotePause) 15_000 else 9000)
                 if (session == generation && isListening) pauseOrStopListening()
             }
             listenNative(session)
@@ -151,7 +157,7 @@ internal class VoxController(
             putExtra(RecognizerIntent.EXTRA_MAX_RESULTS, 3)
             putExtra(RecognizerIntent.EXTRA_LANGUAGE, languageTag)
             putExtra("android.speech.extra.PREFER_OFFLINE", true)
-            putExtra(RecognizerIntent.EXTRA_SPEECH_INPUT_COMPLETE_SILENCE_LENGTH_MILLIS, pauseMs.toLong())
+            putExtra(RecognizerIntent.EXTRA_SPEECH_INPUT_COMPLETE_SILENCE_LENGTH_MILLIS, silenceDelay())
         }
         try {
             speechRecognizer?.startListening(intent)
@@ -214,7 +220,12 @@ internal class VoxController(
             if (session != generation) return
             val matches = results?.getStringArrayList(SpeechRecognizer.RESULTS_RECOGNITION)
             val raw = matches?.firstOrNull() ?: ""
-            val cleaned = PronunciationAlternatives.cleanFinal(raw, languageTag, smartFilter)
+            scope.launch { publishNativeResult(session, raw) }
+        }
+
+        private suspend fun publishNativeResult(session: Int, raw: String) {
+            val cleaned = finishText(PronunciationAlternatives.cleanFinal(raw, languageTag, smartFilter), languageTag)
+            if (session != generation) return
             if (cleaned.isNotBlank()) {
                 stableTranscript = listOf(stableTranscript, cleaned).filter(String::isNotBlank).joinToString(" ")
             }
@@ -225,11 +236,11 @@ internal class VoxController(
                 partialTranscript = "",
                 rmsLevel = 0f
             ))
-            if (isListening) {
+            if (session == generation && isListening) {
                 if (cleaned.isNotBlank()) {
                     androidSilenceJob?.cancel()
                     androidSilenceJob = scope.launch {
-                        delay(pauseMs.toLong())
+                        delay(silenceDelay())
                         if (session == generation && isListening) pauseOrStopListening()
                     }
                 }
@@ -312,7 +323,7 @@ internal class VoxController(
                             engine.startStream(stream)
                             withContext(Dispatchers.Main.immediate) {
                                 if (session == generation && isListening) {
-                                    recorder = VoiceRecorder(scope).also { audio ->
+                                    recorder = VoiceRecorder(context, scope).also { audio ->
                                         recordStream(session, audio, chunks)
                                     }
                                     update(state.copy(status = VoxStatus.LISTENING))
@@ -343,6 +354,8 @@ internal class VoxController(
                 chunks.cancel()
             }
             if (session != generation) return@launch
+            val finalized = finishText(result.ifBlank { if (recordingNote) latestCaption else "" }, locale)
+            if (session != generation) return@launch
             offlineJob = null
             if (failure && recordingNote && recorder == null && isListening) {
                 startAudioOnlyNote("Captions unavailable. Recording audio only.")
@@ -354,15 +367,13 @@ internal class VoxController(
             }
             if (failure) isListening = false
             val restart = isListening && !recordingNote
-            val transcript = result.ifBlank {
-                if (recordingNote) PronunciationAlternatives.cleanFinal(latestCaption, locale, smartFilter) else ""
-            }
+            val transcript = finalized
             completeClip(transcript, when {
                 failure -> "VOX AI couldn’t transcribe this recording."
                 transcript.isBlank() && stableTranscript.isBlank() && !restart -> "No speech recognized."
                 else -> null
             }, restart)
-            if (restart) startMoonshineCapture()
+            if (restart && session == generation && isListening) startMoonshineCapture()
         }
     }
 
@@ -373,7 +384,7 @@ internal class VoxController(
             chunks.trySend(data.copyOf(count))
             publishLevel(session, data, count)
             silence.accept(data, count)
-            if (!ending && silence.shouldStop) {
+            if (!ending && silence.shouldStop(extendedNotePause)) {
                 ending = true
                 main.post {
                     if (session == generation && recorder === audio && isListening) pauseOrStopListening()
@@ -402,7 +413,7 @@ internal class VoxController(
                     RegionalVox.use(context, mode) { recognizer ->
                         withContext(Dispatchers.Main.immediate) {
                             if (session == generation && isListening) {
-                                recorder = VoiceRecorder(scope).also { recordStream(session, it, chunks) }
+                                recorder = VoiceRecorder(context, scope).also { recordStream(session, it, chunks) }
                                 update(state.copy(status = VoxStatus.LISTENING))
                             } else chunks.close()
                         }
@@ -464,6 +475,8 @@ internal class VoxController(
                 failed = true
             } finally { chunks.cancel() }
             if (session != generation) return@launch
+            transcript = finishText(transcript, tag)
+            if (session != generation) return@launch
             offlineJob = null
             if (failed && recordingNote && recorder == null && isListening) {
                 startAudioOnlyNote("Captions unavailable. Recording audio only.")
@@ -480,7 +493,7 @@ internal class VoxController(
                 transcript.isBlank() && stableTranscript.isBlank() && !restart -> "No speech recognized."
                 else -> null
             }, restart)
-            if (restart) startRegionalCapture()
+            if (restart && session == generation && isListening) startRegionalCapture()
         }
     }
 
@@ -496,6 +509,7 @@ internal class VoxController(
     fun startNoteRecording() {
         cleanup()
         clearTranscript()
+        audioOnly = true
         isListening = true
         startAudioOnlyNote()
     }
@@ -503,13 +517,13 @@ internal class VoxController(
     private fun startAudioOnlyNote(cause: String? = null) {
         val session = generation
         try {
-            val audio = VoiceRecorder(scope)
+            val audio = VoiceRecorder(context, scope)
             recorder = audio
             audio.start(onEnd = {
                 main.post {
                     if (session == generation && recorder === audio) completeClip("", null, false)
                 }
-            })
+            }, onSamples = { data, count -> publishLevel(session, data, count) })
             update(state.copy(
                 status = VoxStatus.LISTENING,
                 language = languageLabel,
@@ -529,7 +543,7 @@ internal class VoxController(
 
     fun pauseOrStopListening() {
         isListening = false
-        if (recordingNote && recorder != null && offlineJob == null) {
+        if ((recordingNote || audioOnly) && recorder != null && offlineJob == null) {
             completeClip("", null, false)
             return
         }
@@ -538,13 +552,19 @@ internal class VoxController(
                 recorder?.stop()
                 if (offlineJob != null) {
                     update(state.copy(status = VoxStatus.PROCESSING, rmsLevel = 0f))
-                } else if (recorder != null) {
+                } else {
                     completeClip("", null, false)
                 }
             }
             VoiceInputEngine.NATIVE -> {
-                runCatching { speechRecognizer?.stopListening() }
-                update(state.copy(status = VoxStatus.PAUSED, rmsLevel = 0f))
+                val session = generation
+                val waiting = speechRecognizer != null && runCatching { speechRecognizer?.stopListening() }.isSuccess
+                update(state.copy(status = if (waiting) VoxStatus.PROCESSING else VoxStatus.PAUSED, rmsLevel = 0f))
+                if (waiting) main.postDelayed({
+                    if (session == generation && !isListening && state.status == VoxStatus.PROCESSING) {
+                        update(state.copy(status = VoxStatus.PAUSED, finalSegment = ""))
+                    }
+                }, 1100L)
             }
         }
     }
@@ -553,7 +573,7 @@ internal class VoxController(
         val audio = recorder
         audio?.stop()
         recorder = null
-        if (audio != null && (recordingNote || text.isNotBlank())) {
+        if (audio != null && (recordingNote || audioOnly)) {
             finishedAudio?.cancel()
             finishedAudio = audio
         } else {
@@ -582,6 +602,8 @@ internal class VoxController(
     }
 
     fun cleanup() {
+        audioOnly = false
+        extendedNotePause = false
         androidSilenceJob?.cancel()
         androidSilenceJob = null
         isListening = false
@@ -624,5 +646,17 @@ internal class VoxController(
     private fun update(next: VoxState) {
         state = next
         onStateUpdated(next)
+    }
+
+    private fun silenceDelay(): Long = if (extendedNotePause) maxOf(pauseMs, 9000).toLong() else pauseMs.toLong()
+
+    private suspend fun finishText(text: String, tag: String): String {
+        if (text.isBlank()) return ""
+        val cleaned = if (checkSpelling && VoxText.noteBody(text) == null) {
+            try { com.notokens.monolog.ime.SystemSpellChecker.correctSpeech(context, text, java.util.Locale.forLanguageTag(tag)) }
+            catch (cancelled: CancellationException) { throw cancelled }
+            catch (_: Exception) { text }
+        } else text
+        return VoxText.finish(cleaned, tag)
     }
 }

@@ -41,6 +41,7 @@ import com.notokens.monolog.ai.WebLookup
 import com.notokens.monolog.data.SettingsStore
 import com.notokens.monolog.data.VoiceInputEngine
 import com.notokens.monolog.ime.vox.OfflineMoonshine
+import com.notokens.monolog.ime.vox.ActiveVoxLabel
 import com.notokens.monolog.ui.theme.PaperAccentBlue
 import com.notokens.monolog.ui.theme.PaperKeyText
 import com.notokens.monolog.ui.theme.PaperKeySubText
@@ -49,8 +50,9 @@ import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.launch
 
 @Composable
-internal fun SettingsCard(title: String, content: @Composable ColumnScope.() -> Unit) {
-    Column(Modifier.fillMaxWidth().glassSurface(24, GlassAccent.LAVENDER).padding(16.dp),
+internal fun SettingsCard(title: String, embedded: Boolean = false, content: @Composable ColumnScope.() -> Unit) {
+    val surface = if (embedded) Modifier else Modifier.glassSurface(24, GlassAccent.LAVENDER).padding(16.dp)
+    Column(Modifier.fillMaxWidth().then(surface),
         verticalArrangement = Arrangement.spacedBy(10.dp)) {
         Text(title, color = PaperKeyText, style = MaterialTheme.typography.titleMedium)
         androidx.compose.runtime.CompositionLocalProvider(
@@ -204,7 +206,8 @@ internal fun LanguageSettings(settings: SettingsStore) {
 }
 
 @Composable
-internal fun OfflineVoxSettings(onReady: (Boolean) -> Unit = {}) {
+internal fun OfflineVoxSettings(embedded: Boolean = false, onDownloadingChange: (Boolean) -> Unit = {},
+    onReady: (Boolean) -> Unit = {}) {
     val context = LocalContext.current.applicationContext
     val scope = rememberCoroutineScope()
     val browser = LocalUriHandler.current
@@ -221,16 +224,13 @@ internal fun OfflineVoxSettings(onReady: (Boolean) -> Unit = {}) {
     }
 
     LaunchedEffect(Unit) { refresh() }
+    LaunchedEffect(downloading) { onDownloadingChange(downloading) }
 
-    SettingsCard("VOX AI") {
-        Text("Recommended for English outside India", color = PaperKeyText, style = MaterialTheme.typography.titleSmall)
-        Text(
-            if (!installed) "English · Live captions for keyboard and notes"
-            else if (engine == VoiceInputEngine.MOONSHINE) "Installed · Active in Vox"
-            else "Installed · Available in Vox and notes",
-            color = if (installed) PaperAccentBlue else PaperKeySubText,
-            style = MaterialTheme.typography.bodySmall
-        )
+    SettingsCard("VOX AI", embedded = embedded) {
+        Text("Recommended for English outside India · About ${OfflineMoonshine.DOWNLOAD_MB} MB",
+            color = PaperKeySubText, style = MaterialTheme.typography.bodySmall)
+        if (installed && engine == VoiceInputEngine.MOONSHINE) ActiveVoxLabel()
+        else if (installed) Text("Installed", color = PaperAccentBlue, style = MaterialTheme.typography.labelLarge)
         Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
             if (!installed) {
                 TextButton(enabled = !downloading, onClick = {

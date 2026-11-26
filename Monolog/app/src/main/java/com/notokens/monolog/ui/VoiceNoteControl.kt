@@ -41,7 +41,8 @@ internal fun VoiceNoteControl(
     onPermission: () -> Unit,
     onVoice: (RecordedVoice) -> Unit,
     onBusy: (Boolean) -> Unit = {},
-    audioOnly: Boolean = false
+    audioOnly: Boolean = false,
+    idleLabel: String? = null
 ) {
     val context = LocalContext.current
     val settings = remember { SettingsStore(context.applicationContext) }
@@ -139,6 +140,7 @@ internal fun VoiceNoteControl(
             Text(when {
                 recording -> "Stop recording"
                 processing -> "Finishing audio note…"
+                idleLabel != null -> idleLabel
                 audioOnly -> "Record audio note"
                 else -> "Vox audio note"
             })

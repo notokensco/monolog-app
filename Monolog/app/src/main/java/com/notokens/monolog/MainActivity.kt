@@ -62,7 +62,10 @@ class MainActivity : ComponentActivity() {
         super.onCreate(savedInstanceState)
         enableEdgeToEdge()
         splashScreen.setOnExitAnimationListener { view -> view.remove() }
-        lifecycleScope.launch(Dispatchers.IO) { OfflineMoonshine.removeRetiredModels(applicationContext) }
+        lifecycleScope.launch(Dispatchers.IO) {
+            OfflineMoonshine.removeRetiredModels(applicationContext)
+            com.notokens.monolog.data.removeRetiredJournalModels(applicationContext)
+        }
         if (savedInstanceState == null) handleIncomingIntent(intent)
         var readyToDraw = false
         val decor = window.decorView

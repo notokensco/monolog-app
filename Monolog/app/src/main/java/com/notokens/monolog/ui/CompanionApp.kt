@@ -78,7 +78,6 @@ import com.notokens.monolog.data.*
 import com.notokens.monolog.setup.SetupScreen
 import com.notokens.monolog.ui.theme.*
 import java.text.DateFormat
-import java.time.LocalDate
 import java.time.ZoneId
 import java.time.ZonedDateTime
 import java.util.*
@@ -194,8 +193,6 @@ fun CompanionApp(
             confirmClear = false
             scope.launch {
                 com.notokens.monolog.ime.DraftRescue.clear()
-                com.notokens.monolog.ime.ChatAssist.stop()
-                context.stopService(android.content.Intent(context, com.notokens.monolog.ime.ChatAssistService::class.java))
                 com.notokens.monolog.connect.LocalConnect.stop()
                 com.notokens.monolog.connect.DriveConnect(context.applicationContext).discardLocalSession()
                 com.notokens.monolog.ime.ui.clearRecentKeyboardClips()
@@ -243,10 +240,7 @@ fun CompanionApp(
             }) { padding ->
                 NavHost(nav, startDestination = startRoute, modifier = Modifier.padding(padding)) {
                     composable("onboarding") {
-                        FirstRunSetup(settings, onRequestMicPermission,
-                            onFinish = { finishSetup("today") },
-                            onModels = { finishSetup(SettingsPage.MODELS.route) },
-                            onMemory = { finishSetup(SettingsPage.MEMORY.route) })
+                        FirstRunSetup(settings, onRequestMicPermission, onFinish = { finishSetup("today") })
                     }
                     composable("today") {
                         var query by rememberSaveable { mutableStateOf("") }
@@ -257,6 +251,11 @@ fun CompanionApp(
                         val todayScope = rememberCoroutineScope()
                         val todayScroll = rememberScrollState()
                         val journal = remember(context) { MemorySearch(context.applicationContext) }
+                        val database = remember(context) { com.notokens.monolog.data.MonologDatabase.get(context) }
+                        val memories = remember(context, database) { com.notokens.monolog.memory.MemoryRepository(context, database) }
+                        val moments by remember(database) { database.memories().observeAll() }
+                            .collectAsState<List<com.notokens.monolog.data.MemoryRecord>, List<com.notokens.monolog.data.MemoryRecord>?>(null)
+                        val window = rememberTodayWindow()
                         val profile by settings.personalProfile.collectAsState(com.notokens.monolog.data.PersonalProfile())
                         Screen(personalGreeting(profile.name), showWeatherAndDate = true, scrollState = todayScroll, footer = {
                             JournalAskBar(query, {
@@ -288,7 +287,6 @@ fun CompanionApp(
                                     }
                                 })
                         }) {
-                            JournalMemoryPrompt()
                             answer?.let { reply ->
                                 Column(Modifier.fillMaxWidth().glassSurface(24).padding(16.dp),
                                     verticalArrangement = Arrangement.spacedBy(6.dp)) {
@@ -298,13 +296,16 @@ fun CompanionApp(
                                 Spacer(Modifier.height(10.dp))
                             }
                             val tileHeight = ((LocalConfiguration.current.screenHeightDp - 512) / 2).coerceIn(124, 152).dp
-                            val zone = ZoneId.systemDefault()
-                            val today = LocalDate.now(zone)
-                            val allNotes by repo.notes.collectAsState(initial = emptyList())
-                            val visibleNotes = visibleBackupYears(allNotes)
-                            val todayNote = visibleNotes.firstOrNull {
-                                it.updatedAt >= today.atStartOfDay(zone).toInstant().toEpochMilli() &&
-                                    it.updatedAt < today.plusDays(1).atStartOfDay(zone).toInstant().toEpochMilli()
+                            val allNotes by repo.notes.collectAsState<List<Note>, List<Note>?>(null)
+                            val visibleNotes = visibleBackupYears(allNotes.orEmpty())
+                            val todayNote = visibleNotes.firstOrNull { window.dayAt(it.updatedAt) == window.date }
+                            val briefNotes = remember(visibleNotes, window.date, window.zone) {
+                                visibleNotes.filter { window.dayAt(it.createdAt) == window.date }
+                            }
+                            val briefRecords = remember(moments, window.date, briefNotes) {
+                                val noteIds = briefNotes.mapTo(hashSetOf()) { it.id }
+                                moments.orEmpty().filter { it.localDay == window.date.toString() &&
+                                    (it.noteId == null || it.noteId in noteIds) }
                             }
                             val latestNote = visibleNotes.firstOrNull()
                             var reminderCutoff by remember { mutableLongStateOf(System.currentTimeMillis()) }
@@ -315,23 +316,18 @@ fun CompanionApp(
                                     reminderCutoff = maxOf(System.currentTimeMillis(), it.dueAt)
                                 }
                             }
-                            Column(
-                                Modifier.fillMaxWidth().glassSurface(24, GlassAccent.BLUE).journalPageAccent()
-                                    .clickable { nav.navigate(todayNote?.let { "note/edit/${it.id}" } ?: "note/new") }.padding(16.dp)
-                            ) {
-                                Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                                    IconBadge(Glyph.BOOK)
-                                    Text("Today’s journal", color = ink, style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.SemiBold)
-                                }
-                                Spacer(Modifier.height(8.dp))
-                                val excerpt = remember(todayNote) { todayNote?.let { markdownExcerpt(TagMetadataCodec.decode(it.body).cleanBody).take(130).ifBlank { it.title } } }
-                                Text(excerpt ?: "A little space for your thoughts, conversations, and progress.", color = muted, style = MaterialTheme.typography.bodyMedium)
-                                Spacer(Modifier.height(12.dp))
-                                Row(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {
-                                    Text("Continue writing", color = PaperAccentBlue, style = MaterialTheme.typography.labelLarge)
+                            JournalBrief(window.date, "Day:${window.date}", briefRecords, briefNotes,
+                                sourcesReady = allNotes != null && moments != null, imeVisible = imeVisible) {
+                                TextButton(onClick = { nav.navigate(todayNote?.let { "note/edit/${it.id}" } ?: "note/new") }) {
+                                    Text("Continue writing")
+                                    Spacer(Modifier.width(8.dp))
                                     MonologIcon(Glyph.ARROW, Modifier.size(14.dp), PaperAccentBlue)
                                 }
                             }
+                            Spacer(Modifier.height(8.dp))
+                            TodayJournalStats(allNotes.orEmpty(), moments.orEmpty(), window.zone)
+                            Spacer(Modifier.height(8.dp))
+                            TodayMoodCheckIn(window, moments.orEmpty(), memories)
                             Spacer(Modifier.height(8.dp))
                             Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                                 DashboardTile("Reminders", next?.title ?: "Nothing coming up", next?.let { DateFormat.getTimeInstance(DateFormat.SHORT).format(Date(it.dueAt)) } ?: "Add a reminder", Glyph.CLOCK, GlassAccent.BLUE, Modifier.weight(1f).heightIn(min = tileHeight)) { nav.navigate("reminders") }
@@ -342,6 +338,10 @@ fun CompanionApp(
                                 DashboardTile("Context library", "Photos and notes", "View all", Glyph.LAYERS, GlassAccent.LAVENDER, Modifier.weight(1f).heightIn(min = tileHeight)) { nav.navigate("library") }
                                 DashboardTile("Add a note", "Make this space yours", "Write something", Glyph.PLUS, GlassAccent.BLUSH, Modifier.weight(1f).heightIn(min = tileHeight)) { nav.navigate("note/new") }
                             }
+                            Spacer(Modifier.height(8.dp))
+                            TodayHobbies(database, window.date)
+                            Spacer(Modifier.height(8.dp))
+                            JournalMemoryPrompt()
                         }
                     }
                     composable("journal?ask={ask}&day={day}", arguments = listOf(
@@ -373,7 +373,7 @@ fun CompanionApp(
                                     onOpenNote = { nav.navigate("note/$it") },
                                     onOpenReminder = { nav.navigate("reminder/edit/$it") },
                                     onNewNote = { nav.navigate("note/new") },
-                                    visibleNotes = notes, photos = photosByNote, notesLoaded = allNotes != null,
+                                    visibleNotes = notes, photos = photosByNote, notesLoaded = allNotes != null, imeVisible = imeVisible,
                                     query = query, onClearQuery = { query = "" },
                                     onFocusSearch = { searchField.requestFocus(); keyboard?.show() },
                                     askRequest = askRequest, onAnswering = { answering = it },
@@ -396,6 +396,12 @@ fun CompanionApp(
                         var creating by remember { mutableStateOf(false) }
                         var capturePending by remember { mutableStateOf(false) }
                         val screenScope = rememberCoroutineScope()
+                        val bookStore = remember(context) { JournalBooks(context) }
+                        val books by bookStore.books.collectAsState(emptyList())
+                        var selectedBook by rememberSaveable { mutableStateOf<Long?>(null) }
+                        var bookAction by remember { mutableStateOf<String?>(null) }
+                        var bookError by remember { mutableStateOf<String?>(null) }
+                        val activeBook = books.firstOrNull { it.id == selectedBook }
                         val librarySearch = remember(context) { MemorySearch(context.applicationContext) }
                         val searchField = remember { FocusRequester() }
                         var answering by remember { mutableStateOf(false) }
@@ -420,8 +426,9 @@ fun CompanionApp(
                         val notes = visibleBackupYears(allNotes)
                         val photoRefs by repo.notePhotos.collectAsState(initial = emptyList())
                         val photosByNote = remember(photoRefs) { photoRefs.groupBy { it.noteId } }
-                        val entries = remember(notes, photosByNote, filter, query, relatedIds, sort) {
+                        val entries = remember(notes, photosByNote, filter, query, relatedIds, sort, activeBook) {
                             val candidates = notes.filter { note ->
+                                if (activeBook != null && note.bookId != activeBook.id) return@filter false
                                 val metadata = TagMetadataCodec.decode(note.body)
                                 when (filter) {
                                     "Photos" -> note.id in photosByNote
@@ -437,6 +444,39 @@ fun CompanionApp(
                         }
                         val selecting = selectedIds.isNotEmpty()
                         val selectedNotes = remember(notes, selectedIds) { notes.filter { it.id in selectedIds } }
+                        if (bookAction == "choose" || bookAction == "move") {
+                            val moving = bookAction == "move"
+                            BookPicker(selectedBook, if (moving) "Move selected items" else "Books", { id ->
+                                if (moving) {
+                                    val ids = selectedIds.toList()
+                                    screenScope.launch {
+                                        try {
+                                            bookStore.move(ids, BookPlacement(id))
+                                            selectedIds = longArrayOf()
+                                            bookError = null
+                                        } catch (error: CancellationException) { throw error }
+                                        catch (_: Exception) { bookError = "Couldn’t move the selected items." }
+                                    }
+                                } else selectedBook = id
+                            }, { bookAction = null }, if (moving) "No book" else "All books")
+                        }
+                        if (bookAction == "delete" && activeBook != null) AlertDialog(
+                            onDismissRequest = { bookAction = null },
+                            title = { Text("Delete ${activeBook.name}?") },
+                            text = { Text("This permanently deletes the book and all its notes and screenshots from this phone. Move anything you want to keep first.") },
+                            confirmButton = { TextButton({
+                                bookAction = null
+                                screenScope.launch {
+                                    try {
+                                        bookStore.delete(activeBook)
+                                        selectedBook = null
+                                        bookError = null
+                                    } catch (error: CancellationException) { throw error }
+                                    catch (_: Exception) { bookError = "Couldn’t delete this book." }
+                                }
+                            }) { Text("Delete book", color = MaterialTheme.colorScheme.error) } },
+                            dismissButton = { TextButton({ bookAction = null }) { Text("Cancel") } }
+                        )
                         fun toggleSelection(id: Long) {
                             if (deleting) return
                             if (!selecting) {
@@ -487,6 +527,13 @@ fun CompanionApp(
                                 verticalArrangement = Arrangement.spacedBy(14.dp)) {
                                 item {
                                     Column {
+                                        Row {
+                                            TextButton({ bookAction = if (selecting) "move" else "choose" }) {
+                                                Text(if (selecting) "Move to book" else activeBook?.name ?: "Books")
+                                            }
+                                            if (activeBook != null && !selecting) TextButton({ bookAction = "delete" }) { Text("Delete book") }
+                                        }
+                                        bookError?.let { Text(it, color = MaterialTheme.colorScheme.error) }
                                         Row(verticalAlignment = Alignment.CenterVertically) {
                                             Text("Context library", Modifier.weight(1f), color = ink,
                                                 style = MaterialTheme.typography.headlineSmall,
@@ -918,7 +965,7 @@ fun CompanionApp(
                                     SettingsPage.MODELS -> AiSettings()
                                     SettingsPage.CAPTURE -> {
                                         SettingsCard("Android accessibility shortcut") {
-                                            Text("Tap the Android shortcut for Quick Capture. Monolog opens its actions beside that button on devices that report a hold or double tap.",
+                                            Text("Enable Monolog Keyboard Context for the M key. Enable Monolog Quick Capture shortcut separately if you want Android’s floating button.",
                                                 color = muted, style = MaterialTheme.typography.bodySmall)
                                             OutlinedButton(onClick = {
                                                 com.notokens.monolog.capture.CaptureSetupActivity.openAccessibilitySettings(context)
@@ -1535,6 +1582,11 @@ private fun NoteEditor(initial: Note?, savedPhotos: List<NotePhotoRef>, onCancel
     val focusManager = LocalFocusManager.current
     val keyboard = LocalSoftwareKeyboardController.current
     val scope = rememberCoroutineScope()
+    val bookStore = remember(context) { JournalBooks(context) }
+    val books by bookStore.books.collectAsState(emptyList())
+    var bookId by rememberSaveable { mutableStateOf(initial?.bookId) }
+    var editBook by remember { mutableStateOf(false) }
+    if (editBook) BookPicker(bookId, "File this note", { bookId = it }, { editBook = false })
     var title by rememberSaveable { mutableStateOf(initial?.title.orEmpty()) }
     val capture = remember(initial?.body) { initial?.let { TagMetadataCodec.decode(it.body) } }
     val isCapture = capture?.hasMetadata == true
@@ -1711,6 +1763,9 @@ private fun NoteEditor(initial: Note?, savedPhotos: List<NotePhotoRef>, onCancel
                 color = muted, style = MaterialTheme.typography.bodySmall)
         }
         error?.let { Text(it, color = MaterialTheme.colorScheme.error, modifier = Modifier.padding(top = 8.dp)) }
+        TextButton(onClick = { editBook = true }, enabled = !saving) {
+            Text(books.firstOrNull { it.id == bookId }?.let { "Book · ${it.name}" } ?: "Add to a book")
+        }
         Spacer(Modifier.height(12.dp))
         Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
             Button(
@@ -1721,7 +1776,8 @@ private fun NoteEditor(initial: Note?, savedPhotos: List<NotePhotoRef>, onCancel
                     val changes = picked.toList()
                     val removals = removed.toList()
                     val currentTitle = title
-                    val currentBody = body.text
+                    val filing = bookInstruction(body.text, books)
+                    val currentBody = filing?.first ?: body.text
                     scope.launch {
                         try {
                             val bytes = withContext(Dispatchers.IO) {
@@ -1736,7 +1792,8 @@ private fun NoteEditor(initial: Note?, savedPhotos: List<NotePhotoRef>, onCancel
                             }
                             MonologData.repository(context).saveNote(
                                 currentTitle.ifBlank { if (voiceAudio != null && currentBody.isBlank()) "Audio Note" else "" },
-                                savedBody, initial, NotePhotoChanges(removals, bytes)
+                                savedBody, initial, NotePhotoChanges(removals, bytes),
+                                filing?.second ?: BookPlacement(bookId).takeIf { bookId != initial?.bookId }
                             )
                             onCancel()
                         } catch (error: CancellationException) {

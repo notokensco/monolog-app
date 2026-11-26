@@ -4,8 +4,11 @@
     <string name="keyboard_settings">Monolog Keyboard Settings</string>
     <string name="companion_brand_line">Companion by NoTokens</string>
     <string name="subtype_en_us">English (US)</string>
-    <string name="quick_capture_name">Monolog Quick Capture</string>
-    <string name="quick_capture_description">Use the Monolog keyboard key or Android accessibility shortcut to capture a screen. When Android reports a hold or two quick taps and exposes its position, Monolog opens actions beside that button. Add pins or a voice note and save the capture to your private Journal. Incognito pauses capture.</string>
+    <string name="quick_capture_name">Monolog Keyboard Context</string>
+    <string name="context_capture_summary">Enable screenshot capture from the keyboard’s M key</string>
+    <string name="quick_capture_description">Allows the Monolog keyboard M key to capture screenshots when tapped. Screenshots stay on your device and are saved only when you confirm. Incognito pauses capture.</string>
+    <string name="capture_shortcut_name">Monolog Quick Capture shortcut</string>
+    <string name="capture_shortcut_description">Optional Android accessibility shortcut for capture outside the keyboard. Enable Monolog Keyboard Context first, then choose the floating accessibility button if you want it.</string>
     
     <!-- Setup Screen -->
     <string name="setup_tagline">Type. Speak. Act. Remember.</string>

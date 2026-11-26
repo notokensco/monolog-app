@@ -1,10 +1,11 @@
 <?xml version="1.0" encoding="utf-8"?>
 <accessibility-service xmlns:android="http://schemas.android.com/apk/res/android"
     android:accessibilityFeedbackType="feedbackGeneric"
-    android:accessibilityFlags="flagRequestAccessibilityButton|flagRetrieveInteractiveWindows|flagReportViewIds"
+    android:accessibilityFlags="flagRetrieveInteractiveWindows|flagReportViewIds"
     android:accessibilityEventTypes="typeViewClicked|typeViewLongClicked"
     android:packageNames="com.android.systemui"
     android:canRetrieveWindowContent="true"
     android:canTakeScreenshot="true"
     android:description="@string/quick_capture_description"
+    android:summary="@string/context_capture_summary"
     android:isAccessibilityTool="false" />

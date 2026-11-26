@@ -132,7 +132,7 @@ fun InteractiveCaptureViewer(
         BoxWithConstraints(
             modifier = Modifier
                 .fillMaxSize()
-                .background(viewerColors.surface)
+                .monologBackdrop()
                 .imePadding()
                 .systemBarsPadding()
         ) {
@@ -195,10 +195,10 @@ fun InteractiveCaptureViewer(
                         if (hasChanges) {
                             Button(
                                 onClick = { saveAllChanges() },
-                                colors = ButtonDefaults.buttonColors(containerColor = accentColor),
+                                shape = RoundedCornerShape(14.dp),
                                 contentPadding = PaddingValues(horizontal = 14.dp, vertical = 6.dp)
                             ) {
-                                Text("Save", color = Color.Black, fontWeight = FontWeight.SemiBold, fontSize = 13.sp)
+                                Text("Save", fontWeight = FontWeight.SemiBold, fontSize = 13.sp)
                             }
                         }
                     }
@@ -245,7 +245,7 @@ fun InteractiveCaptureViewer(
                             .padding(horizontal = 16.dp, vertical = 4.dp)
                             .clip(RoundedCornerShape(26.dp))
                             .border(2.5.dp, accentColor, RoundedCornerShape(26.dp))
-                            .background(Color(0xFF101014))
+                            .background(viewerColors.surfaceVariant)
                             .onGloballyPositioned { containerSize = it.size }
                             .pointerInput(tags.size, renderW, renderH, offsetX, offsetY) {
                                 detectTapGestures { tapOffset ->
@@ -292,7 +292,7 @@ fun InteractiveCaptureViewer(
                                 ) {
                                     Surface(
                                         shape = RoundedCornerShape(12.dp),
-                                        color = Color(0xFF1C1D24).copy(alpha = 0.94f),
+                                        color = viewerColors.surfaceContainerHigh,
                                         border = androidx.compose.foundation.BorderStroke(1.2.dp, accentColor),
                                         shadowElevation = 8.dp,
                                         modifier = Modifier.clickable {
@@ -306,7 +306,7 @@ fun InteractiveCaptureViewer(
                                             horizontalArrangement = Arrangement.spacedBy(6.dp)
                                         ) {
                                             if (tag.isVoice) {
-                                                MonologIcon(Glyph.MIC, Modifier.size(13.dp), accentColor)
+                                                MonologIcon(Glyph.MIC, Modifier.size(13.dp), viewerColors.onSurfaceVariant)
                                                 // Mini audio wave bars
                                                 Row(
                                                     horizontalArrangement = Arrangement.spacedBy(1.5.dp),
@@ -331,7 +331,7 @@ fun InteractiveCaptureViewer(
                                             }
                                             Text(
                                                 text = tag.text,
-                                                color = Color.White,
+                                                color = viewerColors.onSurface,
                                                 fontSize = 12.sp,
                                                 fontWeight = FontWeight.Medium,
                                                 maxLines = 1,
@@ -467,7 +467,7 @@ fun InteractiveCaptureViewer(
                                 colors = OutlinedTextFieldDefaults.colors(
                                     focusedTextColor = viewerColors.onSurface,
                                     unfocusedTextColor = viewerColors.onSurface,
-                                    focusedBorderColor = accentColor,
+                                    focusedBorderColor = viewerColors.primary,
                                     unfocusedBorderColor = viewerColors.outline
                                 )
                             )
@@ -494,9 +494,9 @@ fun InteractiveCaptureViewer(
                                 pendingTagLocation = null
                             },
                             enabled = tagInputText.isNotBlank(),
-                            colors = ButtonDefaults.buttonColors(containerColor = accentColor)
+                            shape = RoundedCornerShape(14.dp)
                         ) {
-                            Text("Add Pin", color = Color.Black)
+                            Text("Add Pin")
                         }
                     },
                     dismissButton = {
@@ -527,7 +527,7 @@ fun InteractiveCaptureViewer(
                                     colors = OutlinedTextFieldDefaults.colors(
                                         focusedTextColor = viewerColors.onSurface,
                                         unfocusedTextColor = viewerColors.onSurface,
-                                        focusedBorderColor = accentColor,
+                                        focusedBorderColor = viewerColors.primary,
                                         unfocusedBorderColor = viewerColors.outline
                                     )
                                 )
@@ -552,7 +552,7 @@ fun InteractiveCaptureViewer(
                                         editingTagIndex = null
                                     }
                                 ) {
-                                    Text("Delete", color = Color(0xFFFF5252))
+                                    Text("Delete", color = viewerColors.error)
                                 }
                                 Button(
                                     onClick = {
@@ -562,9 +562,9 @@ fun InteractiveCaptureViewer(
                                         }
                                         editingTagIndex = null
                                     },
-                                    colors = ButtonDefaults.buttonColors(containerColor = accentColor)
+                                    shape = RoundedCornerShape(14.dp)
                                 ) {
-                                    Text("Save", color = Color.Black)
+                                    Text("Save")
                                 }
                             }
                         },
@@ -599,7 +599,7 @@ fun InteractiveCaptureViewer(
                                 colors = OutlinedTextFieldDefaults.colors(
                                     focusedTextColor = viewerColors.onSurface,
                                     unfocusedTextColor = viewerColors.onSurface,
-                                    focusedBorderColor = accentColor,
+                                    focusedBorderColor = viewerColors.primary,
                                     unfocusedBorderColor = viewerColors.outline
                                 )
                             )
@@ -623,9 +623,9 @@ fun InteractiveCaptureViewer(
                                 hasChanges = true
                                 editingBottomNote = false
                             },
-                            colors = ButtonDefaults.buttonColors(containerColor = accentColor)
+                            shape = RoundedCornerShape(14.dp)
                         ) {
-                            Text("Update", color = Color.Black)
+                            Text("Update")
                         }
                     },
                     dismissButton = {

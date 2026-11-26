@@ -9,6 +9,7 @@ import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.Surface
+import androidx.compose.material3.MaterialTheme
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.remember
 import androidx.compose.ui.Alignment
@@ -28,7 +29,7 @@ internal fun CaptureNoteSheet(
     text: @Composable () -> Unit,
     confirmButton: @Composable () -> Unit,
     dismissButton: @Composable (() -> Unit)? = null,
-    containerColor: Color = Color(0xFF1E1F26)
+    containerColor: Color = MaterialTheme.colorScheme.surfaceContainerHigh
 ) {
     BackHandler(onBack = onDismissRequest)
     BoxWithConstraints(Modifier.fillMaxSize()) {
@@ -36,7 +37,7 @@ internal fun CaptureNoteSheet(
             .clickable(onClickLabel = "Close note editor", onClick = onDismissRequest))
         Surface(
             color = containerColor,
-            contentColor = Color.White,
+            contentColor = MaterialTheme.colorScheme.onSurface,
             shape = RoundedCornerShape(24.dp),
             modifier = Modifier.align(Alignment.BottomCenter).padding(8.dp)
                 .fillMaxWidth().heightIn(max = maxHeight)

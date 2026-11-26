@@ -16,7 +16,6 @@ import com.notokens.monolog.data.Reminder
 import com.notokens.monolog.data.YearDownload
 import com.notokens.monolog.data.YearDownloadNote
 import com.notokens.monolog.memory.MemoryRepository
-import com.notokens.monolog.memory.MemoryIndexWork
 import java.time.Instant
 import java.time.ZoneId
 import java.util.UUID
@@ -154,7 +153,6 @@ internal class BackupCoordinator(
                 if (!keys.hasKey(account.id) || code != null) keys.save(account.id, checkNotNull(recoveredSecrets))
             }
             accounts.loaded(account.session, payloads.map { it.year }.toSet())
-            MemoryIndexWork.enqueue(context)
             report
         }
 

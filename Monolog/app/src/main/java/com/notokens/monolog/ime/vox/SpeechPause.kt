@@ -12,7 +12,10 @@ internal class SpeechPause(private val stopAfterMs: Int) {
         private set
     private var noise = .0025f
 
-    val shouldStop get() = if (voicedMs >= 180) quietMs >= stopAfterMs else elapsedMs >= 9000
+    fun shouldStop(extended: Boolean = false): Boolean {
+        val duration = if (extended) maxOf(stopAfterMs, 9_000) else stopAfterMs
+        return if (voicedMs >= 180) quietMs >= duration else elapsedMs >= if (extended) 15_000 else 9_000
+    }
 
     fun accept(pcm: ByteArray, count: Int): Boolean {
         val ms = count * 1000 / (VoiceRecorder.RATE * 2)

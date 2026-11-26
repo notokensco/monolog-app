@@ -307,7 +307,7 @@ internal fun VoiceInputSettings(settings: SettingsStore, onRequestMicPermission:
     SettingsCard("Android speech") {
         Text("Use the on-device speech engine supplied by Android. Language support depends on the device.",
             color = PaperKeySubText)
-        if (engine == VoiceInputEngine.NATIVE) Text("Active in Vox", color = MaterialTheme.colorScheme.primary)
+        if (engine == VoiceInputEngine.NATIVE) com.notokens.monolog.ime.vox.ActiveVoxLabel()
         else TextButton({ scope.launch { settings.setVoiceInputEngine(VoiceInputEngine.NATIVE) } }) {
             Text("Use Android speech")
         }
@@ -316,6 +316,19 @@ internal fun VoiceInputSettings(settings: SettingsStore, onRequestMicPermission:
 
 @Composable
 internal fun KeyboardUsageSettings(settings: SettingsStore) {
+    val context = androidx.compose.ui.platform.LocalContext.current
+    val storage by androidx.compose.runtime.produceState(emptyList<Pair<String, Long>>(), context) {
+        value = kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) { com.notokens.monolog.data.storageBreakdown(context) }
+    }
+    if (storage.isNotEmpty()) SettingsCard("Storage on this phone") {
+        for ((label, bytes) in storage) {
+            Text("$label · ${android.text.format.Formatter.formatFileSize(context, bytes)}", color = PaperKeyText)
+        }
+        TextButton(onClick = {
+            context.startActivity(android.content.Intent(android.provider.Settings.ACTION_APPLICATION_DETAILS_SETTINGS,
+                android.net.Uri.fromParts("package", context.packageName, null)).addFlags(android.content.Intent.FLAG_ACTIVITY_NEW_TASK))
+        }) { Text("Open Android app storage settings") }
+    }
     val profile by settings.typingProfile.collectAsState(com.notokens.monolog.data.TypingProfile())
     val manualWords by settings.personalWords.collectAsState(emptySet())
     val personal by settings.personalProfile.collectAsState(com.notokens.monolog.data.PersonalProfile())

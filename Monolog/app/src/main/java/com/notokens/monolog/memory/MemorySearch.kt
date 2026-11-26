@@ -24,7 +24,7 @@ import org.json.JSONArray
 
 internal data class MemoryMatch(val record: MemoryRecord, val evidence: MemoryEvidence, val score: Double)
 internal data class JournalAnswer(val text: String, val matches: List<MemoryMatch>, val paraphrase: Boolean)
-private const val MAX_DAY_BRIEF_INPUT_BYTES = 64_000
+private const val BRIEF_INPUT_BYTES = 3500
 internal data class DayBrief(val text: String, val generated: Boolean, val updatedAt: Long? = null)
 internal data class CachedBrief(val brief: DayBrief, val sourceIds: Set<String>)
 
@@ -57,9 +57,6 @@ internal class MemorySearch(private val context: Context,
     private val db: MonologDatabase = MonologDatabase.get(context)) {
     suspend fun search(query: String, year: Int? = LocalDate.now().year): List<MemoryMatch> = withContext(Dispatchers.Default) {
         val records = if (year == null) db.memories().all() else db.memories().year(year)
-        val encoder = SentenceEncoder.get(context)
-        val vector = try { encoder.embed(query) } catch (error: kotlinx.coroutines.CancellationException) { throw error }
-            catch (_: Exception) { null }
         val queryTerms = terms(query)
         val sourceNotes = db.notes().observeAll().first().associateBy { it.id }
         records.mapNotNull { row ->
@@ -78,13 +75,8 @@ internal class MemorySearch(private val context: Context,
             }
             val text = evidence.summary + " " + evidence.excerpt.orEmpty() + " " + evidence.tags.joinToString(" ")
             val keywords = capture?.imageKeywords.orEmpty().joinToString(" ")
-            val exact = queryTerms.intersect(terms("$text $fullText $keywords")).size.toDouble() / queryTerms.size.coerceAtLeast(1)
-            val semantic = if (vector != null && row.embedding != null &&
-                row.vectorRevision == row.revision && row.encoderVersion == SentenceEncoder.VERSION) {
-                runCatching { SentenceEncoder.cosine(vector, JournalCipher.open(row.embedding, "memory-vector")) }.getOrDefault(0.0)
-            } else 0.0
-            val score = semantic * .8 + exact * .6
-            if (exact > 0 || semantic > .22) MemoryMatch(row, evidence, score) else null
+            val exact = queryTerms.intersect(terms("$text $fullText $keywords ${capture?.analysis.orEmpty()}")).size.toDouble() / queryTerms.size.coerceAtLeast(1)
+            if (exact > 0) MemoryMatch(row, evidence, exact) else null
         }.sortedByDescending { it.score }.take(6)
     }
 
@@ -106,7 +98,7 @@ internal class MemorySearch(private val context: Context,
 
     fun brief(
         records: List<MemoryRecord>, notes: List<Note>, period: String,
-        preferredModel: TextModel?, backupReady: Boolean, refresh: Boolean = false
+        preferredModel: TextModel?, refresh: Boolean = false
     ) = flow {
         val sources = briefSources(records, notes)
         if (sources.isEmpty()) {
@@ -123,7 +115,7 @@ internal class MemorySearch(private val context: Context,
         val previous = (cached ?: legacy)?.takeIf { sourceIds.containsAll(it.sourceIds) }
         val evidence = sources.map { it.text }
         val visible = previous?.brief ?: DayBrief(localRecap(evidence.distinct()), false)
-        val modelReady = preferredModel != null || backupReady
+        val modelReady = preferredModel != null
         val refreshNeeded = refresh || previous == null || !previous.brief.generated ||
             hasEnoughNewBriefData(previous.sourceIds, sources)
         if (!modelReady || !refreshNeeded) {
@@ -131,25 +123,16 @@ internal class MemorySearch(private val context: Context,
             return@flow
         }
 
-        val day = period.startsWith("Day:")
-        val source = if (day) evidence.joinToString("\n") else boundedModelInput(evidence)
-        val sourceBytes = source.toByteArray(Charsets.UTF_8).size
-        if (sourceBytes > (if (preferredModel != null) MAX_DAY_BRIEF_INPUT_BYTES else BRIEF_INPUT_BYTES)) {
-            emit(BriefUpdate(visible, message = if (preferredModel != null) {
-                "This journal period is too long to summarise in a single request."
-            } else "Choose a text model in On-device AI to summarise all of this text at once."))
+        val source = boundedModelInput(evidence)
+        val memory = android.app.ActivityManager.MemoryInfo()
+        context.getSystemService(android.app.ActivityManager::class.java)?.getMemoryInfo(memory)
+        if (memory.lowMemory) {
+            emit(BriefUpdate(visible, message = "Memory is low. Close another app and refresh the brief again."))
             return@flow
         }
-        val contextTokens = (sourceBytes + 384).coerceIn(LocalAi.DEFAULT_CONTEXT_TOKENS, LocalAi.MAX_CONTEXT_TOKENS)
-        val hasHeadroom = if (preferredModel == null) hasBriefHeadroom(context) else hasBriefHeadroom(context,
-            preferredModel.bytes + 320L * 1024 * 1024 + (contextTokens - LocalAi.DEFAULT_CONTEXT_TOKENS) * 32_768L)
-        if (!hasHeadroom) {
-            emit(BriefUpdate(visible, message = "There isn’t enough free memory to refresh the brief right now."))
-            return@flow
-        }
-
+        val contextTokens = (source.toByteArray().size + 512).coerceIn(LocalAi.DEFAULT_CONTEXT_TOKENS, 4096)
         emit(BriefUpdate(visible, refreshing = true))
-        val reply = if (preferredModel != null) {
+        val reply = run {
             val label = period.substringBefore(':').lowercase(Locale.ROOT)
             val prompt = """
                 Summarise my $label.
@@ -160,12 +143,13 @@ internal class MemorySearch(private val context: Context,
                 $source
                 </entries>
             """.trimIndent()
-            (LocalAi.request(context, prompt, maxTokens = 144, expectedModel = preferredModel,
-                contextTokens = contextTokens) as? GemmaResult.Answer)?.text
-        } else BriefSummarizer.summarize(context, source, retry = refresh)
-        val paragraph = checkedBrief(reply, source)
+            LocalAi.request(context, prompt, maxTokens = 144, expectedModel = preferredModel,
+                contextTokens = contextTokens, waitForModel = refresh)
+        }
+        val paragraph = checkedBrief((reply as? GemmaResult.Answer)?.text, source)
         if (paragraph == null) {
-            emit(BriefUpdate(visible, message = "Couldn’t refresh the brief with the current model."))
+            emit(BriefUpdate(visible, message = if (reply == GemmaResult.Busy) "The model is busy. Tap Refresh to try again."
+                else "Couldn’t refresh the brief with the current model."))
         } else {
             val next = DayBrief(paragraph, true, System.currentTimeMillis())
             if (saveBrief(cacheKey, next, sourceIds)) {
@@ -221,12 +205,12 @@ internal class MemorySearch(private val context: Context,
             ?.replace(Regex("\\s+"), " ")
 
     private fun boundedModelInput(evidence: List<String>): String {
-        val entries = spreadAcrossPeriod(evidence, 18)
-        val details = entries.map { line -> line.replaceFirst(" · ", ": ") }
+        val all = evidence.map { line -> line.replaceFirst(" · ", ": ") }
         // Fit short periods in full and keep entries from across longer periods within one small request.
-        if (details.sumOf { it.toByteArray(Charsets.UTF_8).size + 2 } <= BRIEF_INPUT_BYTES) {
-            return details.joinToString("\n")
+        if (all.sumOf { it.toByteArray(Charsets.UTF_8).size + 2 } <= BRIEF_INPUT_BYTES) {
+            return all.joinToString("\n")
         }
+        val details = spreadAcrossPeriod(all, 18)
         var remaining = BRIEF_INPUT_BYTES - details.size
         return details.mapIndexed { index, text ->
             val slice = remaining / (details.size - index)
@@ -280,6 +264,6 @@ internal class MemorySearch(private val context: Context,
         return (if (lastSpace > prefix.length * 3 / 4) prefix.take(lastSpace) else prefix) + "…"
     }
 
-    private fun terms(text: String): Set<String> = Regex("[\\p{L}\\p{N}]{2,}").findAll(text.lowercase(Locale.ROOT))
+    private fun terms(text: String): Set<String> = Regex("[\\p{L}\\p{M}\\p{N}]{2,}").findAll(text.lowercase(Locale.ROOT))
         .map { it.value }.filterNot { it in setOf("what", "was", "the", "to", "for", "of", "and", "my", "did", "मैं", "क्या") }.toSet()
 }

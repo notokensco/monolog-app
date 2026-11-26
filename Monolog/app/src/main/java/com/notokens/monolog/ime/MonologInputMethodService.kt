@@ -1,6 +1,5 @@
 package com.notokens.monolog.ime
 
-import android.app.ActivityManager
 import android.content.Intent
 import android.content.ActivityNotFoundException
 import android.graphics.drawable.ColorDrawable
@@ -34,8 +33,6 @@ import androidx.core.view.WindowCompat
 import com.notokens.monolog.MainActivity
 import com.notokens.monolog.ai.KeyboardLanguage
 import com.notokens.monolog.ai.LocalAi
-import com.notokens.monolog.ai.ModelStore
-import com.notokens.monolog.ai.ModelState
 import com.notokens.monolog.capture.CaptureSetupActivity
 import com.notokens.monolog.capture.ScreenCaptureService
 import com.notokens.monolog.data.SettingsStore
@@ -408,11 +405,6 @@ class MonologInputMethodService : LifecycleInputMethodService() {
         settingsScope.launch { settingsStore.smartVoxFilter.collect { voxController.smartFilter = it } }
         settingsScope.launch { settingsStore.sensitiveWords.collect(sensitiveDraft::setWords) }
         settingsScope.launch {
-            androidx.compose.runtime.snapshotFlow {
-                editorContext.packageName.takeIf { privacyCheckAllowed() && it != packageName }
-            }.collect(ChatAssist::setEditor)
-        }
-        settingsScope.launch {
             combine(settingsStore.personalWords, settingsStore.typingProfile, settingsStore.learnWords) { words, profile, learn ->
                 Triple(words, profile, learn)
             }.collect { (words, profile, learn) ->
@@ -466,74 +458,56 @@ class MonologInputMethodService : LifecycleInputMethodService() {
                 }
             }.collect()
         }
-        settingsScope.launch {
-            combine(keyboardModelsVisible, settingsStore.voiceInputEngine, settingsStore.voxLanguage,
-                settingsStore.keyboardLanguage, installedPack
-            ) { visible, engine, code, layout, _ ->
-                val mode = VoxLanguage.resolve(code, KeyboardLanguage.of(layout).speechTag)
-                val selected = if (!visible) null
-                else if (engine == VoiceInputEngine.REGIONAL && !RegionalVox.ready(applicationContext, mode)) null
-                else engine
-                selected to mode
-            }.distinctUntilChanged().collectLatest { (engine, mode) ->
-                if (!keyboardModelsVisible.value) return@collectLatest
-                if (engine != VoiceInputEngine.REGIONAL) RegionalVox.release()
-                if (engine != VoiceInputEngine.MOONSHINE) OfflineMoonshine.release()
-                if (engine == VoiceInputEngine.MOONSHINE || engine == VoiceInputEngine.REGIONAL) {
-                    delay(400)
-                    while (android.os.SystemClock.uptimeMillis() - lastKeyEdit < 450) delay(120)
-                }
-                warmModel {
-                    when (engine) {
-                        VoiceInputEngine.MOONSHINE -> OfflineMoonshine.warm(applicationContext)
-                        VoiceInputEngine.REGIONAL -> RegionalVox.warm(applicationContext, mode)
-                        else -> Unit
-                    }
-                }
-            }
-        }
-        settingsScope.launch {
-            val models = ModelStore.get(applicationContext)
-            combine(keyboardModelsVisible, models.state, models.active) { visible, state, model ->
-                visible to model.takeIf { visible && state is ModelState.Ready }
-            }.distinctUntilChanged().collectLatest { (visible, model) ->
-                if (!visible) return@collectLatest
-                if (model != null) {
-                    delay(1_600)
-                    while (android.os.SystemClock.uptimeMillis() - lastKeyEdit < 900) delay(200)
-                    if (!canPrewarmTextModel()) return@collectLatest
-                    warmModel { LocalAi.warm(applicationContext, whileVisible = true) }
-                } else LocalAi.release()
-            }
-        }
     }
 
-    private fun canPrewarmTextModel(): Boolean {
-        val manager = getSystemService(ActivityManager::class.java) ?: return false
-        val memory = ActivityManager.MemoryInfo().also(manager::getMemoryInfo)
-        return !manager.isLowRamDevice && !memory.lowMemory
-    }
-
-    private suspend fun warmModel(block: suspend () -> Unit) {
-        try {
-            block()
-        } catch (error: CancellationException) {
-            throw error
-        } catch (error: Exception) {
-            android.util.Log.w("MonologIme", "Could not prepare the local model", error)
-        } catch (error: LinkageError) {
-            android.util.Log.w("MonologIme", "The local model runtime is unavailable", error)
-        }
-    }
+    private var voxPersonal by mutableStateOf(false)
+    private var voxAudio by mutableStateOf(false)
+    private var voxNotePreview by mutableStateOf(false)
+    private var savingVoxAudio by mutableStateOf(false)
+    private var spokenNote: String? = null
+    private var spokenQuestion = ""
+    private var voxManualPause = false
 
     private val voxController by lazy {
         VoxController(this, settingsScope) { state ->
-            val previous = voxState
-            voxState = state
-            if (isVoxOpen && state.finalSegment.isNotBlank() && state.transcript != previous.transcript) {
-                handleCommitTranscript(state.finalSegment)
-            } else if (isVoxOpen && state.partialTranscript != previous.partialTranscript) {
-                updateVoxComposition(state.partialTranscript)
+            onVoxUpdate(state)
+        }
+    }
+
+    private fun onVoxUpdate(state: VoxState) {
+        val previous = voxState
+        val noteListening = voxNotePreview
+        voxState = state
+        if (!isVoxOpen) return
+        if (!voxAudio && state.finalSegment.isNotBlank() && state.transcript != previous.transcript) {
+            handleCommitTranscript(state.finalSegment)
+        } else if (!voxAudio && state.partialTranscript != previous.partialTranscript) {
+            updateVoxComposition(state.partialTranscript)
+        }
+        val ended = state.status in setOf(VoxStatus.PAUSED, VoxStatus.ERROR, VoxStatus.UNAVAILABLE)
+        if (!ended || state.status == previous.status) return
+        when {
+            voxAudio -> finishVoxAudio()
+            spokenNote != null -> {
+                if (!noteListening && !voxManualPause && state.status == VoxStatus.PAUSED) {
+                    startVoxListening()
+                    return
+                }
+                val body = spokenNote.orEmpty()
+                spokenNote = null
+                handleExitVox()
+                if (body.isNotBlank()) storeVoxNote(body)
+            }
+            voxPersonal && spokenQuestion.isNotBlank() -> {
+                val question = spokenQuestion.take(300)
+                val allowed = ai.personalAllowed
+                handleExitVox()
+                if (allowed) {
+                    handleOpenSearch()
+                    searchQuery = TextFieldValue(question, TextRange(question.length))
+                    if (!ai.personal) ai.togglePersonal()
+                    ai.ask(question)
+                }
             }
         }
     }
@@ -602,7 +576,16 @@ class MonologInputMethodService : LifecycleInputMethodService() {
                         onEnterVox = ::handleEnterVox,
                         onExitVox = ::handleExitVox,
                         onStartListening = ::startVoxListening,
-                        onPauseListening = { voxController.pauseOrStopListening() },
+                        onPauseListening = {
+                            voxManualPause = true
+                            voxController.pauseOrStopListening()
+                        },
+                        voxPersonal = voxPersonal,
+                        voxAudio = voxAudio,
+                        voxNotePreview = voxNotePreview,
+                        voxPrivateActions = privacyCheckAllowed() && !savingVoxAudio,
+                        onToggleVoxPersonal = ::toggleVoxPersonal,
+                        onVoxAudio = ::toggleVoxAudio,
                         onDeleteVoxWord = ::deleteVoxWord,
                         onRequestPermission = ::handleRequestMicPermission,
                         onCharTyped = { handleCharTyped(it, manualKey = it.codePointCount(0, it.length) == 1) },
@@ -644,7 +627,6 @@ class MonologInputMethodService : LifecycleInputMethodService() {
         keyboardSession++
         val identity = info?.let { EditorIdentity(it.packageName, it.fieldId, it.fieldName, it.inputType) }
         val sameEditor = restarting && identity != null && identity == visibleEditor
-        if (!sameEditor) ChatAssist.setEditor(null)
         visibleEditor = identity
         if (sameEditor) {
             saveRescueDraft(useCached = true, readEditor = false)
@@ -697,7 +679,6 @@ class MonologInputMethodService : LifecycleInputMethodService() {
     }
 
     override fun onFinishInputView(finishingInput: Boolean) {
-        ChatAssist.setEditor(null)
         if ((memoryAllowed() && memoryRecorder.hasPendingText) ||
             (typingProfileAllowed() && typingSession.hasUpdates)) verifyEditorPrivacy()
         saveTypingSession(includeCurrent = false, verify = false)
@@ -706,23 +687,18 @@ class MonologInputMethodService : LifecycleInputMethodService() {
         updateFloatingBounds(null)
         afterGlide.clear()
         finishJournalDraft(verify = false)
-        voxResumeAfterDelete?.cancel()
-        voxResumeAfterDelete = null
-        clearVoxComposition()
+        if (isVoxOpen) handleExitVox()
         editorActive = false
         stopCursorDrag()
         swipeJob?.cancel()
         ai.reset()
         super.onFinishInputView(finishingInput)
-        voxController.cleanup()
         isShortcutsOpen = false
         shortcutDraft = ShortcutDraft()
         searchQuery = null
-        isVoxOpen = false
     }
 
     override fun onWindowHidden() {
-        ChatAssist.setEditor(null)
         systemAutofillSuggestions = emptyList()
         finishJournalDraft()
         saveRescueDraft()
@@ -746,7 +722,6 @@ class MonologInputMethodService : LifecycleInputMethodService() {
     }
 
     override fun onFinishInput() {
-        ChatAssist.setEditor(null)
         systemAutofillSuggestions = emptyList()
         finishJournalDraft()
         saveRescueDraft()
@@ -759,7 +734,6 @@ class MonologInputMethodService : LifecycleInputMethodService() {
     }
 
     override fun onDestroy() {
-        ChatAssist.setEditor(null)
         super.onDestroy()
         settingsScope.cancel()
         voxController.cleanup()
@@ -897,20 +871,24 @@ class MonologInputMethodService : LifecycleInputMethodService() {
         searchQuery = null
         ai.closePanel()
         ai.clearDraft()
+        LocalAi.release()
         voxController.clearTranscript()
         isVoxOpen = true
         startVoxListening()
     }
 
     private fun startVoxListening() {
+        if (voxAudio || savingVoxAudio) return
+        voxManualPause = false
         voxResumeAfterDelete?.cancel()
         voxResumeAfterDelete = null
         voxController.startListening(language.speechTag, language.label, voxLanguage().takeIf {
             voiceEngine == VoiceInputEngine.REGIONAL
-        })
+        }, extended = spokenNote != null, allowSystemSpellCheck = privacyCheckAllowed())
     }
 
     private fun changeVoxLanguage(mode: VoxLanguage) {
+        if (voxAudio || voxNotePreview || savingVoxAudio) return
         voxResumeAfterDelete?.cancel()
         voxResumeAfterDelete = null
         voxLanguageChange?.cancel()
@@ -932,11 +910,64 @@ class MonologInputMethodService : LifecycleInputMethodService() {
         clearVoxComposition()
         voxController.cleanup()
         isVoxOpen = false
+        voxAudio = false
+        voxPersonal = false
+        voxNotePreview = false
+        spokenQuestion = ""
+        val pendingNote = spokenNote
+        spokenNote = null
         voxController.clearTranscript()
         ai.clearDraft()
+        if (!pendingNote.isNullOrBlank()) storeVoxNote(pendingNote)
+    }
+
+    private fun toggleVoxPersonal() {
+        if (!ai.personalAllowed || voxAudio || spokenNote != null || savingVoxAudio) return
+        clearVoxComposition()
+        voxController.cleanup()
+        voxPersonal = !voxPersonal
+        spokenQuestion = ""
+        voxNotePreview = false
+        voxController.clearTranscript()
+        startVoxListening()
+    }
+
+    private fun toggleVoxAudio() {
+        if (voxAudio) { voxController.pauseOrStopListening(); return }
+        if (!privacyCheckAllowed() || savingVoxAudio || spokenNote != null) return
+        if (androidx.core.content.ContextCompat.checkSelfPermission(this, android.Manifest.permission.RECORD_AUDIO) !=
+            android.content.pm.PackageManager.PERMISSION_GRANTED) {
+            handleRequestMicPermission()
+            return
+        }
+        clearVoxComposition()
+        voxController.cleanup()
+        voxPersonal = false
+        spokenQuestion = ""
+        voxNotePreview = false
+        voxController.clearTranscript()
+        voxAudio = true
+        voxController.startNoteRecording()
+    }
+
+    private fun finishVoxAudio() {
+        voxAudio = false
+        savingVoxAudio = true
+        val recorder = voxController.takeVoiceSegment()
+        handleExitVox()
+        settingsScope.launch {
+            try {
+                val audio = recorder?.finishAudio()
+                if (audio == null) Toast.makeText(this@MonologInputMethodService, "No audio was recorded.", Toast.LENGTH_SHORT).show()
+                else writeVoxNote("", audio)
+            } catch (cancelled: kotlinx.coroutines.CancellationException) { throw cancelled }
+            catch (_: Exception) { Toast.makeText(this@MonologInputMethodService, "Couldn’t save the audio note.", Toast.LENGTH_SHORT).show() }
+            finally { recorder?.cancel(); savingVoxAudio = false }
+        }
     }
 
     private fun deleteVoxWord() {
+        if (voxAudio || voxPersonal || voxNotePreview) return
         val connection = currentInputConnection ?: return
         if (!isVoxOpen || !editorActive) return
         val listening = voxState.status == VoxStatus.LISTENING || voxState.status == VoxStatus.PREPARING
@@ -994,8 +1025,11 @@ class MonologInputMethodService : LifecycleInputMethodService() {
     }
 
     private fun updateVoxComposition(partial: String) {
-        if (partial.isBlank() || !aiAllowed() || partial.startsWith("add a note", ignoreCase = true) ||
-            partial.startsWith("add note", ignoreCase = true)) {
+        val lead = privacyCheckAllowed() && com.notokens.monolog.ime.vox.VoxText.noteBody(partial) != null
+        voxNotePreview = spokenNote != null || (!voxPersonal && lead)
+        voxController.extendedNotePause = voxNotePreview
+        if (partial.isBlank() || !aiAllowed() || voxPersonal || voxNotePreview ||
+            (privacyCheckAllowed() && com.notokens.monolog.ime.vox.VoxText.isNoteLead(partial))) {
             clearVoxComposition()
             return
         }
@@ -1016,8 +1050,22 @@ class MonologInputMethodService : LifecycleInputMethodService() {
 
     private fun handleCommitTranscript(rawTranscript: String) {
         val transcript = rawTranscript.trim()
+        if (voxPersonal) {
+            spokenQuestion = appendVoxText(spokenQuestion, transcript, 300)
+            return
+        }
+        val command = if (privacyCheckAllowed()) com.notokens.monolog.ime.vox.VoxText.noteBody(transcript) else null
+        if (spokenNote != null || command != null) {
+            clearVoxComposition()
+            spokenNote = appendVoxText(spokenNote.orEmpty(), command ?: transcript, 8_000)
+            voxNotePreview = true
+            voxController.extendedNotePause = true
+            if (spokenNote.orEmpty().length >= 8_000) voxController.pauseOrStopListening()
+            return
+        }
+        voxNotePreview = false
+        voxController.extendedNotePause = false
         markTyped(transcript)
-        if (saveSpokenNote(transcript)) return
         if (transcript.isNotBlank()) {
             if (isShortcutsOpen && shortcutDraft.isEditing) shortcutDraft = shortcutDraft.insert(transcript)
             else currentInputConnection?.let { connection ->
@@ -1032,28 +1080,30 @@ class MonologInputMethodService : LifecycleInputMethodService() {
         }
     }
 
-    private fun saveSpokenNote(transcript: String): Boolean {
-        val command = Regex("^\\s*add\\s+(?:a\\s+)?note\\b[\\s,.:;-]*", RegexOption.IGNORE_CASE)
-        val prefix = command.find(transcript) ?: return false
-        val body = transcript.substring(prefix.range.last + 1).trim()
-        if (body.isBlank() || !memoryAllowed()) return false
-        val recorder = voxController.takeVoiceSegment()
-        handleExitVox()
+    private fun appendVoxText(previous: String, next: String, limit: Int): String =
+        listOf(previous, next).filter(String::isNotBlank).joinToString(" ").take(limit)
+
+    private fun storeVoxNote(body: String) {
+        if (!privacyCheckAllowed()) return
         settingsScope.launch {
             try {
-                val audio = try { recorder?.finishAudio() }
-                catch (cancelled: kotlinx.coroutines.CancellationException) { throw cancelled }
-                catch (_: Exception) { null }
-                if (settingsStore.incognito.first()) return@launch
-                val note = com.notokens.monolog.ime.vox.VoiceNoteBody.attach(body, audio)
-                com.notokens.monolog.data.MonologData.repository(applicationContext).saveNote(
-                    body.trim().split(Regex("\\s+")).take(6).joinToString(" ").take(65), note)
-                Toast.makeText(this@MonologInputMethodService, if (audio != null) "Audio note saved" else "Note saved as text", Toast.LENGTH_SHORT).show()
+                writeVoxNote(body, null)
             } catch (cancelled: kotlinx.coroutines.CancellationException) { throw cancelled }
             catch (_: Exception) { Toast.makeText(this@MonologInputMethodService, "Couldn’t save the note.", Toast.LENGTH_SHORT).show() }
-            finally { recorder?.cancel() }
         }
-        return true
+    }
+
+    private suspend fun writeVoxNote(body: String, audio: String?) {
+        if (settingsStore.incognito.first()) return
+        if (body.isNotBlank() && sensitiveDraft.matches(body)) {
+            Toast.makeText(this, "This note matches a privacy trigger and wasn’t saved.", Toast.LENGTH_SHORT).show()
+            return
+        }
+        val title = body.trim().split(Regex("\\s+")).take(6).joinToString(" ").take(65)
+            .ifBlank { "Audio Note" }
+        val note = com.notokens.monolog.ime.vox.VoiceNoteBody.attach(body, audio)
+        com.notokens.monolog.data.MonologData.repository(applicationContext).saveNote(title, note)
+        Toast.makeText(this, if (audio != null) "Audio note saved" else "Note saved", Toast.LENGTH_SHORT).show()
     }
 
     private fun handleRequestMicPermission() {

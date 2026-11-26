@@ -36,6 +36,7 @@ internal sealed interface GemmaResult {
     data object Missing : GemmaResult
     data object TimedOut : GemmaResult
     data object Empty : GemmaResult
+    data object Busy : GemmaResult
     data class Failed(val loading: Boolean) : GemmaResult
 
     fun status(): String = when (this) {
@@ -43,6 +44,7 @@ internal sealed interface GemmaResult {
         Missing -> "Download an offline text model"
         TimedOut -> "The offline text model timed out"
         Empty -> "The offline text model returned no text"
+        Busy -> "The on-device model is already working"
         is Failed -> if (loading) "The offline text model could not start" else "The offline text model could not finish the request"
     }
 }
@@ -86,22 +88,22 @@ internal object LocalAi {
 
     suspend fun request(
         context: Context, prompt: String, maxTokens: Int, expectedModel: TextModel? = null,
-        contextTokens: Int = DEFAULT_CONTEXT_TOKENS
+        contextTokens: Int = DEFAULT_CONTEXT_TOKENS, waitForModel: Boolean = true
     ): GemmaResult {
         require(contextTokens in DEFAULT_CONTEXT_TOKENS..MAX_CONTEXT_TOKENS)
         val extended = contextTokens > DEFAULT_CONTEXT_TOKENS
         val timeoutMillis = if (extended) 90_000L else 30_000L
         val start = SystemClock.elapsedRealtime()
-        val result = if (ModelStore.get(context).state.value !is ModelState.Ready) GemmaResult.Missing else {
+        val result = if (ModelStore.get(context).active.value == null) GemmaResult.Missing else {
             withTimeoutOrNull(timeoutMillis) {
                 withContext(Dispatchers.Default) {
-                    engineLock.withLock {
+                    runInference(waitForModel) {
                         val store = ModelStore.get(context)
-                        val selection = store.active.value ?: return@withLock GemmaResult.Missing
-                        if (expectedModel != null && selection != expectedModel) return@withLock GemmaResult.Missing
-                        if (store.state.value !is ModelState.Ready) return@withLock GemmaResult.Missing
+                        val selection = store.active.value ?: return@runInference GemmaResult.Missing
+                        if (expectedModel != null && selection != expectedModel) return@runInference GemmaResult.Missing
+                        if (!store.file(selection).isFile) return@runInference GemmaResult.Missing
                         if (selection.isGguf) {
-                            return@withLock try {
+                            return@runInference try {
                                 val text = GgufRuntime.complete(store.file(selection), prompt, maxTokens,
                                     contextTokens, timeoutMillis - 2_000L)
                                 if (text.isNullOrBlank()) GemmaResult.Empty else GemmaResult.Answer(text)
@@ -155,12 +157,17 @@ internal object LocalAi {
         return result
     }
 
+    private suspend fun runInference(waitForModel: Boolean, block: suspend () -> GemmaResult): GemmaResult {
+        if (waitForModel) engineLock.lock() else if (!engineLock.tryLock()) return GemmaResult.Busy
+        return try { block() } finally { engineLock.unlock() }
+    }
+
     private fun getEngine(context: Context): Engine =
         engine ?: initializeEngine(context, DEFAULT_CONTEXT_TOKENS).also { engine = it }
 
     private fun initializeEngine(context: Context, contextTokens: Int): Engine {
         val store = ModelStore.get(context)
-        check(store.state.value is ModelState.Ready)
+        check(store.file(TextModel.GEMMA).isFile)
         val cache = File(context.cacheDir, "local-gemma").apply { mkdirs() }
         return Engine(
             EngineConfig(

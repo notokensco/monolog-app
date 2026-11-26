@@ -55,6 +55,11 @@ internal class MemoryRepository(private val context: Context,
             reminderId = reminder.id, existing = db.memories().forReminder(reminder.id))
     }
 
+    suspend fun checkIn(mood: String, time: java.time.ZonedDateTime) = withContext(Dispatchers.IO) {
+        save(MemoryEvidence("Felt ${mood.lowercase(java.util.Locale.ROOT)}.", null, listOf("mood"), mood = mood),
+            MOOD_SOURCE, time.toInstant().toEpochMilli(), day = time.toLocalDate(), identity = (time.hour / 3).toString())
+    }
+
     suspend fun backfill() = withContext(Dispatchers.IO) {
         val deleted = context.getSharedPreferences("journal_memory_deleted", Context.MODE_PRIVATE)
             .getStringSet("sources", emptySet()).orEmpty().toSet()
@@ -78,9 +83,9 @@ internal class MemoryRepository(private val context: Context,
     }
 
     private suspend fun save(evidence: MemoryEvidence, source: String, at: Long,
-        noteId: Long? = null, reminderId: Long? = null, existing: MemoryRecord? = null, draftIdentity: String? = null): String? {
-        val day = Instant.ofEpochMilli(at).atZone(ZoneId.systemDefault()).toLocalDate()
-        val dedup = fingerprint("$day|$source|${noteId ?: reminderId ?: draftIdentity ?: MeaningfulMoment.normalized(evidence.summary)}")
+        noteId: Long? = null, reminderId: Long? = null, existing: MemoryRecord? = null, draftIdentity: String? = null,
+        day: java.time.LocalDate = Instant.ofEpochMilli(at).atZone(ZoneId.systemDefault()).toLocalDate(), identity: String? = null): String? {
+        val dedup = fingerprint("$day|$source|${noteId ?: reminderId ?: draftIdentity ?: identity ?: MeaningfulMoment.normalized(evidence.summary)}")
         val plain = encode(evidence.copy(excerpt = null))
         val id = db.withTransaction {
             if (draftIdentity != null && at <= MemoryPreferences(context).clearedAt) return@withTransaction null
@@ -92,7 +97,6 @@ internal class MemoryRepository(private val context: Context,
             if (previous == null) db.memories().insert(row) else db.memories().update(row)
             row.id
         }
-        if (id != null) MemoryIndexWork.enqueue(context)
         return id
     }
 
@@ -106,7 +110,6 @@ internal class MemoryRepository(private val context: Context,
                 payload = JournalCipher.seal(encode(evidence), "memory-payload"), embedding = null,
                 encoderVersion = null, vectorRevision = 0, cacheOwner = null, cacheYear = null, cacheExpiresAt = null))
         }
-        MemoryIndexWork.enqueue(context)
     }
     suspend fun delete(id: String) = withContext(Dispatchers.IO) {
         db.withTransaction {
@@ -122,6 +125,7 @@ internal class MemoryRepository(private val context: Context,
     }
 
     companion object {
+        const val MOOD_SOURCE = "Mood check-in"
         fun readableSummary(text: String): String {
             val parts = text.split(" · ", limit = 2)
             if (parts.size < 2) return text

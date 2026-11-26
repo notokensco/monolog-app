@@ -17,7 +17,7 @@ internal object PronunciationAlternatives {
         languageTag.substringBefore('-').lowercase(Locale.ROOT) in setOf("en", "hi")
 
     private val fillerPhonemes = Regex(
-        """(?<![\p{L}\p{M}\p{N}-])(?:u+m+s?|u+h+(?:m+s?|s)?|a+h+s?|a{3,}|e+r+m*s?|h+m+s?|m{2,}|h{2,}|o{2,}m+s?|o+h+|अ+ह*|उ+ह+|आ{2,}|अम+|उम+|हं+|हम्म+)(?![\p{L}\p{M}\p{N}-])(?:[ \t]*(?:,…|…|\.{3,}|,))?""",
+        """(?<![\p{L}\p{M}\p{N}-])(?:u+m+s?|u+h+(?:m+s?|s)?|a{3,}|e+rm+|h+m{2,}|उ+ह+|आ{2,}|उम{2,}|हम्म+)(?![\p{L}\p{M}\p{N}-])(?:[ \t]*(?:,…|…|\.{3,}|,))?""",
         RegexOption.IGNORE_CASE
     )
     private val disfluencyLabel = Regex("""[\[(<]\s*(?:uh|um|hmm|filler|hesitation|pause|silence)\s*[\])>]""",

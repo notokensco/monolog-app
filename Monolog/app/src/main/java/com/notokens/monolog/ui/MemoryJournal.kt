@@ -33,7 +33,6 @@ import androidx.lifecycle.compose.LocalLifecycleOwner
 import androidx.lifecycle.repeatOnLifecycle
 import com.notokens.monolog.data.MemoryRecord
 import com.notokens.monolog.data.MonologDatabase
-import com.notokens.monolog.ai.ModelState
 import com.notokens.monolog.ai.ModelStore
 import com.notokens.monolog.ai.TextModel
 import com.notokens.monolog.data.Note
@@ -74,8 +73,6 @@ internal fun MemorySettings() {
     val preferences = remember { MemoryPreferences(context) }
     var enabled by remember { mutableStateOf(preferences.enabled) }
     var confirmDisable by remember { mutableStateOf(false) }
-    val encoder = remember { SentenceEncoder.get(context) }
-    val status by encoder.status.collectAsState()
     SettingsCard("Journal memory") {
         Row(verticalAlignment = androidx.compose.ui.Alignment.CenterVertically) {
             Text("Remember meaningful moments", Modifier.weight(1f), color = PaperKeyText)
@@ -96,12 +93,6 @@ internal fun MemorySettings() {
         confirmButton = { TextButton({ enabled = false; preferences.enabled = false; confirmDisable = false }) { Text("Turn off") } },
         dismissButton = { TextButton({ confirmDisable = false }) { Text("Keep on") } }
     )
-    SettingsCard("Offline semantic search") {
-        Text(status, color = PaperKeyText)
-        Text("Multilingual MiniLM · 384-dimensional quantized vectors. The optional 135 MB download helps find related wording. Keyword search already covers titles, notes, and saved image tags.",
-            color = PaperKeySubText, style = MaterialTheme.typography.bodySmall)
-        Button(encoder::download, enabled = !encoder.ready()) { Text("Download offline search") }
-    }
 }
 
 @Composable
@@ -110,19 +101,15 @@ internal fun MemoryJournal(
     visibleNotes: List<com.notokens.monolog.data.Note>, photos: Map<Long, List<com.notokens.monolog.data.NotePhotoRef>>,
     query: String, onClearQuery: () -> Unit, onFocusSearch: () -> Unit,
     askRequest: Int, onAnswering: (Boolean) -> Unit, onDayOpened: () -> Unit,
-    initialDay: String? = null, notesLoaded: Boolean = true
+    initialDay: String? = null, notesLoaded: Boolean = true, imeVisible: Boolean = false
 ) {
     val context = LocalContext.current
-    val lifecycle = LocalLifecycleOwner.current.lifecycle
     val db = remember { MonologDatabase.get(context) }
     val repository = remember { MemoryRepository(context) }
     val search = remember { MemorySearch(context) }
     val scope = rememberCoroutineScope()
     val keyboard = LocalSoftwareKeyboardController.current
     val focus = LocalFocusManager.current
-    val encoder = remember { SentenceEncoder.get(context) }
-    val encoderStatus by encoder.status.collectAsState()
-    val semanticReady = encoder.ready()
     val loadedMoments by db.memories().observeAll().collectAsState<List<MemoryRecord>, List<MemoryRecord>?>(initial = null)
     val records = loadedMoments.orEmpty()
     var date by rememberSaveable(initialDay) { mutableStateOf(initialDay ?: LocalDate.now().toString()) }
@@ -136,10 +123,6 @@ internal fun MemoryJournal(
     val year = if (showDay) selected.year else month.year
     val recapPeriod = if (showDay) period else "Day"
     val showBrief = showDay || !showSearch
-    val textModels = remember { ModelStore.get(context) }
-    val activeModel by textModels.active.collectAsState()
-    val textModelState by textModels.state.collectAsState()
-    val preferredModel = activeModel.takeIf { textModelState == ModelState.Ready }
     var matches by remember { mutableStateOf<List<MemoryMatch>?>(null) }
     var answer by remember { mutableStateOf<JournalAnswer?>(null) }
     var editing by remember { mutableStateOf<MemoryRecord?>(null) }
@@ -194,51 +177,21 @@ internal fun MemoryJournal(
             includesDay(java.time.Instant.ofEpochMilli(note.createdAt).atZone(zone).toLocalDate())
         }
     }
-    val hasRecapSources = selectedRecords.isNotEmpty() || selectedNotes.isNotEmpty()
-    val summarizer = remember { BriefModelStore.get(context) }
-    val modelState by summarizer.state.collectAsState()
-    val backupReady = modelState == ModelState.Ready
     val periodKey = "$recapPeriod:" + when (recapPeriod) {
         "Month" -> YearMonth.from(selected).toString()
         "Year" -> selected.year.toString()
         else -> date
     }
-    var refreshRecap by remember(periodKey) { mutableIntStateOf(0) }
-    var lastRefresh by remember(periodKey) { mutableIntStateOf(0) }
-    var briefUpdate by remember(periodKey) { mutableStateOf(BriefUpdate()) }
     val observationsReady = notesLoaded && loadedMoments != null
-    val briefInputs by rememberUpdatedState(
-        BriefInputs(selectedRecords, selectedNotes, preferredModel, backupReady, refreshRecap)
-    )
     LaunchedEffect(Unit) {
         try { repository.backfill() } catch (error: CancellationException) { throw error }
         catch (_: Exception) { /* Existing saved notes stay available in the journal. */ }
-        MemoryIndexWork.enqueue(context)
-    }
-    LaunchedEffect(periodKey, showBrief, observationsReady, lifecycle) {
-        if (!showBrief || !observationsReady) return@LaunchedEffect
-        lifecycle.repeatOnLifecycle(Lifecycle.State.RESUMED) {
-            snapshotFlow { briefInputs.refreshKey }.collect {
-                val input = briefInputs
-                try {
-                    search.brief(input.records, input.notes, periodKey, input.model, input.backupReady,
-                        refresh = input.request != lastRefresh).collect { briefUpdate = it }
-                    lastRefresh = input.request
-                } catch (error: CancellationException) {
-                    throw error
-                } catch (_: Exception) {
-                    briefUpdate = briefUpdate.copy(message = "Couldn’t open or refresh the brief.")
-                } finally {
-                    briefUpdate = briefUpdate.copy(refreshing = false)
-                }
-            }
-        }
     }
     LaunchedEffect(query, year, records.map { it.id to it.revision }) {
         answerJob?.cancel()
         answer = null
     }
-    LaunchedEffect(query, year, semanticReady, records.map { Triple(it.id, it.revision, it.vectorRevision) }) {
+    LaunchedEffect(query, year, records.map { it.id to it.revision }) {
         delay(250)
         try { matches = if (query.isBlank()) null else search.search(query, year) }
         catch (cancelled: CancellationException) { throw cancelled }
@@ -246,19 +199,7 @@ internal fun MemoryJournal(
     }
     Column(Modifier.fillMaxWidth(), verticalArrangement = Arrangement.spacedBy(10.dp)) {
         if (showBrief) {
-            JournalBriefCard(
-                date = selected,
-                period = recapPeriod,
-                brief = briefUpdate.brief,
-                hasSources = hasRecapSources,
-                sourcesReady = observationsReady,
-                building = briefUpdate.refreshing,
-                message = briefUpdate.message,
-                canRefresh = preferredModel != null || backupReady,
-                backupState = modelState,
-                onRefresh = { refreshRecap++ },
-                onDownload = summarizer::download
-            )
+            JournalBrief(selected, periodKey, selectedRecords, selectedNotes, observationsReady, imeVisible)
         }
         JournalMemoryPrompt()
         if (!showDay && !showSearch) {
@@ -280,8 +221,7 @@ internal fun MemoryJournal(
         TextButton({ showDay = false; onClearQuery(); answerJob?.cancel() }) {
             Text("Back to timeline")
         }
-        Text(if (semanticReady) "On-device search · $year · answers use your matching entries"
-            else "Keyword search · $year · $encoderStatus", color = PaperKeySubText,
+        Text("On-device keyword search · $year", color = PaperKeySubText,
             style = MaterialTheme.typography.labelSmall)
         answer?.let {
             Column(Modifier.fillMaxWidth().glassSurface(20).padding(16.dp),
@@ -379,10 +319,44 @@ internal fun MemoryJournal(
 
 private data class BriefInputs(
     val records: List<MemoryRecord>, val notes: List<Note>, val model: TextModel?,
-    val backupReady: Boolean, val request: Int
+    val request: Int
 ) {
     val refreshKey get() = listOf(records.map { it.id to it.revision },
-        notes.map { it.id to it.updatedAt }, model, backupReady, request)
+        notes.map { it.id to it.updatedAt }, model, request)
+}
+
+@Composable
+internal fun JournalBrief(date: LocalDate, periodKey: String, records: List<MemoryRecord>, notes: List<Note>,
+    sourcesReady: Boolean, imeVisible: Boolean, footer: @Composable () -> Unit = {}) {
+    val context = LocalContext.current
+    val lifecycle = LocalLifecycleOwner.current.lifecycle
+    val focus = LocalFocusManager.current
+    val keyboard = LocalSoftwareKeyboardController.current
+    val search = remember(context) { MemorySearch(context.applicationContext) }
+    val models = remember(context) { ModelStore.get(context) }
+    val model by models.active.collectAsState()
+    var request by remember(periodKey) { mutableIntStateOf(0) }
+    var lastRefresh by remember(periodKey) { mutableIntStateOf(0) }
+    var update by remember(periodKey) { mutableStateOf(BriefUpdate()) }
+    val inputs by rememberUpdatedState(BriefInputs(records, notes, model, request))
+    LaunchedEffect(periodKey, sourcesReady, lifecycle, imeVisible) {
+        if (!sourcesReady) return@LaunchedEffect
+        lifecycle.repeatOnLifecycle(Lifecycle.State.RESUMED) {
+            snapshotFlow { inputs.refreshKey }.collect {
+                val input = inputs
+                try {
+                    search.brief(input.records, input.notes, periodKey, input.model.takeUnless { imeVisible },
+                        refresh = input.request != lastRefresh).collect { update = it }
+                    if (!imeVisible) lastRefresh = input.request
+                } catch (error: CancellationException) { throw error }
+                catch (_: Exception) { update = update.copy(message = "Couldn’t open or refresh the brief.") }
+                finally { update = update.copy(refreshing = false) }
+            }
+        }
+    }
+    JournalBriefCard(date, periodKey.substringBefore(':'), update.brief, records.isNotEmpty() || notes.isNotEmpty(),
+        sourcesReady, update.refreshing, update.message, model != null,
+        onRefresh = { focus.clearFocus(force = true); keyboard?.hide(); request++ }, footer = footer)
 }
 
 @Composable
@@ -395,9 +369,8 @@ private fun JournalBriefCard(
     building: Boolean,
     message: String?,
     canRefresh: Boolean,
-    backupState: ModelState,
     onRefresh: () -> Unit,
-    onDownload: () -> Unit
+    footer: @Composable () -> Unit,
 ) {
     val dateLabel = when (period) {
         "Month" -> date.format(DateTimeFormatter.ofPattern("MMMM yyyy"))
@@ -448,20 +421,9 @@ private fun JournalBriefCard(
             if (!building && brief?.generated == false) {
                 Text("Journal overview", color = PaperKeySubText, style = MaterialTheme.typography.labelSmall)
             }
-            when {
-                backupState is ModelState.Downloading -> {
-                    LinearProgressIndicator(progress = { backupState.percent / 100f }, modifier = Modifier.fillMaxWidth())
-                    Text("Downloading backup summarizer · ${backupState.percent}%", color = PaperKeySubText,
-                        style = MaterialTheme.typography.labelSmall)
-                }
-                BriefModelStore.supported && backupState != ModelState.Ready && brief?.generated != true && !building -> {
-                    if (backupState is ModelState.Failed) {
-                        Text(backupState.message, color = PaperKeySubText, style = MaterialTheme.typography.labelSmall)
-                    }
-                    GemmaDownloadButton("Download backup summarizer (118 MB)", download = onDownload)
-                }
-            }
+            if (!canRefresh && !building) Text("Choose a downloaded text model in On-device AI to refresh this brief.", color = PaperKeySubText)
         }
+        footer()
     }
 }
 

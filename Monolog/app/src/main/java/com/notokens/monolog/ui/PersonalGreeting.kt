@@ -1,6 +1,7 @@
 package com.notokens.monolog.ui
 
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
@@ -14,7 +15,7 @@ import kotlinx.coroutines.delay
 @Composable
 internal fun ProfileNameField(value: String, onChange: (String) -> Unit) {
     OutlinedTextField(value, { onChange(limitProfileName(it)) }, Modifier.fillMaxWidth(),
-        label = { Text("What should we call you?") }, singleLine = true,
+        label = { Text("What should we call you?") }, singleLine = true, shape = CircleShape,
         supportingText = { Text("Optional · Up to 15 characters") })
 }
 

@@ -1,12 +1,6 @@
 package com.notokens.monolog.ime.ui
 
 import kotlinx.coroutines.launch
-import android.content.Intent
-import com.notokens.monolog.ai.ModelState
-import com.notokens.monolog.ai.ModelStore
-import com.notokens.monolog.ime.ChatAssist
-import com.notokens.monolog.ime.ChatAssistService
-import com.notokens.monolog.ime.ChatAssistSetupActivity
 import androidx.compose.animation.Crossfade
 import androidx.compose.animation.core.tween
 import com.notokens.monolog.data.KeyboardPlacement
@@ -129,6 +123,12 @@ internal fun MonologKeyboardView(
     onStartListening: () -> Unit,
     onPauseListening: () -> Unit,
     onDeleteVoxWord: () -> Unit,
+    voxPersonal: Boolean = false,
+    voxAudio: Boolean = false,
+    voxNotePreview: Boolean = false,
+    voxPrivateActions: Boolean = false,
+    onToggleVoxPersonal: () -> Unit = {},
+    onVoxAudio: () -> Unit = {},
     onRequestPermission: () -> Unit,
     onCharTyped: (String) -> Unit,
     onPasteText: (String) -> Unit = onCharTyped,
@@ -237,29 +237,6 @@ internal fun MonologKeyboardView(
     var dashboardOpen by remember(layoutSession) { mutableStateOf(false) }
     var dashboardClips by remember(layoutSession) { mutableStateOf(false) }
     var panel by remember(layoutSession) { mutableStateOf<KeyboardPanel?>(null) }
-    var chatOpen by remember(layoutSession) { mutableStateOf(false) }
-    val chatSession by ChatAssist.session.collectAsState()
-    val chatError by ChatAssist.failure.collectAsState()
-    val chatAllowed = !privateMode && !editorContext.isRestrictedField && !editorContext.isNumber && !editorContext.isEmail &&
-        !editorContext.packageName.isNullOrBlank() && editorContext.packageName != context.packageName
-    val chatHere = chatSession?.takeIf { chatAllowed && it.target == editorContext.packageName }
-    val chatModel = remember(context) { ModelStore.get(context) }
-    val chatModelActive by chatModel.active.collectAsState()
-    val chatModelState by chatModel.state.collectAsState()
-    val canStartChat = chatSession == null && chatModelActive?.isGguf == true && chatModelState is ModelState.Ready
-    fun startChatAssist() {
-        val target = editorContext.packageName ?: return
-        if (!chatAllowed || !canStartChat) return
-        chatOpen = false
-        runCatching {
-            context.startActivity(Intent(context, ChatAssistSetupActivity::class.java)
-                .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
-                .putExtra(ChatAssistService.TARGET, target))
-        }.onFailure {
-            ChatAssist.stop("Couldn’t open Android’s sharing setup.")
-            chatOpen = true
-        }
-    }
     val rescueAllowed = !privateMode && !editorContext.isRestrictedField
     val rescueBadge by com.notokens.monolog.ime.DraftRescue.hasBadge.collectAsState()
     var rescuePreview by remember(layoutSession) { mutableStateOf<com.notokens.monolog.ime.RescueDraft?>(null) }
@@ -340,13 +317,6 @@ internal fun MonologKeyboardView(
             DashboardTile.CLIPBOARD -> { panel = null; dashboardClips = true; dashboardOpen = true }
             DashboardTile.EDIT_TEXT -> { dashboardOpen = false; panel = KeyboardPanel.EDIT_TEXT }
             DashboardTile.LANGUAGE -> { dashboardOpen = false; panel = KeyboardPanel.LANGUAGES }
-            DashboardTile.CHAT_ASSIST -> {
-                dashboardOpen = false
-                if (chatAllowed) {
-                    panel = null
-                    if (canStartChat) startChatAssist() else chatOpen = true
-                }
-            }
             DashboardTile.APPEARANCE -> onAppearance()
             DashboardTile.TRANSLATE -> {
                 if (editorContext.isNumber) return
@@ -463,6 +433,12 @@ internal fun MonologKeyboardView(
                 onStartListening = onStartListening,
                 onPauseListening = onPauseListening,
                 onDeleteWord = onDeleteVoxWord,
+                personal = voxPersonal,
+                audioRecording = voxAudio,
+                savingSpokenNote = voxNotePreview,
+                privateActions = voxPrivateActions,
+                onTogglePersonal = onToggleVoxPersonal,
+                onAudioNote = onVoxAudio,
                 smartFilter = smartFilter,
                 onToggleSmartFilter = { keyboardScope.launch { settings.setSmartVoxFilter(!smartFilter) } },
                 contextEnabled = !privateMode,
@@ -487,26 +463,6 @@ internal fun MonologKeyboardView(
 
             if (aiAllowed && !isShortcutsOpen && searchQuery == null && !mediaWorkspace) {
                 KeyboardAiControls(ai, language)
-            }
-
-            if (chatOpen && chatAllowed && searchQuery == null && !isShortcutsOpen && !mediaWorkspace) {
-                ChatAssistPanel(
-                    Modifier.fillMaxWidth().padding(horizontal = 6.dp, vertical = 3.dp), chatHere, canStartChat,
-                    if (chatSession != null && chatHere == null) "Chat Assist is sharing a different app." else chatError,
-                    onStart = ::startChatAssist,
-                    onPause = ChatAssist::pause, onStop = {
-                        ChatAssist.stop()
-                        context.stopService(Intent(context, ChatAssistService::class.java))
-                        chatOpen = false
-                    }, onClose = { chatOpen = false }, onInsert = { text ->
-                        val active = ChatAssist.session.value
-                        if (text.isNotBlank() && active != null && !active.busy && !active.paused &&
-                            active.target == editorContext.packageName && ChatAssist.editor == active.target && active.reply == text) {
-                            onPasteText(text)
-                            chatOpen = false
-                        }
-                    }
-                )
             }
 
             BoxWithConstraints(Modifier.fillMaxWidth()) {
@@ -534,7 +490,6 @@ internal fun MonologKeyboardView(
                     onToggleShortcuts = onToggleShortcuts,
                     onCaptureContext = onCaptureContext,
                     onToggleDashboard = {
-                        chatOpen = false
                         dashboardOpen = !dashboardOpen
                         dashboardClips = false
                         userPinned = false
@@ -549,9 +504,6 @@ internal fun MonologKeyboardView(
                     onModeAction = if (swapVoxAndAi) onOpenSearch else onEnterVox,
                     toolbarAi = swapVoxAndAi,
                     isContextActive = !editorContext.isIncognito && (isShortcutsOpen || ScreenCaptureService.isReady),
-                    leading = {
-                        if (chatHere != null) ChatAssistToolbarButton(chatHere) { chatOpen = !chatOpen }
-                    },
                     suggestions = {
                         if (!dashboardOpen && !isShortcutsOpen && !showTranslation && searchQuery == null) {
                             val localActions = ai.inlineActions.ifEmpty { if (!hasInput) copiedActions else emptyList() }

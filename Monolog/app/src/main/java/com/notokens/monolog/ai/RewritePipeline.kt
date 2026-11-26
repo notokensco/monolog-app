@@ -57,11 +57,11 @@ internal object RewritePipeline {
 
     suspend fun respondOffline(context: Context, request: String, inline: Boolean = false): AiPreview {
         if (!AiText.isWritingRequest(request)) return askOffline(context, request,
-            selectedModelOnly = true, retryLanguageMismatch = !inline)
+            selectedModelOnly = true, retryLanguageMismatch = !inline, waitForModel = !inline)
         val prompt = "Follow the writing or editing request below. Keep the requested language and tone. " +
             "For edits, preserve the source meaning, names, dates, and numbers. " +
             "Return only the finished draft, without commentary.\n\nRequest: $request"
-        return when (val result = LocalAi.request(context, prompt, 160)) {
+        return when (val result = LocalAi.request(context, prompt, 160, waitForModel = !inline)) {
             is GemmaResult.Answer -> AiText.checkedWriting(request, result.text)?.let { edit(it, generated = true) }
                 ?: AiPreview("The offline model did not return a finished draft.")
             else -> AiPreview(modelMessage(result))
@@ -69,11 +69,11 @@ internal object RewritePipeline {
     }
 
     suspend fun askOffline(context: Context, question: String, evidence: String = "", selectedModelOnly: Boolean = false,
-        retryLanguageMismatch: Boolean = true): AiPreview {
+        retryLanguageMismatch: Boolean = true, waitForModel: Boolean = true): AiPreview {
         if (!selectedModelOnly) AiText.deviceAnswer(question)?.let { return AiPreview(it, insertable = true) }
         if (evidence.isBlank() && AiText.needsWeb(question)) return AiPreview("Use Search web for current information.")
         val instruction = AiText.answerPrompt(question, evidence)
-        val first = LocalAi.request(context, instruction, if (retryLanguageMismatch) 160 else 96)
+        val first = LocalAi.request(context, instruction, if (retryLanguageMismatch) 160 else 96, waitForModel = waitForModel)
         val result = if (retryLanguageMismatch && first is GemmaResult.Answer &&
             !AiText.usesReplyScript(question, first.text)) {
             LocalAi.request(context,
@@ -92,6 +92,7 @@ internal object RewritePipeline {
     private fun modelMessage(result: GemmaResult): String = when (result) {
         GemmaResult.Missing -> "Download a text model in Monolog Settings → On-device AI."
         GemmaResult.TimedOut -> "The offline text model took too long. Try again."
+        GemmaResult.Busy -> "The on-device model is already working. Try again shortly."
         GemmaResult.Empty -> "The offline text model returned an empty response. Try again."
         is GemmaResult.Failed -> "${result.status()}. Check Settings → On-device AI."
         is GemmaResult.Answer -> error("Expected a model failure")

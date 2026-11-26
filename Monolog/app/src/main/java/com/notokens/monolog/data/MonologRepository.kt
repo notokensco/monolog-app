@@ -24,7 +24,8 @@ interface MonologRepository {
     fun reminder(id: Long): Flow<Reminder?>
     fun nextReminder(now: Long): Flow<Reminder?>
     suspend fun photoImage(id: Long): ByteArray?
-    suspend fun saveNote(title: String, body: String, existing: Note? = null, photos: NotePhotoChanges? = null): Long
+    suspend fun saveNote(title: String, body: String, existing: Note? = null, photos: NotePhotoChanges? = null,
+        book: BookPlacement? = null): Long
     suspend fun deleteNote(note: Note)
     suspend fun deleteNotes(notes: List<Note>)
     suspend fun saveReminder(title: String, dueAt: Long, existing: Reminder? = null): Long
@@ -60,16 +61,18 @@ class RoomMonologRepository(private val context: Context) : MonologRepository {
         note.copy(title = "Unable to open note", body = "")
     }
 
-    override suspend fun saveNote(title: String, body: String, existing: Note?, photos: NotePhotoChanges?): Long {
+    override suspend fun saveNote(title: String, body: String, existing: Note?, photos: NotePhotoChanges?, book: BookPlacement?): Long {
         require(title.isNotBlank() || body.isNotBlank() || photos?.added?.isNotEmpty() == true || existing != null)
         val cleanTitle = title.trim().ifBlank { body.trim().lineSequence().first().take(60).ifBlank { "Untitled note" } }
         val savedId = database.withTransaction {
+            val current = existing?.let { database.notes().current(it.id) ?: error("This note was deleted") }
+            val bookId = if (book == null) current?.bookId else book.id?.let { database.books().get(it)?.id }
             val sealedTitle = JournalCipher.seal(cleanTitle, "note-title")
             val sealedBody = JournalCipher.seal(body, "note-body")
             val id = if (existing == null) {
-                database.notes().insert(Note(title = sealedTitle, body = sealedBody))
+                database.notes().insert(Note(title = sealedTitle, body = sealedBody, bookId = bookId))
             } else {
-                val updated = existing.copy(title = sealedTitle, body = sealedBody, updatedAt = System.currentTimeMillis())
+                val updated = existing.copy(title = sealedTitle, body = sealedBody, updatedAt = System.currentTimeMillis(), bookId = bookId)
                 check(database.notes().update(updated) == 1) { "This note was deleted" }
                 updated.id
             }
