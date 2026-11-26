@@ -48,7 +48,6 @@ import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.LocalFocusManager
 import androidx.compose.ui.platform.LocalSoftwareKeyboardController
 import androidx.compose.ui.platform.LocalView
-import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.semantics.LiveRegionMode
 import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.semantics.contentDescription
@@ -975,7 +974,7 @@ fun CompanionApp(
                                     SettingsPage.MODELS -> AiSettings()
                                     SettingsPage.CAPTURE -> {
                                         SettingsCard("Android accessibility shortcut") {
-                                            Text("Enable Monolog Keyboard Context for the M key. Enable Monolog Quick Capture shortcut separately if you want Android’s floating button.",
+                                            Text("Turn on Monolog Keyboard Context for the M key. Its optional Android shortcut lets you capture outside the keyboard.",
                                                 color = muted, style = MaterialTheme.typography.bodySmall)
                                             OutlinedButton(onClick = {
                                                 com.notokens.monolog.capture.CaptureSetupActivity.openAccessibilitySettings(context)
@@ -1192,7 +1191,7 @@ private fun ScreenFrame(
     }
 }
 
-private val MonologWordmark = FontFamily(Font(R.font.beth_ellen, FontWeight.Normal))
+internal val MonologWordmark = FontFamily(Font(R.font.beth_ellen, FontWeight.Normal))
 
 @Composable
 private fun ScreenFrameLayout(
@@ -1208,13 +1207,12 @@ private fun ScreenFrameLayout(
         Column(Modifier.widthIn(max = 640.dp).fillMaxWidth().fillMaxHeight().padding(horizontal = 16.dp)) {
             Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
                 if (onBack != null) IconControl(Glyph.BACK, "Back", onBack, frosted = true)
-                MonologLogo(Modifier.size(if (weatherDetails != null) 36.dp else 38.dp))
                 Text(
-                    stringResource(R.string.app_name), color = ink,
+                    "monolog", color = ink,
                     style = MaterialTheme.typography.titleLarge,
                     fontFamily = MonologWordmark, fontWeight = FontWeight.Normal,
-                    fontSize = if (weatherDetails != null) 17.sp else 19.sp,
-                    modifier = Modifier.weight(1f).padding(start = 4.dp, end = 4.dp),
+                    fontSize = if (weatherDetails != null) 21.sp else 23.sp,
+                    modifier = Modifier.weight(1f).padding(start = if (onBack == null) 0.dp else 4.dp, end = 4.dp),
                     maxLines = 1, overflow = TextOverflow.Ellipsis
                 )
                 if (weatherDetails != null) {

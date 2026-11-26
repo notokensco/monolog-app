@@ -28,10 +28,14 @@ import kotlinx.coroutines.flow.transformLatest
 private val Context.monologSettings by preferencesDataStore(name = "monolog_settings")
 
 enum class ThemeMode {
-    INK, PAPER, IRIS, OCEAN, TERRACOTTA, PHOTO, SYSTEM
+    INK, PAPER, IRIS, OCEAN, TERRACOTTA, PHOTO, SYSTEM;
+
+    companion object {
+        val DEFAULT = IRIS
+    }
 }
 
-data class Appearance(val theme: ThemeMode = ThemeMode.INK, val reduceTransparency: Boolean = false,
+data class Appearance(val theme: ThemeMode = ThemeMode.DEFAULT, val reduceTransparency: Boolean = false,
     val wallpaperRevision: Long = 0L)
 
 enum class KeyboardPlacement(val label: String) {
@@ -604,7 +608,7 @@ class SettingsStore(private val context: Context) {
     }.map {
         val theme = when (it[themeModeKey]) {
             "LIGHT" -> ThemeMode.PAPER
-            else -> ThemeMode.entries.firstOrNull { mode -> mode.name == it[themeModeKey] } ?: ThemeMode.INK
+            else -> ThemeMode.entries.firstOrNull { mode -> mode.name == it[themeModeKey] } ?: ThemeMode.DEFAULT
         }
         Appearance(theme, it[reduceTransparencyKey] ?: false, it[wallpaperRevisionKey] ?: 0L)
     }.distinctUntilChanged()

@@ -25,6 +25,7 @@ import kotlinx.coroutines.suspendCancellableCoroutine
 @Composable
 internal fun SystemAutofillStrip(suggestions: List<InlineSuggestion>) {
     val context = LocalContext.current
+    val haptics = LocalVibrationHaptics.current
     Row(Modifier.fillMaxWidth().height(46.dp).horizontalScroll(rememberScrollState()),
         horizontalArrangement = Arrangement.spacedBy(4.dp), verticalAlignment = Alignment.CenterVertically) {
         for (suggestion in suggestions) key(suggestion) {
@@ -35,7 +36,11 @@ internal fun SystemAutofillStrip(suggestions: List<InlineSuggestion>) {
                     }
                 }
             }
-            content?.let { view -> AndroidView(factory = { view }) }
+            content?.let { view ->
+                AndroidView(factory = { view }, update = { inline ->
+                    inline.setOnClickListener { triggerHapticFeedback(inline, enabled = haptics) }
+                })
+            }
         }
     }
 }

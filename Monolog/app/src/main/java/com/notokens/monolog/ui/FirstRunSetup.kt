@@ -191,7 +191,7 @@ internal fun FirstRunSetup(settings: SettingsStore, onRequestMic: () -> Unit, on
                     SetupAction("Keyboard Context", capture, "Enable screen capture") {
                         com.notokens.monolog.capture.CaptureSetupActivity.openAccessibilitySettings(context)
                     }
-                    Text("Enable Monolog Keyboard Context for the keyboard’s M key. For capture outside the keyboard, also enable the optional Monolog Quick Capture shortcut in Android Accessibility.",
+                    Text("Turn on Monolog Keyboard Context for the M key. Its optional Android shortcut lets you capture outside the keyboard.",
                         color = PaperKeySubText, style = MaterialTheme.typography.bodySmall)
                     SetupAction("Reminder notifications", notifications, "Enable notifications") {
                         requestNotifications.launch(Manifest.permission.POST_NOTIFICATIONS)

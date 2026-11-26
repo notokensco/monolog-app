@@ -195,6 +195,7 @@ internal fun KeyboardDashboard(
     clips: List<String>,
     images: ClipboardImages,
     screenshots: List<RecentScreenshot>,
+    onEnableScreenshotPaste: (() -> Unit)?,
     onPasteScreenshot: (RecentScreenshot) -> Unit,
     onPasteImage: (ClipboardImage) -> Unit,
     rowHeight: Dp,
@@ -284,6 +285,13 @@ internal fun KeyboardDashboard(
             Column(Modifier.fillMaxSize().verticalScroll(rememberScrollState())) {
                 val text = expandedText
                 val image = expandedImage
+                if (text == null && image == null && onEnableScreenshotPaste != null) {
+                    TextButton(onClick = onEnableScreenshotPaste) {
+                        MonologIcon(Glyph.CAPTURE, Modifier.size(16.dp), PaperAccentBlue)
+                        Spacer(Modifier.width(7.dp))
+                        Text("Enable screenshot paste")
+                    }
+                }
                 if (text == null && image == null && screenshots.isNotEmpty()) {
                     Text("Recent screenshots", Modifier.padding(start = 4.dp, top = 5.dp), color = PaperKeySubText, fontSize = 12.sp)
                     FlowRow(Modifier.fillMaxWidth().padding(vertical = 3.dp),

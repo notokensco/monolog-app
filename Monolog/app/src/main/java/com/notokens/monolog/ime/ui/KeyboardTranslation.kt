@@ -200,7 +200,7 @@ internal fun KeyboardTranslationBar(translation: KeyboardTranslation, onClose: (
         Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
             TranslationLanguageMenu("Source language", source, target, available, canChoose,
                 Modifier.weight(1f)) { source = it }
-            TextButton(onClick = {
+            TextButton(onClick = keyboardHapticAction {
                 val original = source
                 source = target
                 target = original
@@ -211,7 +211,7 @@ internal fun KeyboardTranslationBar(translation: KeyboardTranslation, onClose: (
             }
             TranslationLanguageMenu("Target language", target, source, available, canChoose,
                 Modifier.weight(1f)) { target = it }
-            IconControl(Glyph.CLOSE, "Close translation", onClose)
+            IconControl(Glyph.CLOSE, "Close translation", keyboardHapticAction(action = onClose))
         }
         Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
             Column(Modifier.weight(1f).padding(start = 6.dp, bottom = 3.dp)) {
@@ -229,7 +229,9 @@ internal fun KeyboardTranslationBar(translation: KeyboardTranslation, onClose: (
                 }
             }
             TextButton(
-                onClick = { if (translation.active) translation.finish(onClose) else translation.prepare(source, target) },
+                onClick = keyboardHapticAction {
+                    if (translation.active) translation.finish(onClose) else translation.prepare(source, target)
+                },
                 enabled = !translation.preparing && source != target,
                 modifier = Modifier.semantics {
                     contentDescription = if (translation.active) "Finish translation" else "Translate with Google"
@@ -246,7 +248,7 @@ private fun TranslationLanguageMenu(
 ) {
     var expanded by remember { mutableStateOf(false) }
     Box(modifier) {
-        TextButton(onClick = { expanded = true }, enabled = enabled,
+        TextButton(onClick = keyboardHapticAction { expanded = true }, enabled = enabled,
             modifier = Modifier.fillMaxWidth().semantics { contentDescription = "$label, ${languageName(code)}" },
             contentPadding = PaddingValues(horizontal = 4.dp)) {
             Text(languageName(code), maxLines = 1, overflow = TextOverflow.Ellipsis,
@@ -257,7 +259,7 @@ private fun TranslationLanguageMenu(
             properties = PopupProperties(focusable = false)) {
             for (language in available) {
                 DropdownMenuItem(text = { Text(languageName(language)) }, enabled = language != other,
-                    onClick = { expanded = false; onSelect(language) })
+                    onClick = keyboardHapticAction { expanded = false; onSelect(language) })
             }
         }
     }

@@ -14,12 +14,14 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.ImageBitmap
 import androidx.compose.ui.graphics.asImageBitmap
+import androidx.compose.ui.res.colorResource
+import com.notokens.monolog.R
 import com.notokens.monolog.data.Appearance
 import com.notokens.monolog.data.ThemeMode
 
-val LocalMonologDark = staticCompositionLocalOf { true }
+val LocalMonologDark = staticCompositionLocalOf { false }
 val LocalReduceTransparency = staticCompositionLocalOf { false }
-internal val LocalThemeMode = staticCompositionLocalOf { ThemeMode.INK }
+internal val LocalThemeMode = staticCompositionLocalOf { ThemeMode.DEFAULT }
 internal val LocalThemePhoto = staticCompositionLocalOf<ImageBitmap?> { null }
 
 private val InkColors = darkColorScheme(
@@ -77,7 +79,7 @@ fun MonologTheme(appearance: Appearance = Appearance(), content: @Composable () 
             }
     }
     val colors = when (appearance.theme) {
-        ThemeMode.IRIS -> PaperColors.copy(background = Color(0xFFE8EAFB), primary = Color(0xFF404F91))
+        ThemeMode.IRIS -> PaperColors.copy(background = colorResource(R.color.monolog_iris_background), primary = Color(0xFF404F91))
         ThemeMode.OCEAN -> PaperColors.copy(background = Color(0xFFE1F4F3), primary = Color(0xFF185F73),
             primaryContainer = Color(0xFFBDE5E7), onPrimaryContainer = Color(0xFF124A56),
             secondary = Color(0xFF326B53), surfaceContainer = Color(0xFFE8F5F2))

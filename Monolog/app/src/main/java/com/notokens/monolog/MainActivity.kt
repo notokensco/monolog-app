@@ -10,6 +10,7 @@ import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
 import androidx.activity.result.contract.ActivityResultContracts
+import androidx.compose.material3.MaterialTheme
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.SideEffect
 import androidx.compose.runtime.collectAsState
@@ -17,10 +18,13 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
+import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.res.colorResource
 import androidx.core.content.ContextCompat
 import androidx.core.view.WindowCompat
 import com.notokens.monolog.data.Appearance
 import com.notokens.monolog.data.SettingsStore
+import com.notokens.monolog.data.ThemeMode
 import com.notokens.monolog.ui.CompanionApp
 import com.notokens.monolog.ui.CompanionDestination
 import com.notokens.monolog.ui.MonologLaunchScreen
@@ -91,7 +95,8 @@ class MainActivity : ComponentActivity() {
             var showLaunch by remember { mutableStateOf(launchFromHome) }
             val launchVisible = showLaunch && destination == null && personalRoute == null && pairingUrl == null
             MonologTheme(appearance = current) {
-                val lightBars = !launchVisible && !LocalMonologDark.current
+                val irisSplash = launchVisible && current.theme == ThemeMode.SYSTEM
+                val lightBars = irisSplash || !LocalMonologDark.current
                 SideEffect {
                     readyToDraw = true
                     WindowCompat.getInsetsController(window, window.decorView).apply {
@@ -99,8 +104,13 @@ class MainActivity : ComponentActivity() {
                         isAppearanceLightNavigationBars = lightBars
                     }
                 }
-                if (launchVisible) MonologLaunchScreen { showLaunch = false }
-                else CompanionApp(
+                if (launchVisible) {
+                    val background = if (irisSplash) colorResource(R.color.monolog_iris_background)
+                        else MaterialTheme.colorScheme.background
+                    MonologLaunchScreen(background, ink = if (lightBars) Color.Black else Color.White) {
+                        showLaunch = false
+                    }
+                } else CompanionApp(
                     settings = settings,
                     appearance = current,
                     destination = destination,

@@ -49,7 +49,7 @@ internal fun DraftRescueButton(onClick: () -> Unit, badge: Boolean = false) {
         Modifier.padding(horizontal = 3.dp).size(44.dp, 28.dp)
             .clip(RoundedCornerShape(7.dp))
             .background(MaterialTheme.colorScheme.secondaryContainer)
-            .clickable(role = Role.Button, onClick = onClick)
+            .clickable(role = Role.Button, onClick = keyboardHapticAction(action = onClick))
             .semantics { contentDescription = "Open Draft Rescue" },
         contentAlignment = Alignment.Center
     ) {

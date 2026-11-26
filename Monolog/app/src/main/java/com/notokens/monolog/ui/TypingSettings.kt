@@ -143,25 +143,6 @@ internal fun KeyboardPrivacySettings(settings: SettingsStore) {
     val rescue by settings.draftRescue.collectAsState(false)
     val options by settings.keyboardOptions.collectAsState(KeyboardOption.entries.toSet())
     val screenshotsFolder by settings.screenshotFolder.collectAsState(null)
-    var screenshotError by remember { mutableStateOf(false) }
-    val chooseScreenshots = androidx.activity.compose.rememberLauncherForActivityResult(
-        androidx.activity.result.contract.ActivityResultContracts.StartActivityForResult()
-    ) { result ->
-        val uri = result.data?.data?.takeIf { result.resultCode == android.app.Activity.RESULT_OK }
-        if (uri != null) scope.launch {
-            try {
-                val read = android.content.Intent.FLAG_GRANT_READ_URI_PERMISSION
-                val resolver = context.contentResolver
-                resolver.takePersistableUriPermission(uri, read)
-                settings.setScreenshotFolder(uri.toString())
-                screenshotsFolder?.takeIf { it != uri.toString() }?.let { previous ->
-                    runCatching { resolver.releasePersistableUriPermission(android.net.Uri.parse(previous), read) }
-                }
-                screenshotError = false
-            } catch (cancelled: kotlinx.coroutines.CancellationException) { throw cancelled }
-            catch (_: Exception) { screenshotError = true }
-        }
-    }
     var confirm by remember { mutableStateOf(false) }
     if (confirm) AlertDialog(
         onDismissRequest = { confirm = false },
@@ -186,15 +167,7 @@ internal fun KeyboardPrivacySettings(settings: SettingsStore) {
         Text("Link your Screenshots folder to offer each new screenshot once and keep it in Clipboard for 15 minutes.",
             color = PaperKeySubText, style = MaterialTheme.typography.bodySmall)
         TextButton({
-            val picker = android.content.Intent(android.content.Intent.ACTION_OPEN_DOCUMENT_TREE)
-                .putExtra(android.content.Intent.EXTRA_LOCAL_ONLY, true)
-            screenshotsFolder?.let { folder ->
-                val tree = android.net.Uri.parse(folder)
-                picker.putExtra(android.provider.DocumentsContract.EXTRA_INITIAL_URI,
-                    android.provider.DocumentsContract.buildDocumentUriUsingTree(tree,
-                        android.provider.DocumentsContract.getTreeDocumentId(tree)))
-            }
-            chooseScreenshots.launch(picker)
+            context.startActivity(android.content.Intent(context, com.notokens.monolog.setup.ScreenshotFolderActivity::class.java))
         }) {
             Text(if (screenshotsFolder == null) "Choose Screenshots folder" else "Change Screenshots folder")
         }
@@ -203,11 +176,8 @@ internal fun KeyboardPrivacySettings(settings: SettingsStore) {
                 settings.setScreenshotFolder(null)
                 runCatching { context.contentResolver.releasePersistableUriPermission(android.net.Uri.parse(folder),
                     android.content.Intent.FLAG_GRANT_READ_URI_PERMISSION) }
-                screenshotError = false
             } }) { Text("Disconnect Screenshots folder") }
         }
-        if (screenshotError) Text("Couldn’t link that folder. Try choosing your Screenshots folder again.",
-            color = MaterialTheme.colorScheme.error)
         KeyboardSwitch("Draft Rescue", rescue) { scope.launch { settings.setDraftRescue(it) } }
         Text("Draft Rescue holds up to 10 drafts in memory for 30 minutes. Drafts disappear when Monolog is closed by Android.",
             color = PaperKeySubText, style = MaterialTheme.typography.bodySmall)

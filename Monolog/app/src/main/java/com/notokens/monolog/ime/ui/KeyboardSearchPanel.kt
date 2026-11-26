@@ -80,7 +80,7 @@ internal fun KeyboardSearchPanel(
         Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
             MonologIcon(Glyph.BOLT, Modifier.size(20.dp))
             Text("Monolog AI", Modifier.weight(1f), style = MaterialTheme.typography.titleMedium, color = PaperKeyText)
-            IconControl(Glyph.CLOSE, "Close search", onClose, frosted = true)
+            IconControl(Glyph.CLOSE, "Close search", keyboardHapticAction(action = onClose), frosted = true)
         }
         Row(
             Modifier.fillMaxWidth().glassSurface(20).padding(horizontal = 12.dp, vertical = 9.dp),
@@ -113,14 +113,14 @@ internal fun KeyboardSearchPanel(
             )
         }
         Row(verticalAlignment = Alignment.CenterVertically) {
-            if (ai.personalAllowed) TextButton(ai::togglePersonal,
+            if (ai.personalAllowed) TextButton(keyboardHapticAction(action = ai::togglePersonal),
                 modifier = Modifier.semantics { selected = ai.personal }) {
                 Text(if (ai.personal) "Personal on" else "Personal")
             }
-            if (ai.webAllowed) TextButton(ai::toggleWeb) {
+            if (ai.webAllowed) TextButton(keyboardHapticAction(action = ai::toggleWeb)) {
                 Text(if (ai.web) "Web on" else "Web off")
             }
-            TextButton({ ai.ask(query.text) }, enabled = query.text.isNotBlank() && !ai.busy) {
+            TextButton(keyboardHapticAction { ai.ask(query.text) }, enabled = query.text.isNotBlank() && !ai.busy) {
                 Text(if (ai.web) "Search" else "Ask")
             }
         }
@@ -133,16 +133,20 @@ internal fun KeyboardSearchPanel(
                     Text(WebLookup.searchProvider?.label ?: "In-keyboard search unavailable",
                         style = MaterialTheme.typography.labelSmall, color = PaperKeySubText)
                 }
-                Switch(checked = ai.safeSearch, onCheckedChange = ai::setWebSafeSearch,
+                val feedback = keyboardHapticAction { }
+                Switch(checked = ai.safeSearch, onCheckedChange = { checked ->
+                    feedback()
+                    ai.setWebSafeSearch(checked)
+                },
                     modifier = Modifier.semantics { contentDescription = "Safe Search" })
             }
             Row(horizontalArrangement = Arrangement.spacedBy(4.dp)) {
                 if (WebLookup.searchProvider != null) {
-                    TextButton({ ai.ask(query.text, WebSearchKind.IMAGES) }, enabled = query.text.isNotBlank() && !ai.busy) {
+                    TextButton(keyboardHapticAction { ai.ask(query.text, WebSearchKind.IMAGES) }, enabled = query.text.isNotBlank() && !ai.busy) {
                         Text("Images")
                     }
                 }
-                TextButton({ ai.searchWeb(query.text, ai.preview?.webKind ?: WebSearchKind.WEB) },
+                TextButton(keyboardHapticAction { ai.searchWeb(query.text, ai.preview?.webKind ?: WebSearchKind.WEB) },
                     enabled = query.text.isNotBlank()) { Text("More in browser") }
             }
         }
@@ -151,7 +155,7 @@ internal fun KeyboardSearchPanel(
             else if (ai.web && ai.webAllowed) AskWebResults(result, ai::apply)
         }
         if (ai.webAllowed && !ai.web && !ai.personal && ai.preview?.text == com.notokens.monolog.ai.AiText.UNKNOWN_ANSWER) {
-            TextButton({
+            TextButton(keyboardHapticAction {
                 ai.toggleWeb()
                 ai.ask(query.text)
             }, enabled = query.text.isNotBlank() && !ai.busy) {
@@ -160,7 +164,7 @@ internal fun KeyboardSearchPanel(
         }
         if (ai.personal && ai.personalAllowed) {
             for (match in ai.personalMatches) {
-                Column(Modifier.fillMaxWidth().clickable {
+                Column(Modifier.fillMaxWidth().clickable(onClick = keyboardHapticAction {
                     val intent = Intent(context, MainActivity::class.java).apply {
                         action = MainActivity.ACTION_OPEN_PERSONAL_MATCH
                         flags = Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TOP or Intent.FLAG_ACTIVITY_SINGLE_TOP
@@ -170,7 +174,7 @@ internal fun KeyboardSearchPanel(
                     }
                     context.startActivity(intent)
                     onClose()
-                }.padding(vertical = 6.dp)) {
+                }).padding(vertical = 6.dp)) {
                     Text(match.title, color = PaperKeyText, style = MaterialTheme.typography.titleSmall,
                         maxLines = 1, overflow = TextOverflow.Ellipsis)
                     Text(match.excerpt, color = PaperKeySubText, style = MaterialTheme.typography.bodySmall,

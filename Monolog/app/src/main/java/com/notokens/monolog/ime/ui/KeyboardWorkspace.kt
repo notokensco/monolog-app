@@ -55,13 +55,13 @@ internal fun PinnedKeyboardWidgets(
         Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.Start,
             verticalAlignment = Alignment.CenterVertically) {
             for (tile in tiles) {
-                Box(Modifier.weight(1f).height(48.dp).clickable(role = Role.Button) { onOpen(tile) }
+                Box(Modifier.weight(1f).height(48.dp).clickable(role = Role.Button, onClick = keyboardHapticAction { onOpen(tile) })
                     .semantics { contentDescription = tile.label }, contentAlignment = Alignment.Center) {
                     MonologIcon(tile.glyph, Modifier.size(20.dp), PaperKeyText)
                 }
             }
             if (onClose != null) {
-                Box(Modifier.width(34.dp).height(48.dp).clickable(role = Role.Button, onClick = onClose)
+                Box(Modifier.width(34.dp).height(48.dp).clickable(role = Role.Button, onClick = keyboardHapticAction(action = onClose))
                     .semantics { contentDescription = "Hide pinned widgets" }, contentAlignment = Alignment.Center) {
                     MonologIcon(Glyph.CLOSE, Modifier.size(18.dp), PaperKeyText)
                 }

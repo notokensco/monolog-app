@@ -78,17 +78,17 @@ internal fun KeyboardSuggestionStrip(
         val removal = ai.suggestionToRemove.takeIf { ai.dictionaryActionsAllowed }
         if (removal != null) {
             Row(Modifier.weight(1f), verticalAlignment = Alignment.CenterVertically) {
-                TextButton(ai::removeCurrentSuggestion, Modifier.weight(1f)) {
+                TextButton(keyboardHapticAction(action = ai::removeCurrentSuggestion), Modifier.weight(1f)) {
                     Text("Remove suggestion", maxLines = 1)
                 }
-                IconButton({ ai.requestSuggestionRemoval(null) }, Modifier.size(36.dp)) {
+                IconButton(keyboardHapticAction { ai.requestSuggestionRemoval(null) }, Modifier.size(36.dp)) {
                     MonologIcon(Glyph.CLOSE, Modifier.size(18.dp))
                 }
             }
             return@Row
         }
         if (ai.selectedDictionaryWord != null && ai.dictionaryActionsAllowed) {
-            TextButton(ai::addSelectedDictionaryWord, Modifier.weight(1f)) {
+            TextButton(keyboardHapticAction(action = ai::addSelectedDictionaryWord), Modifier.weight(1f)) {
                 Text("Add to dictionary", maxLines = 1)
             }
             return@Row
@@ -96,7 +96,7 @@ internal fun KeyboardSuggestionStrip(
         val shortcut = ai.shortcutSuggestion
         if (shortcut != null && !ai.rewriteOpen) {
             Row(Modifier.weight(1f).height(48.dp).glassSurface(13)
-                .clickable(role = Role.Button) { onShortcut(shortcut) }.padding(horizontal = 8.dp),
+                .clickable(role = Role.Button, onClick = keyboardHapticAction { onShortcut(shortcut) }).padding(horizontal = 8.dp),
                 horizontalArrangement = Arrangement.spacedBy(6.dp), verticalAlignment = Alignment.CenterVertically) {
                 val glyph = when (shortcut.page) {
                     ShortcutPage.ALARM -> Glyph.ALARM
@@ -138,7 +138,8 @@ internal fun KeyboardSuggestionStrip(
                         answer?.let { card ->
                             var expanded by remember(card) { mutableStateOf(false) }
                             Box {
-                                Text(card.text, Modifier.widthIn(max = 224.dp).clickable { expanded = true }.padding(horizontal = 8.dp),
+                                Text(card.text, Modifier.widthIn(max = 224.dp)
+                                    .clickable(onClick = keyboardHapticAction { expanded = true }).padding(horizontal = 8.dp),
                                     color = PaperKeyText, style = MaterialTheme.typography.labelMedium,
                                     maxLines = 2, overflow = TextOverflow.Ellipsis)
                                 DropdownMenu(expanded, { expanded = false }) {
@@ -151,11 +152,11 @@ internal fun KeyboardSuggestionStrip(
             }
         }
         if (grammarHint && ai.hasDraft && !ai.rewriteOpen && ai.toolbar == null && !ai.inlineBusy && shortcut == null) {
-            IconButton(onClick = { ai.openRewrite(language); ai.rewrite(RewriteStyle.POLISH, language) },
+            IconButton(onClick = keyboardHapticAction { ai.openRewrite(language); ai.rewrite(RewriteStyle.POLISH, language) },
                 modifier = Modifier.size(36.dp).semantics { contentDescription = "Polish grammar" }) {
                 MonologIcon(Glyph.REWRITE, Modifier.size(18.dp), MaterialTheme.colorScheme.primary)
             }
-        } else if (ai.hasDraft && !ai.rewriteOpen) IconButton(onClick = { ai.openRewrite(language) },
+        } else if (ai.hasDraft && !ai.rewriteOpen) IconButton(onClick = keyboardHapticAction { ai.openRewrite(language) },
             modifier = Modifier.size(36.dp).semantics { contentDescription = "Rewrite" }) {
             MonologIcon(Glyph.REWRITE, Modifier.size(22.dp))
         }
@@ -247,9 +248,9 @@ private fun SuggestionWord(
     onRemove: ((WordSuggestion) -> Unit)?
 ) {
     Box(Modifier.fillMaxHeight().combinedClickable(
-        onClick = { onWord(word) },
+        onClick = keyboardHapticAction { onWord(word) },
         onLongClick = if (onRemove != null && com.notokens.monolog.data.dictionaryWord(word.label) != null)
-            ({ onRemove(word) }) else null,
+            keyboardHapticAction(isLong = true) { onRemove(word) } else null,
         onLongClickLabel = "Remove suggestion"
     ).padding(horizontal = 6.dp), contentAlignment = Alignment.Center) {
         Text(word.label, color = PaperKeyText, style = style, textAlign = TextAlign.Center,
@@ -270,7 +271,7 @@ internal fun KeyboardAiControls(ai: ImeAi, language: KeyboardLanguage) {
 
 @Composable
 private fun ToolbarAction(label: String, enabled: Boolean = true, onClick: () -> Unit) {
-    Text(label, Modifier.sizeIn(minHeight = 36.dp).clickable(enabled = enabled, onClick = onClick)
+    Text(label, Modifier.sizeIn(minHeight = 36.dp).clickable(enabled = enabled, onClick = keyboardHapticAction(action = onClick))
         .padding(horizontal = 10.dp, vertical = 8.dp),
         style = MaterialTheme.typography.labelMedium,
         color = if (enabled) PaperKeyText else PaperKeyText.copy(alpha = .45f), maxLines = 1)
@@ -293,7 +294,7 @@ internal fun AiResultCard(preview: AiPreview, onApply: (AiPreview) -> Unit) {
                         overflow = TextOverflow.Ellipsis)
                     Text(source.snippet, style = MaterialTheme.typography.bodySmall, color = PaperKeyText, maxLines = 2,
                         overflow = TextOverflow.Ellipsis)
-                    TextButton({ runCatching { uriHandler.openUri(source.url) } }) { Text("View in browser") }
+                    TextButton(keyboardHapticAction { runCatching { uriHandler.openUri(source.url) } }) { Text("View in browser") }
                 }
             }
         }
@@ -310,9 +311,9 @@ internal fun AiResultCard(preview: AiPreview, onApply: (AiPreview) -> Unit) {
         }
         if (preview.sources.isNotEmpty() || preview.insertable) {
             Row(Modifier.horizontalScroll(rememberScrollState()), verticalAlignment = Alignment.CenterVertically) {
-                if (preview.insertable) TextButton({ onApply(preview) }) { Text("Use") }
+                if (preview.insertable) TextButton(keyboardHapticAction { onApply(preview) }) { Text("Use") }
                 preview.sources.forEach { source ->
-                    TextButton({ runCatching { uriHandler.openUri(source.url) } }) {
+                    TextButton(keyboardHapticAction { runCatching { uriHandler.openUri(source.url) } }) {
                         Text(source.title, maxLines = 1, overflow = TextOverflow.Ellipsis)
                     }
                 }
@@ -326,6 +327,6 @@ internal fun AiResultCard(preview: AiPreview, onApply: (AiPreview) -> Unit) {
 internal fun DeviceActionButtons(actions: List<com.notokens.monolog.ime.DeviceAction>) {
     val context = androidx.compose.ui.platform.LocalContext.current
     actions.forEach { action ->
-        TextButton(onClick = { action.open(context) }) { Text(action.label) }
+        TextButton(onClick = keyboardHapticAction { action.open(context) }) { Text(action.label) }
     }
 }

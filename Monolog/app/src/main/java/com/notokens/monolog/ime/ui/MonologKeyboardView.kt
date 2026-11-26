@@ -138,6 +138,7 @@ internal fun MonologKeyboardView(
     onEmojiSuggestion: (String, String) -> Boolean,
     onPasteImage: (ClipboardImage) -> Boolean,
     onPasteScreenshot: (RecentScreenshot) -> Boolean = { false },
+    onEnableScreenshotPaste: (() -> Unit)? = null,
     onPasteMedia: (KeyboardMedia.Item) -> Boolean,
     onLetterTyped: (String) -> Unit,
     onSwipe: (List<SwipePoint>) -> Unit,
@@ -549,18 +550,20 @@ internal fun MonologKeyboardView(
                                 systemAutofillSuggestions.isNotEmpty() ->
                                     SystemAutofillStrip(systemAutofillSuggestions)
                                 toolbarScreenshot != null -> Row(verticalAlignment = Alignment.CenterVertically) {
-                                    androidx.compose.material3.TextButton(onClick = {
+                                    androidx.compose.material3.TextButton(onClick = keyboardHapticAction {
                                         if (onPasteScreenshot(toolbarScreenshot)) dismissedScreenshot = true
                                     }, contentPadding = PaddingValues(horizontal = 5.dp)) {
                                         ScreenshotThumbnail(toolbarScreenshot, toolbar = true)
                                         Spacer(Modifier.width(5.dp))
                                         Text("Paste screenshot", maxLines = 1)
                                     }
-                                    IconControl(Glyph.CLOSE, "Dismiss screenshot preview", { dismissedScreenshot = true },
+                                    IconControl(Glyph.CLOSE, "Dismiss screenshot preview", keyboardHapticAction { dismissedScreenshot = true },
                                         modifier = Modifier.size(32.dp), compact = true)
                                 }
                                 aiAllowed && !privateMode && ai.rememberCandidate != null ->
-                                    androidx.compose.material3.TextButton(onClick = ai::saveRememberCandidate) { Text("Add to Remember?") }
+                                    androidx.compose.material3.TextButton(onClick = keyboardHapticAction(action = ai::saveRememberCandidate)) {
+                                        Text("Add to Remember?")
+                                    }
                                 rescueHint && rescueAllowed && !hasInput && panel == null ->
                                     DraftRescueButton(::openRescue)
                                 userPinned || (idle && !hasInput && shortcode == null && clipboardText == null && pinnedTiles.isNotEmpty()) ->
@@ -568,7 +571,7 @@ internal fun MonologKeyboardView(
                                 aiAllowed && ai.dictionaryActionsAllowed &&
                                     (ai.selectedDictionaryWord != null || ai.suggestionToRemove != null) ->
                                     KeyboardSuggestionStrip(ai, language, onSuggestedShortcut, showWords = showWords, showPolish = showPolish)
-                                mediaShortcut != null -> androidx.compose.material3.TextButton(onClick = {
+                                mediaShortcut != null -> androidx.compose.material3.TextButton(onClick = keyboardHapticAction {
                                     activate(if (mediaShortcut == KeyboardMediaTab.GIFS) DashboardTile.GIFS else DashboardTile.STICKERS)
                                 }) { Text(if (mediaShortcut == KeyboardMediaTab.GIFS) "Find GIFs" else "Find stickers") }
                                 shortcode != null -> EmojiShortcutStrip(
@@ -585,7 +588,7 @@ internal fun MonologKeyboardView(
                                 mediaVisible ->
                                     EmojiShortcutStrip(if (privateMode) emptyList() else recentEmoji, onPick = ::pickEmoji)
                                 idle && !hasInput && clipboardText != null ->
-                                    androidx.compose.material3.TextButton(onClick = { onPasteText(clipboardText) }) {
+                                    androidx.compose.material3.TextButton(onClick = keyboardHapticAction { onPasteText(clipboardText) }) {
                                         Text("Paste " + clipboardText.orEmpty().lineSequence().first().take(24), maxLines = 1)
                                     }
                                 aiAllowed -> KeyboardSuggestionStrip(ai, language, onSuggestedShortcut,
@@ -674,6 +677,7 @@ internal fun MonologKeyboardView(
                             clips = clips,
                             images = images,
                             screenshots = screenshots,
+                            onEnableScreenshotPaste = onEnableScreenshotPaste.takeIf { screenshotFolder == null },
                             onPasteScreenshot = { if (onPasteScreenshot(it)) dashboardOpen = false },
                             onPasteImage = { if (onPasteImage(it)) dashboardOpen = false },
                             rowHeight = rowHeight,

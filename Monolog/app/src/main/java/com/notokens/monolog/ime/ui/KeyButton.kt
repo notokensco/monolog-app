@@ -91,6 +91,16 @@ internal fun triggerHapticFeedback(view: View, isLong: Boolean = false, enabled:
 }
 
 @Composable
+internal fun keyboardHapticAction(isLong: Boolean = false, action: () -> Unit): () -> Unit {
+    val view = LocalView.current
+    if (!LocalVibrationHaptics.current) return action
+    return {
+        triggerHapticFeedback(view, isLong)
+        action()
+    }
+}
+
+@Composable
 fun KeyButton(
     modifier: Modifier = Modifier,
     text: String? = null,

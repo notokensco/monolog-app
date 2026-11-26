@@ -9,8 +9,8 @@ import androidx.compose.runtime.*
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.semantics.clearAndSetSemantics
 import androidx.compose.ui.semantics.contentDescription
-import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.unit.dp
@@ -24,12 +24,16 @@ import com.notokens.monolog.data.hobbyStreak
 import com.notokens.monolog.memory.MemoryRepository
 import com.notokens.monolog.ui.theme.PaperKeySubText
 import com.notokens.monolog.ui.theme.PaperKeyText
+import java.time.DayOfWeek
 import java.time.Duration
 import java.time.Instant
 import java.time.LocalDate
 import java.time.ZoneId
 import java.time.ZonedDateTime
+import java.time.format.TextStyle
+import java.time.temporal.TemporalAdjusters
 import java.text.NumberFormat
+import java.util.Locale
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
@@ -223,13 +227,26 @@ internal fun TodayHobbies(db: MonologDatabase, date: LocalDate) {
 
 @Composable
 private fun StreakWeek(days: Set<String>, date: LocalDate) {
-    val week = (6L downTo 0L).map { date.minusDays(it).toString() in days }
-    val completed = week.count { it }
+    val sunday = date.with(TemporalAdjusters.previousOrSame(DayOfWeek.SUNDAY))
     val colors = MaterialTheme.colorScheme
-    Row(Modifier.padding(top = 5.dp).semantics { contentDescription = "$completed of the last 7 days completed" },
-        horizontalArrangement = Arrangement.spacedBy(4.dp)) {
-        week.forEach { done ->
-            Box(Modifier.size(8.dp).background(if (done) colors.primary else colors.primary.copy(alpha = .17f), CircleShape))
+    Row(Modifier.padding(top = 5.dp), horizontalArrangement = Arrangement.spacedBy(4.dp)) {
+        repeat(7) { index ->
+            val day = sunday.plusDays(index.toLong())
+            val done = day.toString() in days
+            val weekday = day.dayOfWeek.getDisplayName(TextStyle.FULL, Locale.ENGLISH)
+            val status = when {
+                done -> "completed"
+                day.isAfter(date) -> "upcoming"
+                else -> "not completed"
+            }
+            Column(
+                Modifier.widthIn(min = 15.dp).clearAndSetSemantics { contentDescription = "$weekday, $status" },
+                horizontalAlignment = Alignment.CenterHorizontally,
+                verticalArrangement = Arrangement.spacedBy(2.dp)
+            ) {
+                Box(Modifier.size(8.dp).background(if (done) colors.primary else colors.primary.copy(alpha = .17f), CircleShape))
+                Text(weekday.take(1), color = PaperKeySubText, style = MaterialTheme.typography.labelSmall, maxLines = 1)
+            }
         }
     }
 }

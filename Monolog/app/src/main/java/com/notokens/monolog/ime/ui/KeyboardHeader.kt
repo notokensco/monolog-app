@@ -49,8 +49,8 @@ fun KeyboardHeader(
         Box(Modifier.size(44.dp).clip(RoundedCornerShape(12.dp))
             .combinedClickable(
                 role = Role.Button,
-                onClick = onToggleDashboard,
-                onLongClick = onHoldDashboard,
+                onClick = keyboardHapticAction(action = onToggleDashboard),
+                onLongClick = if (onHoldDashboard != null) keyboardHapticAction(isLong = true, action = onHoldDashboard) else null,
                 onLongClickLabel = "Show pinned widgets"
             ).semantics { contentDescription = dashboardLabel },
             contentAlignment = Alignment.Center
@@ -69,7 +69,7 @@ fun KeyboardHeader(
             IconControl(
                 if (toolbarAi) Glyph.BOLT else Glyph.MIC,
                 if (toolbarAi) "Open Monolog AI" else "Open Vox",
-                onModeAction
+                keyboardHapticAction(action = onModeAction)
             )
         }
         ContextKey(

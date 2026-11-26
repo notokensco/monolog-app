@@ -598,6 +598,7 @@ class MonologInputMethodService : LifecycleInputMethodService() {
                         onEmojiSuggestion = ::replaceWithEmoji,
                         onPasteImage = ::pasteImage,
                         onPasteScreenshot = ::pasteScreenshot,
+                        onEnableScreenshotPaste = ::openScreenshotFolder,
                         onPasteMedia = ::pasteMedia,
                         onLetterTyped = ::handleLetterTyped,
                         onSwipe = ::handleSwipe,
@@ -840,7 +841,7 @@ class MonologInputMethodService : LifecycleInputMethodService() {
         }
         val displayId = window?.window?.decorView?.display?.displayId ?: Display.DEFAULT_DISPLAY
         if (!ScreenCaptureService.capture(displayId, hideKeyboard = true)) {
-            Toast.makeText(this, "Enable the Quick Capture service in Accessibility settings", Toast.LENGTH_SHORT).show()
+            Toast.makeText(this, "Turn on Monolog Keyboard Context in Accessibility settings", Toast.LENGTH_SHORT).show()
         }
     }
 
@@ -871,6 +872,12 @@ class MonologInputMethodService : LifecycleInputMethodService() {
         }
         startActivity(intent)
         requestHideSelf(0)
+    }
+
+    private fun openScreenshotFolder() {
+        if (!editorActive || editorContext.isIncognito || editorContext.isRestrictedField) return
+        startActivity(Intent(this, com.notokens.monolog.setup.ScreenshotFolderActivity::class.java)
+            .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK))
     }
 
     private fun handleEnterVox() {

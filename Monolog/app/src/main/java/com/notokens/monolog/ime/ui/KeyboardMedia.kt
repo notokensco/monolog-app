@@ -302,8 +302,9 @@ internal fun KeyboardMediaSearchBar(
             if (editing) MediaIcon(Glyph.BACK, "Back to ${tab.label} results", onCancel)
             Row(Modifier.weight(1f).fillMaxHeight().combinedClickable(
                 enabled = enabled && (!editing || hasHistory), role = Role.Button,
-                onClickLabel = tab.searchLabel, onClick = { if (!editing) onSearch() },
-                onLongClickLabel = clearLabel, onLongClick = if (hasHistory) ::showClearAction else null
+                onClickLabel = tab.searchLabel, onClick = keyboardHapticAction { if (!editing) onSearch() },
+                onLongClickLabel = clearLabel,
+                onLongClick = if (hasHistory) keyboardHapticAction(isLong = true, action = ::showClearAction) else null
             ).padding(horizontal = 9.dp),
                 horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {
                 if (!editing) MonologIcon(Glyph.SEARCH, Modifier.size(17.dp), PaperKeySubText)
@@ -323,7 +324,7 @@ internal fun KeyboardMediaSearchBar(
         DropdownMenu(showHistory && hasHistory, { showHistory = false }, Modifier.widthIn(min = 176.dp, max = 280.dp)
             .heightIn(max = 250.dp), properties = PopupProperties(focusable = false)) {
             if (clearOnly) {
-                DropdownMenuItem(text = { Text(clearLabel) }, onClick = {
+                DropdownMenuItem(text = { Text(clearLabel) }, onClick = keyboardHapticAction {
                     onClearHistory()
                     showHistory = false
                 })
@@ -332,13 +333,14 @@ internal fun KeyboardMediaSearchBar(
                     color = PaperKeySubText, style = MaterialTheme.typography.labelMedium)
                 for (item in recent) {
                     Row(Modifier.fillMaxWidth().height(42.dp).combinedClickable(
-                        role = Role.Button, onClick = { showHistory = false; onRepeatSearch(item) },
-                        onLongClickLabel = clearLabel, onLongClick = ::showClearAction
+                        role = Role.Button, onClick = keyboardHapticAction { showHistory = false; onRepeatSearch(item) },
+                        onLongClickLabel = clearLabel,
+                        onLongClick = keyboardHapticAction(isLong = true, action = ::showClearAction)
                     ).padding(horizontal = 14.dp), verticalAlignment = Alignment.CenterVertically) {
                         Text(item, maxLines = 1, overflow = TextOverflow.Ellipsis)
                     }
                 }
-                DropdownMenuItem(text = { Text(clearLabel) }, onClick = {
+                DropdownMenuItem(text = { Text(clearLabel) }, onClick = keyboardHapticAction {
                     onClearHistory()
                     showHistory = false
                 })
@@ -410,7 +412,8 @@ internal fun KeyboardMediaPicker(
 private fun MediaIcon(glyph: Glyph, label: String, onClick: () -> Unit, onLongClickLabel: String? = null,
     onLongClick: (() -> Unit)? = null) {
     Box(Modifier.size(40.dp).clip(RoundedCornerShape(11.dp)).combinedClickable(
-        role = Role.Button, onClick = onClick, onLongClickLabel = onLongClickLabel, onLongClick = onLongClick)
+        role = Role.Button, onClick = keyboardHapticAction(action = onClick), onLongClickLabel = onLongClickLabel,
+        onLongClick = if (onLongClick != null) keyboardHapticAction(isLong = true, action = onLongClick) else null)
         .semantics { contentDescription = label }, contentAlignment = Alignment.Center) {
         MonologIcon(glyph, Modifier.size(17.dp), PaperKeyText)
     }
