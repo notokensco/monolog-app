@@ -1,0 +1,22 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 120 120">
+  <title>A small stack of written pages</title>
+  <defs>
+    <linearGradient id="words-light-1" x1="30" y1="22" x2="86" y2="98" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="#C0B3E4" />
+      <stop offset="0.45" stop-color="#A796DA" />
+      <stop offset="1" stop-color="#8F7CC1" />
+    </linearGradient>
+    <linearGradient id="words-light-2" x1="30" y1="22" x2="86" y2="98" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="#FFF4E7" />
+      <stop offset="0.45" stop-color="#FFF0DE" />
+      <stop offset="1" stop-color="#CDBCC4" />
+    </linearGradient>
+  </defs>
+  <path d="M19,60 a44,44 0 1,1 88,0 a44,44 0 1,1 -88,0 Z" fill="#DDD0F7" opacity="0.68" />
+  <path d="M26,102 a36,7 0 1,1 72,0 a36,7 0 1,1 -72,0 Z" fill="#8E75B9" opacity="0.26" />
+  <path d="M41,28 H81 Q90,28 90,37 V84 Q90,93 81,93 H41 Q32,93 32,84 V37 Q32,28 41,28 Z" fill="url(#words-light-1)" stroke="#454270" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" />
+  <path d="M33,21 H73 Q82,21 82,30 V77 Q82,86 73,86 H33 Q24,86 24,77 V30 Q24,21 33,21 Z" fill="url(#words-light-2)" stroke="#454270" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" />
+  <path d="M39 40h28 M39 51h23 M39 62h29 M39 73h16" fill="none" stroke="#816DA7" stroke-width="3.4" stroke-linecap="round" stroke-linejoin="round" />
+  <path d="M93,65 Q95.8,72.2 103,75 Q95.8,77.8 93,85 Q90.2,77.8 83,75 Q90.2,72.2 93,65 Z" fill="#EEAA7B" />
+  <path d="M97,20 Q98.68,24.32 103,26 Q98.68,27.68 97,32 Q95.32,27.68 91,26 Q95.32,24.32 97,20 Z" fill="#9F80D6" />
+</svg>

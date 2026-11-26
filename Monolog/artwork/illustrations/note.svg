@@ -1,0 +1,30 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 120 120">
+  <title>Coral pencil and note paper</title>
+  <defs>
+    <linearGradient id="note-light-1" x1="30" y1="22" x2="86" y2="98" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="#F4CDD0" />
+      <stop offset="0.45" stop-color="#F0B9BE" />
+      <stop offset="1" stop-color="#C394AD" />
+    </linearGradient>
+    <linearGradient id="note-light-2" x1="30" y1="22" x2="86" y2="98" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="#F9B9B1" />
+      <stop offset="0.45" stop-color="#F69E92" />
+      <stop offset="1" stop-color="#C7818E" />
+    </linearGradient>
+    <linearGradient id="note-light-3" x1="30" y1="22" x2="86" y2="98" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="#FFF5EC" />
+      <stop offset="0.45" stop-color="#FFF1E4" />
+      <stop offset="1" stop-color="#CDBCC8" />
+    </linearGradient>
+  </defs>
+  <path d="M14,59 a46,46 0 1,1 92,0 a46,46 0 1,1 -92,0 Z" fill="#FFDBD1" opacity="0.66" />
+  <path d="M18,104 a38,7 0 1,1 76,0 a38,7 0 1,1 -76,0 Z" fill="#B67C89" opacity="0.26" />
+  <path d="M29 28h49l15 16v51q0 6-6 6H29q-6 0-6-6V34q0-6 6-6Z" fill="url(#note-light-1)" stroke="#454270" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" />
+  <path d="M25 23h50l15 16v51q0 6-6 6H25q-6 0-6-6V29q0-6 6-6Z" fill="url(#note-light-3)" stroke="#454270" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" />
+  <path d="M75 24v15h15 M31 43h28 M31 53h23 M31 63h15" fill="none" stroke="#8E7DAA" stroke-width="2.8" stroke-linecap="round" stroke-linejoin="round" />
+  <path d="M46 84l6-16 40-39q4-4 8 0l6 6q4 4 0 8L65 82Z" fill="url(#note-light-2)" stroke="#454270" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" />
+  <path d="M46 84l6-16 13 14Z" fill="#FBDC9E" stroke="#454270" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" />
+  <path d="M46 84l3-8 6 6Z" fill="#454270" />
+  <path d="M87 34l14 14 M57 73l35-34" fill="none" stroke="#A25267" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" />
+  <path d="M102,64 Q103.96,69.04 109,71 Q103.96,72.96 102,78 Q100.04,72.96 95,71 Q100.04,69.04 102,64 Z" fill="#AA89D3" />
+</svg>

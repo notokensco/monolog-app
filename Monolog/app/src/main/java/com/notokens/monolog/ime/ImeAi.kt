@@ -22,6 +22,8 @@ import com.notokens.monolog.data.SettingsStore
 import com.notokens.monolog.data.dictionaryWord
 import com.notokens.monolog.data.asksAboutJournalCapture
 import com.notokens.monolog.data.matchingJournalEntries
+import com.notokens.monolog.data.RememberLanguage
+import com.notokens.monolog.data.RememberNotebook
 import com.notokens.monolog.capture.TagMetadataCodec
 import com.notokens.monolog.memory.MemorySearch
 import com.notokens.monolog.ime.shortcuts.ShortcutSuggestion
@@ -66,6 +68,10 @@ internal class ImeAi(
     private data class Draft(val text: String, val selected: Boolean, val afterCursor: Int = 0)
     var toolbarInput by mutableStateOf("")
         private set
+    var rememberCandidate by mutableStateOf<String?>(null)
+        private set
+    private var rememberedDraft: String? = null
+    private val rememberNotebook by lazy { RememberNotebook(context) }
     private var liveInput: String? = null
     var hasDraft by mutableStateOf(false)
         private set
@@ -172,6 +178,7 @@ internal class ImeAi(
     fun reset(initialCursor: Int = -1) {
         closePanel()
         clearDraft()
+        rememberedDraft = null
         if (initialCursor == 0) liveInput = ""
         web = false
         cursor = initialCursor
@@ -205,6 +212,7 @@ internal class ImeAi(
         selectedDictionaryWord = null
         suggestionToRemove = null
         shortcutSuggestion = null
+        rememberCandidate = null
         inlineActions = emptyList()
         cancelLookup()
         toolbar = null
@@ -255,6 +263,7 @@ internal class ImeAi(
         toolbarDraft = null
         swipeAlternatives = emptyList()
         inlineActions = emptyList()
+        rememberCandidate = null
         refreshDraft(typing = true)
     }
 
@@ -287,6 +296,9 @@ internal class ImeAi(
             if (ic !== connection() || !canShowLocalToolbar() || askOpen) return@launch
             val visibleText = selected.ifBlank { before + after }
             checkDraftPrivacy(if (selected.isEmpty()) visibleText else before + selected + after)
+            rememberCandidate = if (canUse() && personalSearchAllowed()) {
+                RememberLanguage.body(visibleText).takeUnless { it == rememberedDraft }
+            } else null
             fun wordEdge(char: Char?) = char != null && (char.isLetterOrDigit() || char in "'’-_")
             selectedDictionaryWord = dictionaryWord(selected)?.takeIf {
                 it == selected && dictionaryActionsAllowed && !wordEdge(before.lastOrNull()) && !wordEdge(after.firstOrNull()) &&
@@ -305,7 +317,9 @@ internal class ImeAi(
                 else suggestion.takeUnless { it.page == com.notokens.monolog.ime.shortcuts.ShortcutPage.NOTE }
                     ?.copy(title = "", body = "")
             }
-            if (typing && selected.isEmpty()) suggest(before.substringAfterLast('\n'), replaceTypedDraft = true)
+            if (typing && selected.isEmpty() && rememberCandidate == null) {
+                suggest(before.substringAfterLast('\n'), replaceTypedDraft = true)
+            }
             val language = settings.keyboardLanguage.first()
             wordSuggestions = if (selected.isEmpty()) {
                 val personalize = typingProfileAllowed()
@@ -326,6 +340,21 @@ internal class ImeAi(
                         .distinctBy { it.replacement.lowercase() }.take(3)
                 }
             }
+        }
+    }
+
+    fun saveRememberCandidate() {
+        val body = rememberCandidate ?: return
+        if (!canUse() || !personalSearchAllowed()) return
+        rememberCandidate = null
+        rememberedDraft = body
+        scope.launch {
+            val saved = try { rememberNotebook.save(body) }
+            catch (cancelled: CancellationException) { throw cancelled }
+            catch (_: Exception) { false }
+            if (!saved && rememberedDraft == body) rememberedDraft = null
+            android.widget.Toast.makeText(context,
+                if (saved) "Added to Remember" else "Couldn’t save to Remember.", android.widget.Toast.LENGTH_SHORT).show()
         }
     }
 
@@ -532,9 +561,11 @@ internal class ImeAi(
                 ?: it.reminderId?.let { id -> "reminder/$id" } ?: "day/${it.day}/${it.title}" }.take(6)
         }
         if (!personal || !personalAllowed) return AiPreview("Personal search is unavailable.")
+        val facts = rememberNotebook.recall(query)
+        if (!personal || !personalAllowed) return AiPreview("Personal search is unavailable.")
         personalMatches = matches
-        if (matches.isEmpty()) return AiPreview("No matching journal entries, notes, or captures.")
-        val evidence = matches.joinToString("\n") { "${it.title} ${it.excerpt}" }
+        if (matches.isEmpty() && facts.isEmpty()) return AiPreview("No matching journal entries, notes, or captures.")
+        val evidence = (facts.map { "Remember entry: $it" } + matches.map { "${it.title} ${it.excerpt}" }).joinToString("\n")
         return RewritePipeline.askOffline(context, query, evidence)
     }
 

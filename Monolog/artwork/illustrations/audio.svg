@@ -1,0 +1,22 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 120 120">
+  <title>Lavender microphone over a sound wave</title>
+  <defs>
+    <linearGradient id="audio-light-1" x1="30" y1="22" x2="86" y2="98" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="#CAB8F1" />
+      <stop offset="0.45" stop-color="#B59CEB" />
+      <stop offset="1" stop-color="#9980CD" />
+    </linearGradient>
+    <linearGradient id="audio-light-2" x1="30" y1="22" x2="86" y2="98" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="#F5E6FB" />
+      <stop offset="0.45" stop-color="#F1DCFA" />
+      <stop offset="1" stop-color="#C3ADD8" />
+    </linearGradient>
+  </defs>
+  <path d="M12,62 a46,46 0 1,1 92,0 a46,46 0 1,1 -92,0 Z" fill="#DDD2FF" opacity="0.66" />
+  <path d="M23,102 a37,7 0 1,1 74,0 a37,7 0 1,1 -74,0 Z" fill="#8B76BC" opacity="0.26" />
+  <path d="M16 58v10 M25 51v24 M34 59v8 M86 59v8 M95 51v24 M104 58v10" fill="none" stroke="#9481C9" stroke-width="2.7" stroke-linecap="round" stroke-linejoin="round" />
+  <path d="M60,22 H60 Q74,22 74,36 V62 Q74,76 60,76 H60 Q46,76 46,62 V36 Q46,22 60,22 Z" fill="url(#audio-light-1)" stroke="#454270" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round" />
+  <path d="M60,25 H60 Q70,25 70,35 V58 Q70,68 60,68 H60 Q50,68 50,58 V35 Q50,25 60,25 Z" fill="url(#audio-light-2)" />
+  <path d="M50 44h8 M50 52h8 M70 44h-8 M70 52h-8 M41 60v4q0 19 19 19t19-19v-4 M60 83v13 M50 96h20" fill="none" stroke="#454270" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" />
+  <path d="M88,18 Q89.96,23.04 95,25 Q89.96,26.96 88,32 Q86.04,26.96 81,25 Q86.04,23.04 88,18 Z" fill="#F2B180" />
+</svg>

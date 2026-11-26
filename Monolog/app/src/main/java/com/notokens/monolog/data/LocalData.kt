@@ -153,7 +153,7 @@ interface ReminderDao {
 @Database(entities = [Note::class, Reminder::class, NotePhoto::class, BackupRecord::class,
     BackupVersion::class, BackupArchive::class, MemoryRecord::class, MemoryRecap::class,
     MemoryBackupReceipt::class, YearDownload::class, YearDownloadNote::class, WebConnectReceipt::class, JournalBook::class,
-    JournalHobby::class, HobbyDay::class], version = 8, exportSchema = false)
+    JournalHobby::class, HobbyDay::class, RememberEntry::class], version = 9, exportSchema = false)
 abstract class MonologDatabase : RoomDatabase() {
     abstract fun notes(): NoteDao
     abstract fun books(): BookDao
@@ -163,6 +163,7 @@ abstract class MonologDatabase : RoomDatabase() {
     abstract fun memories(): MemoryDao
     internal abstract fun webConnect(): WebConnectDao
     internal abstract fun hobbies(): JournalHobbyDao
+    internal abstract fun rememberEntries(): RememberDao
 
     companion object {
         @Volatile private var instance: MonologDatabase? = null
@@ -253,11 +254,17 @@ abstract class MonologDatabase : RoomDatabase() {
             }
         }
 
+        internal val rememberMigration: Migration = object : Migration(8, 9) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                db.execSQL("CREATE TABLE IF NOT EXISTS remember_entries (id INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL, body TEXT NOT NULL, updatedAt INTEGER NOT NULL)")
+            }
+        }
+
         fun get(context: Context): MonologDatabase = instance ?: synchronized(this) {
             instance ?: Room.databaseBuilder(
                 context.applicationContext, MonologDatabase::class.java, "monolog.db"
             ).addMigrations(photosMigration, journalEncryption, backupMigration, memoryMigration, webConnectMigration,
-                booksMigration, hobbiesMigration)
+                booksMigration, hobbiesMigration, rememberMigration)
                 .build().also { instance = it }
         }
     }

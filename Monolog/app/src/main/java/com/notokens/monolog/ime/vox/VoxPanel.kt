@@ -105,6 +105,7 @@ fun VoxPanel(
     personal: Boolean = false,
     audioRecording: Boolean = false,
     savingSpokenNote: Boolean = false,
+    savingRemember: Boolean = false,
     privateActions: Boolean = false,
     onTogglePersonal: () -> Unit = {},
     onAudioNote: () -> Unit = {},
@@ -127,6 +128,7 @@ fun VoxPanel(
     val playDescription = when {
         !isListening -> "Start listening"
         audioRecording -> "Save audio note"
+        savingRemember -> "Save to Remember"
         savingSpokenNote -> "Save dictated note"
         personal -> "Search journal and library"
         else -> "Pause listening"
@@ -241,6 +243,7 @@ fun VoxPanel(
                         Text(
                             text = when {
                                 audioRecording -> "Recording audio note…"
+                                savingRemember -> "Listening for Remember…"
                                 savingSpokenNote -> "Listening for your note…"
                                 personal -> "Ask about your journal or library"
                                 else -> "Listening…"

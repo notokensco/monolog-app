@@ -1,0 +1,19 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 120 120">
+  <title>Struggling mood face</title>
+  <defs>
+    <linearGradient id="mood_struggling-light-1" x1="30" y1="22" x2="86" y2="98" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="#F9DFE5" />
+      <stop offset="0.45" stop-color="#F6D3DB" />
+      <stop offset="1" stop-color="#C7A7C2" />
+    </linearGradient>
+  </defs>
+  <path d="M15,62 a46,46 0 1,1 92,0 a46,46 0 1,1 -92,0 Z" fill="#F6D3DB" opacity="0.42" />
+  <path d="M24,65 a36,36 0 1,1 72,0 a36,36 0 1,1 -72,0 Z" fill="#BD789A" />
+  <path d="M24,58 a36,36 0 1,1 72,0 a36,36 0 1,1 -72,0 Z" fill="url(#mood_struggling-light-1)" stroke="#454270" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round" />
+  <path d="M29,66 a5,5 0 1,1 10,0 a5,5 0 1,1 -10,0 Z" fill="#BD789A" opacity="0.7" />
+  <path d="M81,66 a5,5 0 1,1 10,0 a5,5 0 1,1 -10,0 Z" fill="#BD789A" opacity="0.7" />
+  <path d="M32 54q7-4 13-3 M75 51q6-1 13 3" fill="none" stroke="#454270" stroke-width="4.6" stroke-linecap="round" stroke-linejoin="round" />
+  <path d="M47 75q6-9 13-5t13 2" fill="none" stroke="#454270" stroke-width="3.6" stroke-linecap="round" stroke-linejoin="round" />
+  <path d="M100,25 Q102.24,30.759999999999998 108,33 Q102.24,35.24 100,41 Q97.76,35.24 92,33 Q97.76,30.759999999999998 100,25 Z" fill="#BD789A" />
+  <path d="M19,77 Q20.4,80.6 24,82 Q20.4,83.4 19,87 Q17.6,83.4 14,82 Q17.6,80.6 19,77 Z" fill="#BD789A" />
+</svg>

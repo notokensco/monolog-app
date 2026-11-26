@@ -126,6 +126,7 @@ internal fun MonologKeyboardView(
     voxPersonal: Boolean = false,
     voxAudio: Boolean = false,
     voxNotePreview: Boolean = false,
+    voxRememberPreview: Boolean = false,
     voxPrivateActions: Boolean = false,
     onToggleVoxPersonal: () -> Unit = {},
     onVoxAudio: () -> Unit = {},
@@ -436,6 +437,7 @@ internal fun MonologKeyboardView(
                 personal = voxPersonal,
                 audioRecording = voxAudio,
                 savingSpokenNote = voxNotePreview,
+                savingRemember = voxRememberPreview,
                 privateActions = voxPrivateActions,
                 onTogglePersonal = onToggleVoxPersonal,
                 onAudioNote = onVoxAudio,
@@ -524,6 +526,8 @@ internal fun MonologKeyboardView(
                             when {
                                 systemAutofillSuggestions.isNotEmpty() ->
                                     SystemAutofillStrip(systemAutofillSuggestions)
+                                aiAllowed && !privateMode && ai.rememberCandidate != null ->
+                                    androidx.compose.material3.TextButton(onClick = ai::saveRememberCandidate) { Text("Add to Remember?") }
                                 rescueHint && rescueAllowed && !hasInput && panel == null ->
                                     DraftRescueButton(::openRescue)
                                 userPinned || (idle && !hasInput && shortcode == null && clipboardText == null && pinnedTiles.isNotEmpty()) ->

@@ -1,0 +1,29 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 120 120">
+  <title>A calendar with a highlighted day</title>
+  <defs>
+    <linearGradient id="calendar-light-1" x1="30" y1="22" x2="86" y2="98" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="#B8C5EC" />
+      <stop offset="0.45" stop-color="#9CAEE5" />
+      <stop offset="1" stop-color="#878DC9" />
+    </linearGradient>
+    <linearGradient id="calendar-light-2" x1="30" y1="22" x2="86" y2="98" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="#C5BEF3" />
+      <stop offset="0.45" stop-color="#AFA5EF" />
+      <stop offset="1" stop-color="#9586D0" />
+    </linearGradient>
+    <linearGradient id="calendar-light-3" x1="30" y1="22" x2="86" y2="98" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="#F5F1FF" />
+      <stop offset="0.45" stop-color="#F1ECFF" />
+      <stop offset="1" stop-color="#C3B9DB" />
+    </linearGradient>
+  </defs>
+  <path d="M17,62 a46,46 0 1,1 92,0 a46,46 0 1,1 -92,0 Z" fill="#D6DEFF" opacity="0.66" />
+  <path d="M19,102 a41,7 0 1,1 82,0 a41,7 0 1,1 -82,0 Z" fill="#858FBC" opacity="0.26" />
+  <path d="M34,27 H87 Q97,27 97,37 V87 Q97,97 87,97 H34 Q24,97 24,87 V37 Q24,27 34,27 Z" fill="url(#calendar-light-1)" stroke="#454270" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" />
+  <path d="M28,22 H81 Q91,22 91,32 V82 Q91,92 81,92 H28 Q18,92 18,82 V32 Q18,22 28,22 Z" fill="url(#calendar-light-3)" stroke="#454270" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" />
+  <path d="M19 35h71v10H19Z" fill="url(#calendar-light-2)" />
+  <path d="M35 18v15 M74 18v15" fill="none" stroke="#454270" stroke-width="5" stroke-linecap="round" stroke-linejoin="round" />
+  <path d="M52,53 H56 Q60,53 60,57 V61 Q60,65 56,65 H52 Q48,65 48,61 V57 Q48,53 52,53 Z" fill="#ECAB8E" />
+  <path d="M35 59h1 M73 59h1 M35 76h1 M53 76h1 M73 76h1" fill="none" stroke="#8781AF" stroke-width="5" stroke-linecap="round" stroke-linejoin="round" />
+  <path d="M103,46 Q104.96,51.04 110,53 Q104.96,54.96 103,60 Q101.04,54.96 96,53 Q101.04,51.04 103,46 Z" fill="#F5A97D" />
+</svg>

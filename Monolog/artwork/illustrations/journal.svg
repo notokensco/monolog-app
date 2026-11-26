@@ -1,0 +1,28 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 120 120">
+  <title>Lavender notebook and pressed leaf</title>
+  <defs>
+    <linearGradient id="journal-light-1" x1="30" y1="22" x2="86" y2="98" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="#BDAEE8" />
+      <stop offset="0.45" stop-color="#A38EDF" />
+      <stop offset="1" stop-color="#8C76C5" />
+    </linearGradient>
+    <linearGradient id="journal-light-2" x1="30" y1="22" x2="86" y2="98" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="#BFDFD3" />
+      <stop offset="0.45" stop-color="#A6D3C2" />
+      <stop offset="1" stop-color="#8EA7B0" />
+    </linearGradient>
+    <linearGradient id="journal-light-3" x1="30" y1="22" x2="86" y2="98" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="#F5ECFF" />
+      <stop offset="0.45" stop-color="#F1E5FF" />
+      <stop offset="1" stop-color="#C3B4DB" />
+    </linearGradient>
+  </defs>
+  <path d="M14,59 a46,46 0 1,1 92,0 a46,46 0 1,1 -92,0 Z" fill="#DCD6FF" opacity="0.62" />
+  <path d="M21,105 a39,7 0 1,1 78,0 a39,7 0 1,1 -78,0 Z" fill="#827BB9" opacity="0.26" />
+  <path d="M32 35 L91 30 Q98 30 98 39 L99 91 Q98 99 91 100 L33 105 Q24 105 25 96 L24 44 Q24 36 32 35Z" fill="url(#journal-light-1)" stroke="#454270" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" />
+  <path d="M29 30 L87 25 Q94 25 94 33 L94 87 Q94 94 87 95 L28 101 Q19 101 20 92 L19 39 Q19 31 29 30 Z" fill="url(#journal-light-3)" stroke="#454270" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" />
+  <path d="M31 31l1 69 M20 91q4-1 8-1l66-5" fill="none" stroke="#9D83C5" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" />
+  <path d="M49 79 Q72 58 77 42 M63 65 Q48 66 47 55 Q59 53 63 65 M68 61 Q69 47 83 49 Q82 60 68 61" fill="url(#journal-light-2)" stroke="#427E75" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" />
+  <path d="M104,14 Q105.96,19.04 111,21 Q105.96,22.96 104,28 Q102.04,22.96 97,21 Q102.04,19.04 104,14 Z" fill="#F4A775" />
+  <path d="M16,14 Q17.4,17.6 21,19 Q17.4,20.4 16,24 Q14.6,20.4 11,19 Q14.6,17.6 16,14 Z" fill="#8975C9" />
+</svg>

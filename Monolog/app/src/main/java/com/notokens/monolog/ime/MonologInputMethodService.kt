@@ -36,6 +36,8 @@ import com.notokens.monolog.ai.LocalAi
 import com.notokens.monolog.capture.CaptureSetupActivity
 import com.notokens.monolog.capture.ScreenCaptureService
 import com.notokens.monolog.data.SettingsStore
+import com.notokens.monolog.data.RememberLanguage
+import com.notokens.monolog.data.RememberNotebook
 import com.notokens.monolog.data.TypingMetric
 import com.notokens.monolog.data.VoiceInputEngine
 import com.notokens.monolog.ime.ui.ClipboardImage
@@ -463,8 +465,10 @@ class MonologInputMethodService : LifecycleInputMethodService() {
     private var voxPersonal by mutableStateOf(false)
     private var voxAudio by mutableStateOf(false)
     private var voxNotePreview by mutableStateOf(false)
+    private var voxRememberPreview by mutableStateOf(false)
     private var savingVoxAudio by mutableStateOf(false)
     private var spokenNote: String? = null
+    private var spokenRemember = false
     private var spokenQuestion = ""
     private var voxManualPause = false
 
@@ -493,10 +497,7 @@ class MonologInputMethodService : LifecycleInputMethodService() {
                     startVoxListening()
                     return
                 }
-                val body = spokenNote.orEmpty()
-                spokenNote = null
                 handleExitVox()
-                if (body.isNotBlank()) storeVoxNote(body)
             }
             voxPersonal && spokenQuestion.isNotBlank() -> {
                 val question = spokenQuestion.take(300)
@@ -583,6 +584,7 @@ class MonologInputMethodService : LifecycleInputMethodService() {
                         voxPersonal = voxPersonal,
                         voxAudio = voxAudio,
                         voxNotePreview = voxNotePreview,
+                        voxRememberPreview = voxRememberPreview,
                         voxPrivateActions = privacyCheckAllowed() && !savingVoxAudio,
                         onToggleVoxPersonal = ::toggleVoxPersonal,
                         onVoxAudio = ::toggleVoxAudio,
@@ -913,12 +915,15 @@ class MonologInputMethodService : LifecycleInputMethodService() {
         voxAudio = false
         voxPersonal = false
         voxNotePreview = false
+        voxRememberPreview = false
         spokenQuestion = ""
         val pendingNote = spokenNote
+        val saveToRemember = spokenRemember
         spokenNote = null
+        spokenRemember = false
         voxController.clearTranscript()
         ai.clearDraft()
-        if (!pendingNote.isNullOrBlank()) storeVoxNote(pendingNote)
+        if (!pendingNote.isNullOrBlank()) storeVoxNote(pendingNote, saveToRemember)
     }
 
     private fun toggleVoxPersonal() {
@@ -928,6 +933,7 @@ class MonologInputMethodService : LifecycleInputMethodService() {
         voxPersonal = !voxPersonal
         spokenQuestion = ""
         voxNotePreview = false
+        voxRememberPreview = false
         voxController.clearTranscript()
         startVoxListening()
     }
@@ -945,6 +951,7 @@ class MonologInputMethodService : LifecycleInputMethodService() {
         voxPersonal = false
         spokenQuestion = ""
         voxNotePreview = false
+        voxRememberPreview = false
         voxController.clearTranscript()
         voxAudio = true
         voxController.startNoteRecording()
@@ -1025,8 +1032,10 @@ class MonologInputMethodService : LifecycleInputMethodService() {
     }
 
     private fun updateVoxComposition(partial: String) {
-        val lead = privacyCheckAllowed() && com.notokens.monolog.ime.vox.VoxText.noteBody(partial) != null
-        voxNotePreview = spokenNote != null || (!voxPersonal && lead)
+        val allowed = privacyCheckAllowed()
+        val lead = allowed && com.notokens.monolog.ime.vox.VoxText.noteBody(partial) != null
+        voxRememberPreview = spokenRemember || (spokenNote == null && allowed && RememberLanguage.startsCommand(partial))
+        voxNotePreview = spokenNote != null || voxRememberPreview || (!voxPersonal && lead)
         voxController.extendedNotePause = voxNotePreview
         if (partial.isBlank() || !aiAllowed() || voxPersonal || voxNotePreview ||
             (privacyCheckAllowed() && com.notokens.monolog.ime.vox.VoxText.isNoteLead(partial))) {
@@ -1050,20 +1059,26 @@ class MonologInputMethodService : LifecycleInputMethodService() {
 
     private fun handleCommitTranscript(rawTranscript: String) {
         val transcript = rawTranscript.trim()
-        if (voxPersonal) {
+        val allowed = privacyCheckAllowed()
+        val remember = if (allowed && spokenNote == null) RememberLanguage.spokenBody(transcript) else null
+        if (voxPersonal && spokenNote == null && remember == null) {
             spokenQuestion = appendVoxText(spokenQuestion, transcript, 300)
             return
         }
-        val command = if (privacyCheckAllowed()) com.notokens.monolog.ime.vox.VoxText.noteBody(transcript) else null
-        if (spokenNote != null || command != null) {
+        val command = if (allowed) com.notokens.monolog.ime.vox.VoxText.noteBody(transcript) else null
+        if (spokenNote != null || remember != null || command != null) {
             clearVoxComposition()
-            spokenNote = appendVoxText(spokenNote.orEmpty(), command ?: transcript, 8_000)
+            spokenRemember = spokenRemember || remember != null
+            val limit = if (spokenRemember) RememberLanguage.MAX_LENGTH else 8_000
+            spokenNote = appendVoxText(spokenNote.orEmpty(), remember ?: command ?: transcript, limit)
             voxNotePreview = true
+            voxRememberPreview = spokenRemember
             voxController.extendedNotePause = true
-            if (spokenNote.orEmpty().length >= 8_000) voxController.pauseOrStopListening()
+            if (spokenNote.orEmpty().length >= limit) voxController.pauseOrStopListening()
             return
         }
         voxNotePreview = false
+        voxRememberPreview = false
         voxController.extendedNotePause = false
         markTyped(transcript)
         if (transcript.isNotBlank()) {
@@ -1083,11 +1098,15 @@ class MonologInputMethodService : LifecycleInputMethodService() {
     private fun appendVoxText(previous: String, next: String, limit: Int): String =
         listOf(previous, next).filter(String::isNotBlank).joinToString(" ").take(limit)
 
-    private fun storeVoxNote(body: String) {
+    private fun storeVoxNote(body: String, remember: Boolean) {
         if (!privacyCheckAllowed()) return
         settingsScope.launch {
             try {
-                writeVoxNote(body, null)
+                if (remember) {
+                    val saved = RememberNotebook(applicationContext).save(body)
+                    Toast.makeText(this@MonologInputMethodService,
+                        if (saved) "Added to Remember" else "Couldn’t save to Remember.", Toast.LENGTH_SHORT).show()
+                } else writeVoxNote(body, null)
             } catch (cancelled: kotlinx.coroutines.CancellationException) { throw cancelled }
             catch (_: Exception) { Toast.makeText(this@MonologInputMethodService, "Couldn’t save the note.", Toast.LENGTH_SHORT).show() }
         }

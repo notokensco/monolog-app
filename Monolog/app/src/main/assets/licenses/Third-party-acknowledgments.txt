@@ -13,6 +13,7 @@ Qwen3 and Qwen3.5 models by Qwen, using Q4_K_M quantizations distributed by Unsl
 Multilingual MiniLM by Sentence Transformers, using the Xenova quantized ONNX export and tokenizer. Apache License 2.0. https://huggingface.co/sentence-transformers/paraphrase-multilingual-MiniLM-L12-v2 · https://huggingface.co/Xenova/paraphrase-multilingual-MiniLM-L12-v2
 Google's Gemma 3 writing model and Gemma-based MediaPipe Text Summarizer. Gemma Terms of Use. https://ai.google.dev/gemma/terms · https://developers.google.com/edge/mediapipe/solutions/text/text_summarizer
 Noto 3D Emoji and Science Gothic fonts. SIL Open Font License 1.1. https://github.com/googlefonts/noto-emoji/releases/tag/v2026-09-24-unicode18_0 · https://github.com/googlefonts/science-gothic
+Beth Ellen font. Copyright 2018 The Beth Ellen Project Authors. SIL Open Font License 1.1. https://github.com/googlefonts/BethEllen
 Unicode emoji data. Unicode License. https://www.unicode.org/license.txt
 English dictionary contributors and the SCOWL project. See the bundled English dictionary notice for source and license terms.
 FLORES-200 and Dakshina. CC BY-SA 4.0. See Indic dictionaries and transliteration for dataset creators, sources and modifications.

@@ -55,6 +55,8 @@ import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.liveRegion
 import androidx.compose.ui.semantics.selected
 import androidx.compose.ui.semantics.semantics
+import androidx.compose.ui.text.font.Font
+import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.TextFieldValue
 import androidx.compose.ui.text.input.ImeAction
@@ -330,13 +332,13 @@ fun CompanionApp(
                             TodayMoodCheckIn(window, moments.orEmpty(), memories)
                             Spacer(Modifier.height(8.dp))
                             Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                                DashboardTile("Reminders", next?.title ?: "Nothing coming up", next?.let { DateFormat.getTimeInstance(DateFormat.SHORT).format(Date(it.dueAt)) } ?: "Add a reminder", Glyph.CLOCK, GlassAccent.BLUE, Modifier.weight(1f).heightIn(min = tileHeight)) { nav.navigate("reminders") }
-                                DashboardTile("Recent memory", latestNote?.title ?: "Your story starts here", "Open Journal", Glyph.BOOK, GlassAccent.LAVENDER, Modifier.weight(1f).heightIn(min = tileHeight)) { nav.navigate("journal") }
+                                DashboardTile("Reminders", next?.title ?: "Nothing coming up", next?.let { DateFormat.getTimeInstance(DateFormat.SHORT).format(Date(it.dueAt)) } ?: "Add a reminder", R.drawable.art_reminder, GlassAccent.BLUE, Modifier.weight(1f).heightIn(min = tileHeight)) { nav.navigate("reminders") }
+                                DashboardTile("Recent memory", latestNote?.title ?: "Your story starts here", "Open Journal", R.drawable.art_journal, GlassAccent.LAVENDER, Modifier.weight(1f).heightIn(min = tileHeight)) { nav.navigate("journal") }
                             }
                             Spacer(Modifier.height(8.dp))
                             Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                                DashboardTile("Context library", "Photos and notes", "View all", Glyph.LAYERS, GlassAccent.LAVENDER, Modifier.weight(1f).heightIn(min = tileHeight)) { nav.navigate("library") }
-                                DashboardTile("Add a note", "Make this space yours", "Write something", Glyph.PLUS, GlassAccent.BLUSH, Modifier.weight(1f).heightIn(min = tileHeight)) { nav.navigate("note/new") }
+                                DashboardTile("Context library", "Photos and notes", "View all", R.drawable.art_library, GlassAccent.LAVENDER, Modifier.weight(1f).heightIn(min = tileHeight)) { nav.navigate("library") }
+                                DashboardTile("Add a note", "Make this space yours", "Write something", R.drawable.art_note, GlassAccent.BLUSH, Modifier.weight(1f).heightIn(min = tileHeight)) { nav.navigate("note/new") }
                             }
                             Spacer(Modifier.height(8.dp))
                             TodayHobbies(database, window.date)
@@ -526,62 +528,65 @@ fun CompanionApp(
                                 contentPadding = PaddingValues(top = 20.dp, bottom = 24.dp),
                                 verticalArrangement = Arrangement.spacedBy(14.dp)) {
                                 item {
-                                    Column {
-                                        Row {
-                                            TextButton({ bookAction = if (selecting) "move" else "choose" }) {
-                                                Text(if (selecting) "Move to book" else activeBook?.name ?: "Books")
+                                    Box(Modifier.fillMaxWidth().glassSurface(24, GlassAccent.LAVENDER)) {
+                                        CardCornerArtwork(R.drawable.art_library, 132.dp, opacity = .78f)
+                                        Column(Modifier.fillMaxWidth().padding(start = 14.dp, end = 8.dp, bottom = 16.dp)) {
+                                            Row {
+                                                TextButton({ bookAction = if (selecting) "move" else "choose" }) {
+                                                    Text(if (selecting) "Move to book" else activeBook?.name ?: "Books")
+                                                }
+                                                if (activeBook != null && !selecting) TextButton({ bookAction = "delete" }) { Text("Delete book") }
                                             }
-                                            if (activeBook != null && !selecting) TextButton({ bookAction = "delete" }) { Text("Delete book") }
-                                        }
-                                        bookError?.let { Text(it, color = MaterialTheme.colorScheme.error) }
-                                        Row(verticalAlignment = Alignment.CenterVertically) {
-                                            Text("Context library", Modifier.weight(1f), color = ink,
-                                                style = MaterialTheme.typography.headlineSmall,
-                                                fontWeight = FontWeight.SemiBold)
-                                            LibraryViewOptions(compact, { compact = !compact }, sort, { sort = it }, enabled = !selecting)
-                                            Box {
-                                                IconControl(Glyph.PLUS, "Create", { creating = true }, frosted = true)
-                                                DropdownMenu(
-                                                    expanded = creating,
-                                                    onDismissRequest = { creating = false },
-                                                    shape = RoundedCornerShape(24.dp),
-                                                    containerColor = MaterialTheme.colorScheme.surfaceContainerHigh,
-                                                    border = BorderStroke(1.dp, PaperPillBorder)
-                                                ) {
-                                                    DropdownMenuItem(text = { Text("Note or photo") },
-                                                        leadingIcon = { MonologIcon(Glyph.PHOTO) },
-                                                        onClick = { creating = false; nav.navigate("note/new") })
-                                                    DropdownMenuItem(text = { Text("Journal entry") },
-                                                        leadingIcon = { MonologIcon(Glyph.BOOK) },
-                                                        onClick = { creating = false; nav.navigate("journal") })
-                                                    DropdownMenuItem(text = { Text("Reminder") },
-                                                        leadingIcon = { MonologIcon(Glyph.BELL) },
-                                                        onClick = { creating = false; nav.navigate("reminders") })
-                                                    DropdownMenuItem(text = { Text("Capture screen") },
-                                                        leadingIcon = { MonologIcon(Glyph.CAPTURE) }, enabled = !capturePending,
-                                                        onClick = {
-                                                            creating = false
-                                                            if (!capturePending) screenScope.launch {
-                                                                capturePending = true
-                                                                try {
-                                                                    focusManager.clearFocus(force = true)
-                                                                    keyboard?.hide()
-                                                                    val ready = withTimeoutOrNull(1_500) {
-                                                                        snapshotFlow { imeInsets.getBottom(density) == 0 }.first { it }
-                                                                    } == true
-                                                                    if (ready && view.hasWindowFocus()) {
-                                                                        captureToJournal(context, settings) { copyCompanionWindow(view) }
+                                            bookError?.let { Text(it, color = MaterialTheme.colorScheme.error) }
+                                            Row(verticalAlignment = Alignment.CenterVertically) {
+                                                Text("Context library", Modifier.weight(1f), color = ink,
+                                                    style = MaterialTheme.typography.headlineSmall,
+                                                    fontWeight = FontWeight.SemiBold)
+                                                LibraryViewOptions(compact, { compact = !compact }, sort, { sort = it }, enabled = !selecting)
+                                                Box {
+                                                    IconControl(Glyph.PLUS, "Create", { creating = true }, frosted = true)
+                                                    DropdownMenu(
+                                                        expanded = creating,
+                                                        onDismissRequest = { creating = false },
+                                                        shape = RoundedCornerShape(24.dp),
+                                                        containerColor = MaterialTheme.colorScheme.surfaceContainerHigh,
+                                                        border = BorderStroke(1.dp, PaperPillBorder)
+                                                    ) {
+                                                        DropdownMenuItem(text = { Text("Note or photo") },
+                                                            leadingIcon = { MonologIcon(Glyph.PHOTO) },
+                                                            onClick = { creating = false; nav.navigate("note/new") })
+                                                        DropdownMenuItem(text = { Text("Journal entry") },
+                                                            leadingIcon = { MonologIcon(Glyph.BOOK) },
+                                                            onClick = { creating = false; nav.navigate("journal") })
+                                                        DropdownMenuItem(text = { Text("Reminder") },
+                                                            leadingIcon = { MonologIcon(Glyph.BELL) },
+                                                            onClick = { creating = false; nav.navigate("reminders") })
+                                                        DropdownMenuItem(text = { Text("Capture screen") },
+                                                            leadingIcon = { MonologIcon(Glyph.CAPTURE) }, enabled = !capturePending,
+                                                            onClick = {
+                                                                creating = false
+                                                                if (!capturePending) screenScope.launch {
+                                                                    capturePending = true
+                                                                    try {
+                                                                        focusManager.clearFocus(force = true)
+                                                                        keyboard?.hide()
+                                                                        val ready = withTimeoutOrNull(1_500) {
+                                                                            snapshotFlow { imeInsets.getBottom(density) == 0 }.first { it }
+                                                                        } == true
+                                                                        if (ready && view.hasWindowFocus()) {
+                                                                            captureToJournal(context, settings) { copyCompanionWindow(view) }
+                                                                        }
+                                                                    } finally {
+                                                                        capturePending = false
                                                                     }
-                                                                } finally {
-                                                                    capturePending = false
                                                                 }
-                                                            }
-                                                        })
+                                                            })
+                                                    }
                                                 }
                                             }
+                                            Text("Saved moments, ready when you need them", Modifier.fillMaxWidth(.72f), color = muted,
+                                                style = MaterialTheme.typography.bodyMedium)
                                         }
-                                        Text("Saved moments, ready when you need them", color = muted,
-                                            style = MaterialTheme.typography.bodyMedium)
                                     }
                                 }
                                 answer?.let { result ->
@@ -604,7 +609,12 @@ fun CompanionApp(
                                 }
                                 if (entries.isEmpty()) item {
                                     EmptyCard(if (query.isNotBlank()) "No matching memories" else "Your memories start here",
-                                        if (query.isNotBlank()) "Try another search or filter." else "Tap + to add a note or photo. Use M on the keyboard to capture a screen.")
+                                        if (query.isNotBlank()) "Try another search or filter." else "Tap + to add a note or photo. Use M on the keyboard to capture a screen.",
+                                        artwork = when (filter) {
+                                            "Voice" -> R.drawable.art_audio
+                                            "Photos", "Screenshots" -> R.drawable.art_library
+                                            else -> R.drawable.art_note
+                                        })
                                 }
                                 item { ArchivedYearsLink { nav.navigate(SettingsPage.ACCOUNT.route) } }
                                 items(entries.chunked(if (compact) 1 else 2), key = { row -> row.first().id }) { row ->
@@ -1182,6 +1192,8 @@ private fun ScreenFrame(
     }
 }
 
+private val MonologWordmark = FontFamily(Font(R.font.beth_ellen, FontWeight.Normal))
+
 @Composable
 private fun ScreenFrameLayout(
     onBack: (() -> Unit)?,
@@ -1199,9 +1211,10 @@ private fun ScreenFrameLayout(
                 MonologLogo(Modifier.size(if (weatherDetails != null) 36.dp else 38.dp))
                 Text(
                     stringResource(R.string.app_name), color = ink,
-                    style = if (weatherDetails != null) MaterialTheme.typography.titleLarge.copy(fontSize = 20.sp)
-                        else MaterialTheme.typography.titleLarge,
-                    fontWeight = FontWeight.SemiBold, modifier = Modifier.weight(1f).padding(end = 4.dp),
+                    style = MaterialTheme.typography.titleLarge,
+                    fontFamily = MonologWordmark, fontWeight = FontWeight.Normal,
+                    fontSize = if (weatherDetails != null) 17.sp else 19.sp,
+                    modifier = Modifier.weight(1f).padding(start = 4.dp, end = 4.dp),
                     maxLines = 1, overflow = TextOverflow.Ellipsis
                 )
                 if (weatherDetails != null) {
@@ -1307,27 +1320,34 @@ private fun ThemeChoice(label: String, description: String, icon: Glyph, selecte
 }
 
 @Composable
-private fun DashboardTile(title: String, body: String, footer: String, icon: Glyph, accent: GlassAccent, modifier: Modifier, onClick: () -> Unit) {
-    Column(modifier.glassSurface(24, accent).clickable(onClick = onClick).padding(12.dp)) {
-        IconBadge(icon)
-        Spacer(Modifier.height(4.dp))
-        Text(title, color = ink, fontWeight = FontWeight.SemiBold, style = MaterialTheme.typography.titleSmall)
-        Spacer(Modifier.height(4.dp))
-        Text(body, color = muted, style = MaterialTheme.typography.bodyMedium, maxLines = 2, overflow = TextOverflow.Ellipsis)
-        Spacer(Modifier.height(8.dp))
-        Row(horizontalArrangement = Arrangement.spacedBy(6.dp), verticalAlignment = Alignment.CenterVertically) {
-            Text(footer, color = PaperAccentBlue, style = MaterialTheme.typography.labelMedium, maxLines = 2)
-            MonologIcon(Glyph.ARROW, Modifier.size(12.dp), PaperAccentBlue)
+private fun DashboardTile(title: String, body: String, footer: String, artwork: Int, accent: GlassAccent, modifier: Modifier, onClick: () -> Unit) {
+    Box(modifier.glassSurface(24, accent).clickable(onClick = onClick)) {
+        CardCornerArtwork(artwork, 112.dp)
+        Column(Modifier.fillMaxWidth().padding(start = 13.dp, top = 13.dp, end = 10.dp, bottom = 12.dp)) {
+            Text(title, color = ink, fontWeight = FontWeight.SemiBold, style = MaterialTheme.typography.titleSmall)
+            Spacer(Modifier.height(12.dp))
+            Column(Modifier.fillMaxWidth(.60f), verticalArrangement = Arrangement.spacedBy(9.dp)) {
+                Text(body, color = muted, style = MaterialTheme.typography.bodySmall, maxLines = 2,
+                    overflow = TextOverflow.Ellipsis)
+                Row(horizontalArrangement = Arrangement.spacedBy(3.dp), verticalAlignment = Alignment.CenterVertically) {
+                    Text(footer, Modifier.weight(1f, fill = false), color = PaperAccentBlue,
+                        style = MaterialTheme.typography.labelMedium, maxLines = 2, overflow = TextOverflow.Ellipsis)
+                    MonologIcon(Glyph.ARROW, Modifier.size(12.dp), PaperAccentBlue)
+                }
+            }
         }
     }
 }
 
 @Composable
-private fun EmptyCard(title: String, body: String) {
-    Column(Modifier.fillMaxWidth().glassSurface(24).padding(22.dp)) {
-        Text(title, color = ink, style = MaterialTheme.typography.titleMedium)
-        Spacer(Modifier.height(8.dp))
-        Text(body, color = muted)
+private fun EmptyCard(title: String, body: String, artwork: Int? = null) {
+    Box(Modifier.fillMaxWidth().glassSurface(24).heightIn(min = if (artwork == null) 0.dp else 116.dp)) {
+        if (artwork != null) CardCornerArtwork(artwork, 126.dp, opacity = .86f)
+        Column(Modifier.fillMaxWidth(if (artwork == null) 1f else .76f).padding(20.dp)) {
+            Text(title, color = ink, style = MaterialTheme.typography.titleMedium)
+            Spacer(Modifier.height(8.dp))
+            Text(body, color = muted)
+        }
     }
 }
 
@@ -1395,9 +1415,8 @@ private fun NoteTile(
             onClick = onClick
         )
         .semantics { if (selecting) selected = isSelected }
-        .padding(12.dp)
     if (compact) {
-        Row(tile, horizontalArrangement = Arrangement.spacedBy(12.dp), verticalAlignment = Alignment.CenterVertically) {
+        Row(tile.padding(12.dp), horizontalArrangement = Arrangement.spacedBy(12.dp), verticalAlignment = Alignment.CenterVertically) {
             if (photos.isNotEmpty()) {
                 JournalPhotoImage(
                     JournalPhoto.Saved(photos.first().id), "Attached photo",
@@ -1405,7 +1424,8 @@ private fun NoteTile(
                     contentScale = ContentScale.Crop, thumbnailSize = 48.dp
                 )
             } else {
-                IconBadge(if (audio != null || decoded.bottomIsVoice) Glyph.MIC else Glyph.PAPER)
+                ScreenArtwork(if (audio != null || decoded.bottomIsVoice) R.drawable.art_audio else R.drawable.art_note,
+                    Modifier.size(40.dp))
             }
             Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(2.dp)) {
                 Text(note.title, color = ink, style = MaterialTheme.typography.titleSmall,
@@ -1418,116 +1438,114 @@ private fun NoteTile(
         return
     }
 
-    Column(
-        Modifier.heightIn(min = 140.dp).then(tile),
-        verticalArrangement = Arrangement.SpaceBetween
-    ) {
-        Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-            if (photos.isNotEmpty()) {
-                Box(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .height(148.dp)
-                        .clip(RoundedCornerShape(14.dp))
-                ) {
-                    JournalPhotoImage(
-                        JournalPhoto.Saved(photos.first().id),
-                        "Attached photo",
-                        Modifier.fillMaxSize(),
-                        contentScale = ContentScale.Crop,
-                        thumbnailSize = 210.dp
-                    )
-                    if (decoded.tags.isNotEmpty() || decoded.bottomIsVoice) {
+    val noteOnly = photos.isEmpty() && audio == null
+    Box(Modifier.heightIn(min = 140.dp).then(tile), propagateMinConstraints = true) {
+        if (noteOnly) CardCornerArtwork(if (decoded.bottomIsVoice) R.drawable.art_audio else R.drawable.art_note,
+            98.dp, opacity = .70f)
+        Column(Modifier.fillMaxWidth().padding(12.dp), verticalArrangement = Arrangement.SpaceBetween) {
+            Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                if (photos.isNotEmpty()) {
+                    Box(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .height(148.dp)
+                            .clip(RoundedCornerShape(14.dp))
+                    ) {
+                        JournalPhotoImage(
+                            JournalPhoto.Saved(photos.first().id),
+                            "Attached photo",
+                            Modifier.fillMaxSize(),
+                            contentScale = ContentScale.Crop,
+                            thumbnailSize = 210.dp
+                        )
+                        if (decoded.tags.isNotEmpty() || decoded.bottomIsVoice) {
+                            Surface(
+                                shape = RoundedCornerShape(8.dp),
+                                color = Color.Black.copy(alpha = 0.72f),
+                                modifier = Modifier
+                                    .align(Alignment.TopEnd)
+                                    .padding(6.dp)
+                            ) {
+                                Row(
+                                    modifier = Modifier.padding(horizontal = 6.dp, vertical = 3.dp),
+                                    verticalAlignment = Alignment.CenterVertically,
+                                    horizontalArrangement = Arrangement.spacedBy(4.dp)
+                                ) {
+                                    if (decoded.bottomIsVoice || decoded.tags.any { it.isVoice }) {
+                                        MonologIcon(Glyph.MIC, Modifier.size(10.dp), PaperAccentBlue)
+                                    } else {
+                                        MonologIcon(Glyph.PIN, Modifier.size(10.dp), PaperAccentBlue)
+                                    }
+                                    Text(
+                                        if (decoded.tags.isNotEmpty()) "${decoded.tags.size}" else "Voice",
+                                        color = Color.White,
+                                        fontSize = 10.sp,
+                                        fontWeight = FontWeight.SemiBold
+                                    )
+                                }
+                            }
+                        }
+                    }
+                } else if (audio != null) {
+                    Box(Modifier.fillMaxWidth().height(106.dp).glassSurface(17, GlassAccent.LAVENDER),
+                        contentAlignment = Alignment.Center) {
+                        CardCornerArtwork(R.drawable.art_audio, 98.dp, opacity = .38f)
+                        if (selecting) MonologIcon(Glyph.MIC)
+                        else VoiceNotePlayback(audio, "Play audio note", onLongClick = onSelect)
+                    }
+                }
+                Text(note.title, color = ink, style = MaterialTheme.typography.titleSmall,
+                    fontWeight = FontWeight.SemiBold, maxLines = 2, overflow = TextOverflow.Ellipsis)
+                if (photos.isEmpty()) {
+                    if (decoded.bottomIsVoice && audio == null) {
                         Surface(
-                            shape = RoundedCornerShape(8.dp),
-                            color = Color.Black.copy(alpha = 0.72f),
-                            modifier = Modifier
-                                .align(Alignment.TopEnd)
-                                .padding(6.dp)
+                            shape = RoundedCornerShape(10.dp),
+                            color = PaperAccentBlue.copy(alpha = 0.12f)
                         ) {
                             Row(
-                                modifier = Modifier.padding(horizontal = 6.dp, vertical = 3.dp),
+                                modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp),
                                 verticalAlignment = Alignment.CenterVertically,
                                 horizontalArrangement = Arrangement.spacedBy(4.dp)
                             ) {
-                                if (decoded.bottomIsVoice || decoded.tags.any { it.isVoice }) {
-                                    MonologIcon(Glyph.MIC, Modifier.size(10.dp), PaperAccentBlue)
-                                } else {
-                                    MonologIcon(Glyph.PIN, Modifier.size(10.dp), PaperAccentBlue)
+                                MonologIcon(Glyph.MIC, Modifier.size(12.dp), PaperAccentBlue)
+                                repeat(4) { i ->
+                                    Box(
+                                        Modifier
+                                            .width(2.dp)
+                                            .height(if (i % 2 == 0) 6.dp else 10.dp)
+                                            .background(PaperAccentBlue, RoundedCornerShape(1.dp))
+                                    )
                                 }
-                                Text(
-                                    if (decoded.tags.isNotEmpty()) "${decoded.tags.size}" else "Voice",
-                                    color = Color.White,
-                                    fontSize = 10.sp,
-                                    fontWeight = FontWeight.SemiBold
-                                )
+                                Text("Audio Note", color = PaperAccentBlue, style = MaterialTheme.typography.labelSmall)
                             }
                         }
+                    } else if (excerpt.isNotEmpty()) {
+                        Text(
+                            excerpt,
+                            modifier = Modifier.fillMaxWidth(if (noteOnly) .66f else 1f),
+                            color = muted,
+                            style = MaterialTheme.typography.bodySmall,
+                            maxLines = 3,
+                            overflow = TextOverflow.Ellipsis
+                        )
                     }
                 }
-            } else if (audio != null) {
-                Box(Modifier.fillMaxWidth().height(106.dp).glassSurface(17, GlassAccent.LAVENDER),
-                    contentAlignment = Alignment.Center) {
-                    if (selecting) MonologIcon(Glyph.MIC)
-                    else VoiceNotePlayback(audio, "Play audio note", onLongClick = onSelect)
-                }
             }
-            Text(
-                note.title,
-                color = ink,
-                style = MaterialTheme.typography.titleSmall,
-                fontWeight = FontWeight.SemiBold,
-                maxLines = 2,
-                overflow = TextOverflow.Ellipsis
-            )
-            if (photos.isEmpty()) {
-                if (decoded.bottomIsVoice && audio == null) {
-                    Surface(
-                        shape = RoundedCornerShape(10.dp),
-                        color = PaperAccentBlue.copy(alpha = 0.12f)
-                    ) {
-                        Row(
-                            modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp),
-                            verticalAlignment = Alignment.CenterVertically,
-                            horizontalArrangement = Arrangement.spacedBy(4.dp)
-                        ) {
-                            MonologIcon(Glyph.MIC, Modifier.size(12.dp), PaperAccentBlue)
-                            repeat(4) { i ->
-                                Box(
-                                    Modifier
-                                        .width(2.dp)
-                                        .height(if (i % 2 == 0) 6.dp else 10.dp)
-                                        .background(PaperAccentBlue, RoundedCornerShape(1.dp))
-                                )
-                            }
-                            Text("Audio Note", color = PaperAccentBlue, style = MaterialTheme.typography.labelSmall)
-                        }
-                    }
-                } else if (excerpt.isNotEmpty()) {
-                    Text(
-                        excerpt,
-                        color = muted,
-                        style = MaterialTheme.typography.bodySmall,
-                        maxLines = 3,
-                        overflow = TextOverflow.Ellipsis
-                    )
-                }
-            }
-        }
 
-        Row(
-            Modifier.fillMaxWidth().padding(top = 4.dp),
-            horizontalArrangement = Arrangement.SpaceBetween,
-            verticalAlignment = Alignment.CenterVertically
-        ) {
-            Text(
-                if (photos.isNotEmpty()) "${photos.size} photo" else formatTime(note.updatedAt),
-                modifier = Modifier.weight(1f),
-                color = if (photos.isNotEmpty()) PaperAccentBlue else muted,
-                style = MaterialTheme.typography.labelSmall
-            )
-            if (selecting) Checkbox(checked = isSelected, onCheckedChange = null)
-            else MonologIcon(Glyph.ARROW, Modifier.size(14.dp), PaperAccentBlue)
+            Row(
+                Modifier.fillMaxWidth().padding(top = 4.dp),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Text(
+                    if (photos.isNotEmpty()) "${photos.size} photo" else formatTime(note.updatedAt),
+                    modifier = Modifier.weight(1f),
+                    color = if (photos.isNotEmpty()) PaperAccentBlue else muted,
+                    style = MaterialTheme.typography.labelSmall
+                )
+                if (selecting) Checkbox(checked = isSelected, onCheckedChange = null)
+                else MonologIcon(Glyph.ARROW, Modifier.size(14.dp), PaperAccentBlue)
+            }
         }
     }
 }

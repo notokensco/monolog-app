@@ -1,5 +1,7 @@
 package com.notokens.monolog.ui
 
+import com.notokens.monolog.R
+
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
@@ -130,7 +132,7 @@ internal fun JournalTimeline(
         }
         "Gallery" -> {
             val images = days.flatMap { it.photos }
-            if (images.isEmpty()) Text("No photos this month", color = PaperKeySubText)
+            if (images.isEmpty()) JournalIllustratedEmpty("No photos this month", R.drawable.art_library)
             images.take(30).chunked(3).forEach { row ->
                 Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(6.dp)) {
                     row.forEach { photo ->
@@ -143,13 +145,21 @@ internal fun JournalTimeline(
             }
         }
         else -> {
-            if (days.isEmpty()) Text("No journal entries this month", color = PaperKeySubText)
+            if (days.isEmpty()) JournalIllustratedEmpty("No journal entries this month", R.drawable.art_journal)
             days.forEachIndexed { index, day ->
                 key(day.date) {
                     JournalTimelineCard(day, index == 0, index == days.lastIndex, { onDay(day.date) }, onNote)
                 }
             }
         }
+    }
+}
+
+@Composable
+private fun JournalIllustratedEmpty(label: String, artwork: Int) {
+    Box(Modifier.fillMaxWidth().glassSurface(22).heightIn(min = 95.dp)) {
+        CardCornerArtwork(artwork, 115.dp, opacity = .81f)
+        Text(label, Modifier.align(Alignment.CenterStart).fillMaxWidth(.72f).padding(16.dp), color = PaperKeySubText)
     }
 }
 
@@ -177,33 +187,46 @@ private fun JournalTimelineCard(day: JournalDay, first: Boolean, last: Boolean, 
             drawCircle(primary, 5.dp.toPx(), center)
             drawCircle(rim, 7.dp.toPx(), center, style = Stroke(2.dp.toPx()))
         }
-        Column(Modifier.weight(1f).glassSurface(24).padding(14.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
-            val date = day.date.format(DateTimeFormatter.ofPattern("d MMM", Locale.getDefault()))
-            val label = if (day.date == LocalDate.now()) "Today" else day.date.format(DateTimeFormatter.ofPattern("EEEE"))
-            Text("$date · $label", color = PaperKeySubText, style = MaterialTheme.typography.labelLarge)
-            Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                Column(Modifier.weight(1f)) {
-                    Text(topNote?.title ?: memory?.take(70) ?: "Saved moments", color = PaperKeyText,
-                        style = MaterialTheme.typography.titleLarge, maxLines = 2, overflow = TextOverflow.Ellipsis)
-                    if (!excerpt.isNullOrBlank()) Text(excerpt, color = PaperKeySubText, maxLines = 3, overflow = TextOverflow.Ellipsis)
+        Box(Modifier.weight(1f).glassSurface(24)) {
+            val hasPhotos = day.photos.isNotEmpty()
+            if (!hasPhotos) {
+                val artwork = when {
+                    voice -> R.drawable.art_audio
+                    record?.source == MemoryRepository.MOOD_SOURCE -> R.drawable.art_mood_okay
+                    day.notes.isEmpty() && day.records.any { it.reminderId != null } -> R.drawable.art_reminder
+                    else -> R.drawable.art_journal
                 }
-                day.photos.take(if (day.notes.size > 1) 2 else 1).forEach { photo ->
-                    JournalPhotoImage(JournalPhoto.Saved(photo.id), "Photo from this day",
-                        Modifier.size(68.dp).clip(RoundedCornerShape(11.dp)).clickable { onNote(photo.noteId) },
-                        contentScale = ContentScale.Crop, thumbnailSize = 96.dp)
+                CardCornerArtwork(artwork, 125.dp, opacity = .65f)
+            }
+            Column(Modifier.fillMaxWidth().padding(14.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                val date = day.date.format(DateTimeFormatter.ofPattern("d MMM", Locale.getDefault()))
+                val label = if (day.date == LocalDate.now()) "Today" else day.date.format(DateTimeFormatter.ofPattern("EEEE"))
+                Text("$date · $label", color = PaperKeySubText, style = MaterialTheme.typography.labelLarge)
+                Row(Modifier.fillMaxWidth(if (hasPhotos) 1f else .74f), verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    Column(Modifier.weight(1f)) {
+                        Text(topNote?.title ?: memory?.take(70) ?: "Saved moments", color = PaperKeyText,
+                            style = MaterialTheme.typography.titleLarge, maxLines = 2, overflow = TextOverflow.Ellipsis)
+                        if (!excerpt.isNullOrBlank()) Text(excerpt, color = PaperKeySubText, maxLines = 3, overflow = TextOverflow.Ellipsis)
+                    }
+                    day.photos.take(if (day.notes.size > 1) 2 else 1).forEach { photo ->
+                        JournalPhotoImage(JournalPhoto.Saved(photo.id), "Photo from this day",
+                            Modifier.size(68.dp).clip(RoundedCornerShape(11.dp)).clickable { onNote(photo.noteId) },
+                            contentScale = ContentScale.Crop, thumbnailSize = 96.dp)
+                    }
                 }
-            }
-            Row(Modifier.horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                if (day.photos.isNotEmpty()) Text("Photos", color = PaperKeySubText, style = MaterialTheme.typography.labelSmall)
-                if (day.notes.isNotEmpty()) Text("Notes", color = PaperKeySubText, style = MaterialTheme.typography.labelSmall)
-                if (voice) Text("Voice", color = PaperKeySubText, style = MaterialTheme.typography.labelSmall)
-                if (day.records.any { it.reminderId != null }) Text("Reminders", color = PaperKeySubText, style = MaterialTheme.typography.labelSmall)
-            }
-            HorizontalDivider(color = primary.copy(alpha = .15f))
-            TextButton(onDay, contentPadding = PaddingValues(0.dp)) {
-                Text("View day")
-                Spacer(Modifier.width(7.dp))
-                MonologIcon(Glyph.ARROW, Modifier.size(14.dp))
+                Row(Modifier.horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    if (day.photos.isNotEmpty()) Text("Photos", color = PaperKeySubText, style = MaterialTheme.typography.labelSmall)
+                    if (day.notes.isNotEmpty()) Text("Notes", color = PaperKeySubText, style = MaterialTheme.typography.labelSmall)
+                    if (voice) Text("Voice", color = PaperKeySubText, style = MaterialTheme.typography.labelSmall)
+                    if (day.records.any { it.reminderId != null }) Text("Reminders", color = PaperKeySubText, style = MaterialTheme.typography.labelSmall)
+                }
+                HorizontalDivider(color = primary.copy(alpha = .15f))
+                TextButton(onDay, contentPadding = PaddingValues(0.dp)) {
+                    Text("View day")
+                    Spacer(Modifier.width(7.dp))
+                    MonologIcon(Glyph.ARROW, Modifier.size(14.dp))
+                }
             }
         }
     }

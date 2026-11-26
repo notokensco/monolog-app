@@ -1,0 +1,35 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 120 120">
+  <title>Layered keepsakes and a landscape print</title>
+  <defs>
+    <linearGradient id="library-light-1" x1="30" y1="22" x2="86" y2="98" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="#93B9B2" />
+      <stop offset="0.45" stop-color="#699E94" />
+      <stop offset="1" stop-color="#63818F" />
+    </linearGradient>
+    <linearGradient id="library-light-2" x1="30" y1="22" x2="86" y2="98" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="#C4B8ED" />
+      <stop offset="0.45" stop-color="#AD9DE6" />
+      <stop offset="1" stop-color="#9381CA" />
+    </linearGradient>
+    <linearGradient id="library-light-3" x1="30" y1="22" x2="86" y2="98" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="#CBE5EE" />
+      <stop offset="0.45" stop-color="#B7DBE8" />
+      <stop offset="1" stop-color="#9AADCB" />
+    </linearGradient>
+    <linearGradient id="library-light-4" x1="30" y1="22" x2="86" y2="98" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="#FFF5E8" />
+      <stop offset="0.45" stop-color="#FFF1DF" />
+      <stop offset="1" stop-color="#CDBCC5" />
+    </linearGradient>
+  </defs>
+  <path d="M18,60 a47,47 0 1,1 94,0 a47,47 0 1,1 -94,0 Z" fill="#D9D9FF" opacity="0.66" />
+  <path d="M12,101 a44,8 0 1,1 88,0 a44,8 0 1,1 -88,0 Z" fill="#7F78B5" opacity="0.26" />
+  <path d="M44 24l52 13q5 1 4 7l-9 42q-2 6-7 5L32 78q-5-1-4-7l10-43q1-5 6-4Z" fill="url(#library-light-2)" stroke="#454270" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" />
+  <path d="M23 37l61-7q6-1 7 5l6 49q1 6-5 7l-61 7q-6 1-7-5l-6-50q-1-5 5-6Z" fill="url(#library-light-4)" stroke="#454270" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" />
+  <path d="M27 44l57-7 4 39-56 7Z" fill="url(#library-light-3)" />
+  <path d="M41,53 a6,6 0 1,1 12,0 a6,6 0 1,1 -12,0 Z" fill="#FFCB7F" />
+  <path d="M31 78l15-17 9 8 13-21 18 17 2 11-56 7Z" fill="url(#library-light-1)" />
+  <path d="M52 89l24-3" fill="none" stroke="#AC8BB2" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round" />
+  <path d="M102,16 Q104.24,21.759999999999998 110,24 Q104.24,26.240000000000002 102,32 Q99.76,26.240000000000002 94,24 Q99.76,21.759999999999998 102,16 Z" fill="#B398E6" />
+  <path d="M13,57 Q14.4,60.6 18,62 Q14.4,63.4 13,67 Q11.6,63.4 8,62 Q11.6,60.6 13,57 Z" fill="#F1A873" />
+</svg>

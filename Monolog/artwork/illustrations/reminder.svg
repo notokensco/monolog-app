@@ -1,0 +1,30 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 120 120">
+  <title>Apricot alarm clock</title>
+  <defs>
+    <linearGradient id="reminder-light-1" x1="30" y1="22" x2="86" y2="98" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="#C0A4DF" />
+      <stop offset="0.45" stop-color="#A881D3" />
+      <stop offset="1" stop-color="#906DBC" />
+    </linearGradient>
+    <linearGradient id="reminder-light-2" x1="30" y1="22" x2="86" y2="98" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="#EFA8A6" />
+      <stop offset="0.45" stop-color="#E98683" />
+      <stop offset="1" stop-color="#BE7083" />
+    </linearGradient>
+    <linearGradient id="reminder-light-3" x1="30" y1="22" x2="86" y2="98" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="#FFF6DB" />
+      <stop offset="0.45" stop-color="#FFF3CD" />
+      <stop offset="1" stop-color="#CDBEB8" />
+    </linearGradient>
+  </defs>
+  <path d="M19,60 a43,43 0 1,1 86,0 a43,43 0 1,1 -86,0 Z" fill="#FFE4AC" opacity="0.64" />
+  <path d="M25,104 a40,7 0 1,1 80,0 a40,7 0 1,1 -80,0 Z" fill="#AD785B" opacity="0.26" />
+  <path d="M39 89l-9 11 M82 89l8 11" fill="none" stroke="#654C76" stroke-width="5" stroke-linecap="round" stroke-linejoin="round" />
+  <path d="M26 47 Q20 29 38 24 Q47 24 53 34 Z M69 34 Q75 22 88 26 Q101 31 95 47 Z" fill="url(#reminder-light-2)" stroke="#454270" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" />
+  <path d="M30,62 a31,31 0 1,1 62,0 a31,31 0 1,1 -62,0 Z" fill="url(#reminder-light-1)" stroke="#454270" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" />
+  <path d="M35,59 a26,26 0 1,1 52,0 a26,26 0 1,1 -52,0 Z" fill="url(#reminder-light-3)" stroke="#454270" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" />
+  <path d="M61 42v17l12 6 M61 79v2 M40 59h2 M80 59h2" fill="none" stroke="#454270" stroke-width="3" stroke-linecap="round" stroke-linejoin="round" />
+  <path d="M58.5,59 a2.5,2.5 0 1,1 5.0,0 a2.5,2.5 0 1,1 -5.0,0 Z" fill="#E67D79" />
+  <path d="M103,19 Q104.96,24.04 110,26 Q104.96,27.96 103,33 Q101.04,27.96 96,26 Q101.04,24.04 103,19 Z" fill="#A783D6" />
+  <path d="M16,61 Q17.4,64.6 21,66 Q17.4,67.4 16,71 Q14.6,67.4 11,66 Q14.6,64.6 16,61 Z" fill="#DB865A" />
+</svg>

@@ -1,5 +1,6 @@
 package com.notokens.monolog.ui
 
+import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.text.KeyboardOptions
@@ -8,9 +9,12 @@ import androidx.compose.runtime.*
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.unit.dp
+import com.notokens.monolog.R
 import com.notokens.monolog.capture.TagMetadataCodec
 import com.notokens.monolog.data.JournalHobbies
 import com.notokens.monolog.data.MemoryRecord
@@ -87,23 +91,32 @@ internal fun TodayJournalStats(notes: List<Note>, records: List<MemoryRecord>, z
             TodayCounts(days.size, noteWords + draftWords)
         }
     }
-    Row(Modifier.fillMaxWidth().glassSurface(22).padding(16.dp), horizontalArrangement = Arrangement.spacedBy(16.dp)) {
+    Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
         val format = remember { NumberFormat.getIntegerInstance() }
-        Column(Modifier.weight(1f)) {
-            Text(counts?.let { format.format(it.days) } ?: "—", color = PaperKeyText, style = MaterialTheme.typography.titleLarge)
-            Text("Days journaled", color = PaperKeySubText, style = MaterialTheme.typography.labelMedium)
-        }
-        Column(Modifier.weight(1f)) {
-            Text(counts?.let { format.format(it.words) } ?: "—", color = PaperKeyText, style = MaterialTheme.typography.titleLarge)
-            Text("Words stored", color = PaperKeySubText, style = MaterialTheme.typography.labelMedium)
+        TodayStat(counts?.let { format.format(it.days) } ?: "—", "Days journaled", R.drawable.art_calendar, Modifier.weight(1f))
+        TodayStat(counts?.let { format.format(it.words) } ?: "—", "Words stored", R.drawable.art_words, Modifier.weight(1f))
+    }
+}
+
+@Composable
+private fun TodayStat(value: String, label: String, artwork: Int, modifier: Modifier) {
+    Box(modifier.glassSurface(22, GlassAccent.BLUE).heightIn(min = 72.dp)) {
+        CardCornerArtwork(artwork, 85.dp, opacity = .78f)
+        Column(Modifier.fillMaxWidth(.72f).padding(horizontal = 13.dp, vertical = 10.dp)) {
+            Text(value, color = PaperKeyText, style = MaterialTheme.typography.titleLarge)
+            Text(label, color = PaperKeySubText, style = MaterialTheme.typography.labelMedium)
         }
     }
 }
 
+private val moodArtwork = linkedMapOf(
+    "Great" to R.drawable.art_mood_great, "Good" to R.drawable.art_mood_good, "Okay" to R.drawable.art_mood_okay,
+    "Low" to R.drawable.art_mood_low, "Struggling" to R.drawable.art_mood_struggling
+)
+
 @OptIn(ExperimentalLayoutApi::class)
 @Composable
 internal fun TodayMoodCheckIn(window: TodayWindow, records: List<MemoryRecord>, repository: MemoryRepository) {
-    val moods = listOf("Great", "Good", "Okay", "Low", "Struggling")
     val checkIns = remember(window, records) {
         records.filter { it.source == MemoryRepository.MOOD_SOURCE && it.localDay == window.date.toString() }
     }
@@ -114,26 +127,32 @@ internal fun TodayMoodCheckIn(window: TodayWindow, records: List<MemoryRecord>, 
     val scope = rememberCoroutineScope()
     var saving by remember { mutableStateOf(false) }
     var error by remember(window) { mutableStateOf(false) }
-    SettingsCard("How are you feeling?") {
-        Text(if (current == null) "Check in whenever you like. A new check-in opens every three hours."
-            else "Saved for this check-in. You can change your answer.", color = PaperKeySubText,
-            style = MaterialTheme.typography.bodySmall)
-        FlowRow(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-            moods.forEach { mood ->
-                FilterChip(selected = mood == current, enabled = !saving, label = { Text(mood) }, onClick = {
-                    if (mood == current || saving) return@FilterChip
-                    saving = true
-                    error = false
-                    scope.launch {
-                        try { repository.checkIn(mood, ZonedDateTime.now()) }
-                        catch (cancelled: CancellationException) { throw cancelled }
-                        catch (_: Exception) { error = true }
-                        finally { saving = false }
+    Box(Modifier.fillMaxWidth().glassSurface(24, GlassAccent.LAVENDER)) {
+        CardCornerArtwork(moodArtwork[current] ?: R.drawable.art_mood_okay, 128.dp, opacity = .78f)
+        Column(Modifier.fillMaxWidth().padding(16.dp)) {
+            SettingsCard("How are you feeling?", embedded = true) {
+                Text(if (current == null) "Check in whenever you like. A new check-in opens every three hours."
+                    else "Saved for this check-in. You can change your answer.", Modifier.fillMaxWidth(.76f), color = PaperKeySubText,
+                    style = MaterialTheme.typography.bodySmall)
+                FlowRow(Modifier.fillMaxWidth(.80f), horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                    moodArtwork.forEach { (mood, artwork) ->
+                        FilterChip(selected = mood == current, enabled = !saving, label = { Text(mood) },
+                            leadingIcon = { ScreenArtwork(artwork, Modifier.size(24.dp)) }, onClick = {
+                            if (mood == current || saving) return@FilterChip
+                            saving = true
+                            error = false
+                            scope.launch {
+                                try { repository.checkIn(mood, ZonedDateTime.now()) }
+                                catch (cancelled: CancellationException) { throw cancelled }
+                                catch (_: Exception) { error = true }
+                                finally { saving = false }
+                            }
+                        })
                     }
-                })
+                }
+                if (error) Text("Couldn’t save your check-in. Try again.", color = MaterialTheme.colorScheme.error)
             }
         }
-        if (error) Text("Couldn’t save your check-in. Try again.", color = MaterialTheme.colorScheme.error)
     }
 }
 
@@ -146,52 +165,71 @@ internal fun TodayHobbies(db: MonologDatabase, date: LocalDate) {
     var name by rememberSaveable { mutableStateOf("") }
     var pending by remember { mutableStateOf(false) }
     var error by remember { mutableStateOf<String?>(null) }
-    SettingsCard("Hobbies") {
-        if (hobbies.isEmpty()) Text("What do you enjoy doing? Add a hobby to check in and build a daily streak.",
-            color = PaperKeySubText)
-        for (entry in hobbies) {
-            val days = remember(entry.days) { entry.days.toSet() }
-            val done = date.toString() in days
-            val streak = remember(days, date) { hobbyStreak(days, date) }
-            Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {
-                Column(Modifier.weight(1f)) {
-                    Text(entry.hobby.name, color = PaperKeyText, fontWeight = FontWeight.SemiBold)
-                    Text(if (done) "Done today · $streak-day streak"
-                        else if (streak > 0) "Did you do it today? · $streak-day streak" else "Did you do it today?",
-                        color = PaperKeySubText, style = MaterialTheme.typography.bodySmall)
-                }
-                OutlinedButton(enabled = !pending, onClick = {
-                    pending = true
-                    error = null
-                    scope.launch {
-                        try { repository.setCompleted(entry.hobby.id, date, !done) }
-                        catch (cancelled: CancellationException) { throw cancelled }
-                        catch (_: Exception) { error = "Couldn’t update the hobby. Try again." }
-                        finally { pending = false }
+    Box(Modifier.fillMaxWidth().glassSurface(24, GlassAccent.BLUSH)) {
+        CardCornerArtwork(R.drawable.art_streak, 127.dp, opacity = if (hobbies.isEmpty()) .84f else .52f)
+        Column(Modifier.fillMaxWidth().padding(16.dp)) {
+            SettingsCard("Hobbies", embedded = true) {
+                if (hobbies.isEmpty()) Text("What do you enjoy doing? Add a hobby to check in and build a daily streak.",
+                    Modifier.fillMaxWidth(.72f), color = PaperKeySubText)
+                for (entry in hobbies) {
+                    val days = remember(entry.days) { entry.days.toSet() }
+                    val done = date.toString() in days
+                    val streak = remember(days, date) { hobbyStreak(days, date) }
+                    Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {
+                        Column(Modifier.weight(1f)) {
+                            Text(entry.hobby.name, color = PaperKeyText, fontWeight = FontWeight.SemiBold)
+                            Text(if (done) "Done today · $streak-day streak"
+                                else if (streak > 0) "Did you do it today? · $streak-day streak" else "Did you do it today?",
+                                color = PaperKeySubText, style = MaterialTheme.typography.bodySmall)
+                            StreakWeek(days, date)
+                        }
+                        OutlinedButton(enabled = !pending, onClick = {
+                            pending = true
+                            error = null
+                            scope.launch {
+                                try { repository.setCompleted(entry.hobby.id, date, !done) }
+                                catch (cancelled: CancellationException) { throw cancelled }
+                                catch (_: Exception) { error = "Couldn’t update the hobby. Try again." }
+                                finally { pending = false }
+                            }
+                        }) { Text(if (done) "Undo" else "Yes") }
                     }
-                }) { Text(if (done) "Undo" else "Yes") }
+                }
+                if (adding) {
+                    OutlinedTextField(name, { name = it.take(40); error = null }, Modifier.fillMaxWidth(),
+                        label = { Text("Hobby name") }, shape = CircleShape, singleLine = true,
+                        keyboardOptions = KeyboardOptions(imeAction = ImeAction.Done))
+                    Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                        TextButton(enabled = !pending, onClick = { adding = false; name = ""; error = null }) { Text("Cancel") }
+                        Button(enabled = name.isNotBlank() && !pending, onClick = {
+                            val title = name
+                            pending = true
+                            scope.launch {
+                                try {
+                                    if (repository.add(title)) { adding = false; name = ""; error = null }
+                                    else error = "You’re already tracking this hobby."
+                                } catch (cancelled: CancellationException) { throw cancelled }
+                                catch (_: Exception) { error = "Couldn’t save the hobby. Try again." }
+                                finally { pending = false }
+                            }
+                        }) { Text("Save hobby") }
+                    }
+                } else TextButton(onClick = { adding = true; error = null }) { Text("Add a hobby") }
+                error?.let { Text(it, color = MaterialTheme.colorScheme.error) }
             }
         }
-        if (adding) {
-            OutlinedTextField(name, { name = it.take(40); error = null }, Modifier.fillMaxWidth(),
-                label = { Text("Hobby name") }, shape = CircleShape, singleLine = true,
-                keyboardOptions = KeyboardOptions(imeAction = ImeAction.Done))
-            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                TextButton(enabled = !pending, onClick = { adding = false; name = ""; error = null }) { Text("Cancel") }
-                Button(enabled = name.isNotBlank() && !pending, onClick = {
-                    val title = name
-                    pending = true
-                    scope.launch {
-                        try {
-                            if (repository.add(title)) { adding = false; name = ""; error = null }
-                            else error = "You’re already tracking this hobby."
-                        } catch (cancelled: CancellationException) { throw cancelled }
-                        catch (_: Exception) { error = "Couldn’t save the hobby. Try again." }
-                        finally { pending = false }
-                    }
-                }) { Text("Save hobby") }
-            }
-        } else TextButton(onClick = { adding = true; error = null }) { Text("Add a hobby") }
-        error?.let { Text(it, color = MaterialTheme.colorScheme.error) }
+    }
+}
+
+@Composable
+private fun StreakWeek(days: Set<String>, date: LocalDate) {
+    val week = (6L downTo 0L).map { date.minusDays(it).toString() in days }
+    val completed = week.count { it }
+    val colors = MaterialTheme.colorScheme
+    Row(Modifier.padding(top = 5.dp).semantics { contentDescription = "$completed of the last 7 days completed" },
+        horizontalArrangement = Arrangement.spacedBy(4.dp)) {
+        week.forEach { done ->
+            Box(Modifier.size(8.dp).background(if (done) colors.primary else colors.primary.copy(alpha = .17f), CircleShape))
+        }
     }
 }

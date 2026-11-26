@@ -1,6 +1,7 @@
 package com.notokens.monolog.memory
 
 import android.content.Context
+import com.notokens.monolog.data.RememberLanguage
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.channels.Channel
@@ -14,6 +15,7 @@ internal class DraftMemoryRecorder(context: Context, scope: CoroutineScope) {
     private val repository = MemoryRepository(context)
     private val pending = Channel<Draft>(32)
     private val buffer = StringBuilder()
+    private var rememberPrefixTrimmed = false
     private var app = ""
     init {
         scope.launch(Dispatchers.IO) {
@@ -30,7 +32,10 @@ internal class DraftMemoryRecorder(context: Context, scope: CoroutineScope) {
         // enter memory through the repository's explicit-save path.
         if (!allowed || !preferences.enabled || app == companionPackage) { clear(); return }
         buffer.append(text)
-        if (buffer.length > 800) buffer.delete(0, buffer.length - 800)
+        if (buffer.length > 800) {
+            rememberPrefixTrimmed = rememberPrefixTrimmed || RememberLanguage.startsCommand(buffer)
+            buffer.delete(0, buffer.length - 800)
+        }
     }
     fun backspace(selected: Boolean) {
         if (selected) { clear(); return }
@@ -47,8 +52,10 @@ internal class DraftMemoryRecorder(context: Context, scope: CoroutineScope) {
     val hasPendingText get() = buffer.isNotBlank()
 
     fun boundary() {
-        if (preferences.enabled && buffer.isNotBlank()) pending.trySend(Draft(buffer.toString(), app, System.currentTimeMillis()))
-        buffer.clear()
+        if (preferences.enabled && buffer.isNotBlank() && !rememberPrefixTrimmed && !RememberLanguage.startsCommand(buffer)) {
+            pending.trySend(Draft(buffer.toString(), app, System.currentTimeMillis()))
+        }
+        clear()
     }
-    fun clear() { buffer.clear() }
+    fun clear() { buffer.clear(); rememberPrefixTrimmed = false }
 }

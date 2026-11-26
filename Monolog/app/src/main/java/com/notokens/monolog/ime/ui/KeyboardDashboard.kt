@@ -23,6 +23,8 @@ import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.DropdownMenu
+import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.material3.Switch
@@ -42,6 +44,7 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import androidx.compose.ui.window.PopupProperties
 import com.notokens.monolog.data.SettingsStore
 import com.notokens.monolog.ui.Glyph
 import com.notokens.monolog.ui.IconControl
@@ -155,15 +158,16 @@ internal enum class DashboardTile(val label: String, val glyph: Glyph, val extra
         (!privateMode && !restricted) || this in setOf(
             SETTINGS, PRIVATE, HIDE, VOX, AUTOFILL, EDIT_TEXT, UNDO, REDO, LANGUAGE, APPEARANCE
         )
+
+    companion object {
+        val defaults = listOf(SETTINGS, CLIPBOARD, TONE, CORRECT, FILTER, SWIPE, BORDERS, HAPTICS, UNDO, AUTOFILL, GIFS)
+    }
 }
 
 @Composable
 internal fun visibleDashboardTiles(settings: SettingsStore): List<DashboardTile> {
-    val hidden by settings.hiddenDashboardTiles.collectAsState(emptySet())
-    val extras by settings.dashboardExtras.collectAsState(emptySet())
-    val order by settings.dashboardOrder.collectAsState(emptyList())
-    val tiles = DashboardTile.entries.filter { if (it.extra) it.name in extras else it.name !in hidden }
-    return (order.mapNotNull { id -> tiles.firstOrNull { it.name == id } } + tiles).distinct().take(12)
+    val tiles by settings.dashboardTiles.collectAsState(DashboardTile.defaults)
+    return tiles
 }
 
 internal suspend fun toggleDashboardSetting(tile: DashboardTile, settings: SettingsStore) {
@@ -242,7 +246,7 @@ internal fun KeyboardDashboard(
             verticalAlignment = Alignment.CenterVertically
         ) {
             Text(
-                text = if (showAdd) "Add widget" else if (editing) "Edit dashboard" else if (showClips) "Clipboard" else "Keyboard dashboard",
+                text = if (editing) "Edit dashboard" else if (showClips) "Clipboard" else "Keyboard dashboard",
                 color = PaperKeyText,
                 style = MaterialTheme.typography.titleSmall,
                 modifier = Modifier.weight(1f)
@@ -258,10 +262,6 @@ internal fun KeyboardDashboard(
                     } else onShowClips(false)
                 })
             } else {
-                if (editing && tiles.size < 12) {
-                    IconControl(if (showAdd) Glyph.BACK else Glyph.PLUS,
-                        if (showAdd) "Back to widgets" else "Add dashboard widget", { showAdd = !showAdd })
-                }
                 if (onRescue != null) DraftRescueButton(onRescue, rescueBadge)
                 IconControl(Glyph.SHARE, "Share Monolog", {
                     val share = Intent(Intent.ACTION_SEND).setType("text/plain")
@@ -278,22 +278,7 @@ internal fun KeyboardDashboard(
             }
         }
 
-        if (showAdd) {
-            Column(Modifier.fillMaxWidth().verticalScroll(rememberScrollState())) {
-                DashboardTile.entries.filterNot(tiles::contains).forEach { tile ->
-                    Row(Modifier.fillMaxWidth().clickable {
-                        showAdd = false
-                        scope.launch {
-                            if (tile.extra) settings.setDashboardExtra(tile.name, true)
-                            else settings.setDashboardTileVisible(tile.name, true)
-                        }
-                    }.padding(10.dp), verticalAlignment = Alignment.CenterVertically) {
-                        MonologIcon(tile.glyph, Modifier.size(18.dp), PaperKeyText)
-                        Text(tile.label, Modifier.padding(start = 9.dp), color = PaperKeyText)
-                    }
-                }
-            }
-        } else if (showClips && !privateMode && !restricted) {
+        if (showClips && !privateMode && !restricted) {
             Column(Modifier.fillMaxSize().verticalScroll(rememberScrollState())) {
                 val text = expandedText
                 val image = expandedImage
@@ -358,7 +343,8 @@ internal fun KeyboardDashboard(
                 }
             }
         } else {
-            val tileRows = tiles.chunked(4)
+            val cells: List<DashboardTile?> = if (tiles.size < 12) tiles + listOf(null) else tiles
+            val tileRows = cells.chunked(4)
             Column(
                 modifier = Modifier.fillMaxWidth().verticalScroll(rememberScrollState()),
                 verticalArrangement = Arrangement.spacedBy(5.dp)
@@ -368,7 +354,29 @@ internal fun KeyboardDashboard(
                         modifier = Modifier.fillMaxWidth().height(rowHeight - 4.dp),
                         horizontalArrangement = Arrangement.spacedBy(5.dp)
                     ) {
-                        group.forEach { tile ->
+                        group.forEach cell@{ tile ->
+                            if (tile == null) {
+                                Box(Modifier.weight(1f).fillMaxHeight()) {
+                                    Box(Modifier.fillMaxSize().clip(RoundedCornerShape(8.dp))
+                                        .border(1.dp, PaperPillBorder, RoundedCornerShape(8.dp))
+                                        .clickable(onClickLabel = "Add dashboard widget") { showAdd = true }
+                                        .semantics { contentDescription = "Add widget" }, contentAlignment = Alignment.Center) {
+                                        MonologIcon(Glyph.PLUS, Modifier.size(21.dp), PaperKeyText)
+                                    }
+                                    DropdownMenu(showAdd, { showAdd = false }, Modifier.heightIn(max = 190.dp),
+                                        properties = PopupProperties(focusable = false)) {
+                                        DashboardTile.entries.filterNot(tiles::contains).forEach { choice ->
+                                            DropdownMenuItem(text = { Text(choice.label) },
+                                                leadingIcon = { MonologIcon(choice.glyph, Modifier.size(18.dp)) },
+                                                onClick = {
+                                                    showAdd = false
+                                                    scope.launch { settings.setDashboardTileVisible(choice, true) }
+                                                })
+                                        }
+                                    }
+                                }
+                                return@cell
+                            }
                             val scale by animateFloatAsState(if (removing == tile) .25f else 1f,
                                 tween(150), label = "Dashboard widget")
                             val selected = !editing && when (tile) {
@@ -449,8 +457,7 @@ internal fun KeyboardDashboard(
                                             removing = tile
                                             scope.launch {
                                                 delay(150)
-                                                if (tile.extra) settings.setDashboardExtra(tile.name, false)
-                                                else settings.setDashboardTileVisible(tile.name, false)
+                                                settings.setDashboardTileVisible(tile, false)
                                                 removing = null
                                             }
                                         } else onActivate(tile)

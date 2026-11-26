@@ -9,6 +9,7 @@ import androidx.datastore.preferences.core.emptyPreferences
 import androidx.datastore.preferences.core.stringPreferencesKey
 import androidx.datastore.preferences.core.stringSetPreferencesKey
 import androidx.datastore.preferences.preferencesDataStore
+import com.notokens.monolog.ime.ui.DashboardTile
 import java.io.IOException
 import androidx.datastore.preferences.core.Preferences
 import kotlinx.coroutines.flow.first
@@ -342,18 +343,28 @@ class SettingsStore(private val context: Context) {
     private val dashboardExtrasKey = stringSetPreferencesKey("keyboard_dashboard_extras")
     private val dashboardOrderKey = stringPreferencesKey("keyboard_dashboard_order")
     private val dashboardPinsKey = stringPreferencesKey("keyboard_dashboard_pins")
-    val dashboardOrder = preferences.map { dashboardIds(it[dashboardOrderKey]) }.distinctUntilChanged()
+    private val hiddenDashboardKey = stringSetPreferencesKey("hidden_dashboard_tiles")
+    internal val dashboardTiles = preferences.map { configuredDashboard(it).take(12) }.distinctUntilChanged()
     val dashboardPins = preferences.map { dashboardIds(it[dashboardPinsKey]).take(4) }.distinctUntilChanged()
 
     suspend fun setDashboardOrder(ids: List<String>) {
         context.monologSettings.edit { values ->
-            val remaining = dashboardIds(values[dashboardOrderKey]).filterNot { it in ids }
+            val configured = configuredDashboard(values)
+            if (values[dashboardExtrasKey] == null && values[hiddenDashboardKey] == null) {
+                saveDashboardMembership(values, configured)
+            }
+            val remaining = configured.map { it.name }.filterNot { it in ids }
             values[dashboardOrderKey] = (ids + remaining).distinct().joinToString(",")
         }
     }
 
     suspend fun toggleDashboardPin(id: String) {
         context.monologSettings.edit { values ->
+            val configured = configuredDashboard(values)
+            if (values[dashboardExtrasKey] == null && values[hiddenDashboardKey] == null) {
+                saveDashboardMembership(values, configured)
+                values[dashboardOrderKey] = configured.joinToString(",") { it.name }
+            }
             val pins = dashboardIds(values[dashboardPinsKey]).take(4)
             values[dashboardPinsKey] = when {
                 id in pins -> pins - id
@@ -365,14 +376,30 @@ class SettingsStore(private val context: Context) {
 
     private fun dashboardIds(value: String?) = value.orEmpty().split(',').filter(String::isNotBlank).distinct()
 
-    val dashboardExtras = preferences.map { it[dashboardExtrasKey].orEmpty() }.distinctUntilChanged()
     val clipboardPins = preferences.map { decodePins(it[clipboardPinsKey]) }.distinctUntilChanged()
-    suspend fun setDashboardExtra(id: String, visible: Boolean) {
+    private fun configuredDashboard(values: Preferences): List<DashboardTile> {
+        if (!values.contains(dashboardExtrasKey) && !values.contains(hiddenDashboardKey) &&
+            !values.contains(dashboardOrderKey) && !values.contains(dashboardPinsKey)) return DashboardTile.defaults
+        val extras = values[dashboardExtrasKey].orEmpty()
+        val hidden = values[hiddenDashboardKey].orEmpty()
+        val visible = DashboardTile.entries.filter { if (it.extra) it.name in extras else it.name !in hidden }
+        return (dashboardIds(values[dashboardOrderKey]).mapNotNull { id -> visible.find { it.name == id } } + visible).distinct()
+    }
+
+    private fun saveDashboardMembership(values: androidx.datastore.preferences.core.MutablePreferences, tiles: List<DashboardTile>) {
+        values[dashboardExtrasKey] = tiles.filter { it.extra }.mapTo(hashSetOf()) { it.name }
+        values[hiddenDashboardKey] = DashboardTile.entries.filter { !it.extra && it !in tiles }.mapTo(hashSetOf()) { it.name }
+    }
+
+    internal suspend fun setDashboardTileVisible(tile: DashboardTile, visible: Boolean) {
         context.monologSettings.edit { values ->
-            val items = values[dashboardExtrasKey].orEmpty()
+            val current = configuredDashboard(values)
+            if (visible && (tile in current || current.size >= 12)) return@edit
+            val next = if (visible) current + tile else current - tile
+            saveDashboardMembership(values, next)
+            values[dashboardOrderKey] = next.joinToString(",") { it.name }
             if (!visible) values[dashboardPinsKey] =
-                (dashboardIds(values[dashboardPinsKey]) - id).joinToString(",")
-            if (!visible || items.size < 12) values[dashboardExtrasKey] = if (visible) items + id else items - id
+                (dashboardIds(values[dashboardPinsKey]) - tile.name).joinToString(",")
         }
     }
     suspend fun setClipboardPin(text: String, pinned: Boolean) {
@@ -405,21 +432,11 @@ class SettingsStore(private val context: Context) {
     suspend fun setKeyPopupMs(value: Int) { context.monologSettings.edit { it[keyPopupMsKey] = value.coerceIn(0, 250) } }
     suspend fun setKeyHeightPercent(value: Int) { context.monologSettings.edit { it[keyHeightKey] = value.coerceIn(75, 125) } }
     suspend fun setSensitiveWords(value: String) { context.monologSettings.edit { it[sensitiveWordsKey] = value.take(1500) } }
-    private val hiddenDashboardKey = stringSetPreferencesKey("hidden_dashboard_tiles")
     val keyboardClipboard = preferences.map { it[clipboardKey] ?: false }.distinctUntilChanged()
-    val hiddenDashboardTiles = preferences.map { it[hiddenDashboardKey].orEmpty() }.distinctUntilChanged()
     val keyboardIncognitoUntil = preferences.map { it[incognitoUntilKey] ?: 0L }.distinctUntilChanged()
 
     suspend fun setKeyboardClipboard(enabled: Boolean) {
         context.monologSettings.edit { it[clipboardKey] = enabled }
-    }
-
-    suspend fun setDashboardTileVisible(id: String, visible: Boolean) {
-        context.monologSettings.edit {
-            if (!visible) it[dashboardPinsKey] = (dashboardIds(it[dashboardPinsKey]) - id).joinToString(",")
-            val hidden = it[hiddenDashboardKey].orEmpty()
-            it[hiddenDashboardKey] = if (visible) hidden - id else hidden + id
-        }
     }
 
     private val personalWordsKey = stringSetPreferencesKey("personal_dictionary")

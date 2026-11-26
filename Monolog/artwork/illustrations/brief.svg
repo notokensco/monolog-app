@@ -1,0 +1,29 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 120 120">
+  <title>Sunrise over an open journal</title>
+  <defs>
+    <linearGradient id="brief-light-1" x1="30" y1="22" x2="86" y2="98" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="#C2B5E5" />
+      <stop offset="0.45" stop-color="#AA98DB" />
+      <stop offset="1" stop-color="#917DC2" />
+    </linearGradient>
+    <linearGradient id="brief-light-2" x1="30" y1="22" x2="86" y2="98" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="#FFE0AB" />
+      <stop offset="0.45" stop-color="#FFD48A" />
+      <stop offset="1" stop-color="#CDA888" />
+    </linearGradient>
+    <linearGradient id="brief-light-3" x1="30" y1="22" x2="86" y2="98" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="#FFF8E9" />
+      <stop offset="0.45" stop-color="#FFF5E0" />
+      <stop offset="1" stop-color="#CDBFC5" />
+    </linearGradient>
+  </defs>
+  <path d="M27,53 a42,42 0 1,1 84,0 a42,42 0 1,1 -84,0 Z" fill="#E4CFFF" opacity="0.57" />
+  <path d="M14,102 a48,8 0 1,1 96,0 a48,8 0 1,1 -96,0 Z" fill="#7561A9" opacity="0.26" />
+  <path d="M48,42 a18,18 0 1,1 36,0 a18,18 0 1,1 -36,0 Z" fill="url(#brief-light-2)" />
+  <path d="M66 16v-5 M44 24l-5-5 M87 24l5-5" fill="none" stroke="#CA7847" stroke-width="2.7" stroke-linecap="round" stroke-linejoin="round" />
+  <path d="M12 66 Q34 59 58 77 Q82 59 108 65 V94 Q84 88 58 103 Q32 88 12 95 Z" fill="url(#brief-light-1)" />
+  <path d="M15 59 Q41 55 58 72 Q81 53 104 58 V88 Q82 85 58 98 Q35 84 15 88 Z" fill="url(#brief-light-3)" stroke="#454270" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" />
+  <path d="M58 72v26 M24 68q16 0 25 8 M24 76q16 0 25 8 M69 77q12-8 25-8 M69 85q12-8 25-8" fill="none" stroke="#8875AB" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" />
+  <path d="M99,29 Q101.24,34.76 107,37 Q101.24,39.24 99,45 Q96.76,39.24 91,37 Q96.76,34.76 99,29 Z" fill="#8C79D2" />
+  <path d="M31,37 Q32.4,40.6 36,42 Q32.4,43.4 31,47 Q29.6,43.4 26,42 Q29.6,40.6 31,37 Z" fill="#F29A86" />
+</svg>

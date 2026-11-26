@@ -31,6 +31,7 @@ import androidx.compose.ui.unit.dp
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.compose.LocalLifecycleOwner
 import androidx.lifecycle.repeatOnLifecycle
+import com.notokens.monolog.R
 import com.notokens.monolog.data.MemoryRecord
 import com.notokens.monolog.data.MonologDatabase
 import com.notokens.monolog.ai.ModelStore
@@ -201,6 +202,7 @@ internal fun MemoryJournal(
         if (showBrief) {
             JournalBrief(selected, periodKey, selectedRecords, selectedNotes, observationsReady, imeVisible)
         }
+        if (!showSearch && !showDay) RememberNotebookButton()
         JournalMemoryPrompt()
         if (!showDay && !showSearch) {
             timelineState.SaveableStateProvider("timeline") {
@@ -377,53 +379,52 @@ private fun JournalBriefCard(
         "Year" -> date.year.toString()
         else -> date.format(DateTimeFormatter.ofLocalizedDate(FormatStyle.FULL))
     }
-    Column(
-        Modifier.fillMaxWidth().glassSurface(24, GlassAccent.LAVENDER).padding(horizontal = 18.dp, vertical = 16.dp),
-        verticalArrangement = Arrangement.spacedBy(10.dp)
-    ) {
-        Row(horizontalArrangement = Arrangement.spacedBy(12.dp), verticalAlignment = Alignment.CenterVertically) {
-            Box(Modifier.size(36.dp).glassSurface(12), contentAlignment = Alignment.Center) {
-                MonologIcon(Glyph.BOOK, Modifier.size(19.dp))
-            }
-            Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(2.dp)) {
-                Text(
-                    when (period) { "Month" -> "Your month in brief"; "Year" -> "Your year in brief"; else -> "Your day in brief" },
-                    color = PaperKeyText, style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.SemiBold
-                )
-                Text(dateLabel, color = PaperKeySubText, style = MaterialTheme.typography.labelMedium)
-            }
-            if (sourcesReady && hasSources && canRefresh) {
-                IconButton(
-                    onClick = onRefresh,
-                    enabled = !building,
-                    modifier = Modifier.align(Alignment.Top).semantics {
-                        contentDescription = if (building) "Refreshing summary" else "Refresh summary"
+    Box(Modifier.fillMaxWidth().glassSurface(24, GlassAccent.LAVENDER).heightIn(min = 126.dp)) {
+        CardCornerArtwork(R.drawable.art_brief, 145.dp, opacity = .82f)
+        Column(Modifier.fillMaxWidth().padding(horizontal = 18.dp, vertical = 16.dp),
+            verticalArrangement = Arrangement.spacedBy(10.dp)) {
+            Row(horizontalArrangement = Arrangement.spacedBy(12.dp), verticalAlignment = Alignment.CenterVertically) {
+                Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(2.dp)) {
+                    Text(
+                        when (period) { "Month" -> "Your month in brief"; "Year" -> "Your year in brief"; else -> "Your day in brief" },
+                        color = PaperKeyText, style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.SemiBold
+                    )
+                    Text(dateLabel, color = PaperKeySubText, style = MaterialTheme.typography.labelMedium)
+                }
+                if (sourcesReady && hasSources && canRefresh) {
+                    IconButton(
+                        onClick = onRefresh,
+                        enabled = !building,
+                        modifier = Modifier.align(Alignment.Top).semantics {
+                            contentDescription = if (building) "Refreshing summary" else "Refresh summary"
+                        }
+                    ) {
+                        if (building) CircularProgressIndicator(Modifier.size(18.dp), strokeWidth = 2.dp)
+                        else MonologIcon(Glyph.REFRESH, Modifier.size(20.dp))
                     }
-                ) {
-                    if (building) CircularProgressIndicator(Modifier.size(18.dp), strokeWidth = 2.dp)
-                    else MonologIcon(Glyph.REFRESH, Modifier.size(20.dp))
                 }
             }
-        }
-        if (building) RefreshingBriefLabel()
-        val description = brief?.text ?: when {
-            !sourcesReady -> "Opening your brief…"
-            !hasSources -> "No journal moments saved for this period yet."
-            building -> null
-            else -> "Preparing your brief…"
-        }
-        if (description != null) Text(description, color = if (hasSources) PaperKeyText else PaperKeySubText,
-            style = MaterialTheme.typography.bodyMedium)
-        message?.takeUnless { building }?.let {
-            Text(it, color = PaperKeySubText, style = MaterialTheme.typography.labelSmall)
-        }
-        if (hasSources) {
-            if (!building && brief?.generated == false) {
-                Text("Journal overview", color = PaperKeySubText, style = MaterialTheme.typography.labelSmall)
+            if (building) RefreshingBriefLabel()
+            val description = brief?.text ?: when {
+                !sourcesReady -> "Opening your brief…"
+                !hasSources -> "No journal moments saved for this period yet."
+                building -> null
+                else -> "Preparing your brief…"
             }
-            if (!canRefresh && !building) Text("Choose a downloaded text model in On-device AI to refresh this brief.", color = PaperKeySubText)
+            if (description != null) Text(description, Modifier.fillMaxWidth(.76f), color = if (hasSources) PaperKeyText else PaperKeySubText,
+                style = MaterialTheme.typography.bodyMedium)
+            message?.takeUnless { building }?.let {
+                Text(it, Modifier.fillMaxWidth(.74f), color = PaperKeySubText, style = MaterialTheme.typography.labelSmall)
+            }
+            if (hasSources) {
+                if (!building && brief?.generated == false) {
+                    Text("Journal overview", color = PaperKeySubText, style = MaterialTheme.typography.labelSmall)
+                }
+                if (!canRefresh && !building) Text("Choose a downloaded text model in On-device AI to refresh this brief.",
+                    Modifier.fillMaxWidth(.74f), color = PaperKeySubText)
+            }
+            footer()
         }
-        footer()
     }
 }
 

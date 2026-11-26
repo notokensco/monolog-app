@@ -48,6 +48,7 @@ private val credits = listOf(
     AboutDocument("Unicode emoji data", "unicode-license.txt"),
     AboutDocument("Science Gothic", "licenses/Science-Gothic-OFL.txt"),
     AboutDocument("Geist", "licenses/geist-ofl.txt"),
+    AboutDocument("Beth Ellen", "licenses/beth-ellen-ofl.txt"),
     AboutDocument("ZXing Core", "licenses/ZXing-LICENSE.txt"),
     AboutDocument("ZXing Android Embedded", "licenses/ZXing-Android-Embedded-LICENSE.txt"),
     AboutDocument("Gemma terms", "licenses/Gemma-Terms.md"),
