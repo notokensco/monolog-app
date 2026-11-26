@@ -41,6 +41,7 @@ import com.notokens.monolog.data.RememberNotebook
 import com.notokens.monolog.data.TypingMetric
 import com.notokens.monolog.data.VoiceInputEngine
 import com.notokens.monolog.ime.ui.ClipboardImage
+import com.notokens.monolog.ime.ui.RecentScreenshot
 import com.notokens.monolog.ime.ui.KeyboardMedia
 import com.notokens.monolog.ime.ui.KeyboardMediaProvider
 import com.notokens.monolog.ime.ui.EditorCommand
@@ -219,6 +220,7 @@ class MonologInputMethodService : LifecycleInputMethodService() {
     private var autocorrectUndo: CorrectionUndo? = null
     private var phoneActionsEnabled by mutableStateOf(true)
     private var editorActive by mutableStateOf(false)
+    private var imageMimeTypes by mutableStateOf(emptyList<String>())
     private var defaultVox = false
     private var keyboardSession = 0
     private var layoutSession by mutableStateOf(0)
@@ -534,6 +536,7 @@ class MonologInputMethodService : LifecycleInputMethodService() {
                         layoutSession = layoutSession,
                         editorContext = editorContext,
                         editorActive = editorActive,
+                        imageMimeTypes = imageMimeTypes,
                         keyboardState = keyboardState,
                         voxState = voxState,
                         voxLanguage = voxLanguage(),
@@ -594,6 +597,7 @@ class MonologInputMethodService : LifecycleInputMethodService() {
                         onPasteText = { handleCharTyped(it, manualKey = false) },
                         onEmojiSuggestion = ::replaceWithEmoji,
                         onPasteImage = ::pasteImage,
+                        onPasteScreenshot = ::pasteScreenshot,
                         onPasteMedia = ::pasteMedia,
                         onLetterTyped = ::handleLetterTyped,
                         onSwipe = ::handleSwipe,
@@ -643,6 +647,7 @@ class MonologInputMethodService : LifecycleInputMethodService() {
         memoryRecorder.start(info?.packageName.orEmpty())
         editorContext = resolved.copy(isUserIncognito = userIncognito)
         editorActive = info != null
+        imageMimeTypes = info?.contentMimeTypes.orEmpty().toList()
         rescueHint = rescueEnabled && privacyCheckAllowed() && DraftRescue.takeHint()
         if (isInputViewShown) keyboardModelsVisible.value = editorActive && !resolved.isRestrictedField
         stopCursorDrag()
@@ -1284,6 +1289,9 @@ class MonologInputMethodService : LifecycleInputMethodService() {
         if (!image.file.isFile) return false
         return commitImageContent(image.mime, "Copied image") { image.uri(this) }
     }
+
+    private fun pasteScreenshot(screenshot: RecentScreenshot): Boolean = screenshot.isFresh() &&
+        commitImageContent(screenshot.mime, "Screenshot") { screenshot.uri }
 
     private fun pasteMedia(item: KeyboardMedia.Item): Boolean =
         commitImageContent(item.mime, item.name) { KeyboardMediaProvider.uriFor(this, item) }

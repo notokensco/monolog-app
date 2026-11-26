@@ -25,6 +25,8 @@ Draft Rescue is optional. When enabled, it holds up to 10 recent text drafts on 
 
 Clipboard history is optional and off by default. Clipboard history uses copied text and images for pasting. If clipboard action suggestions are enabled, Monolog can also read copied information to suggest an action. Unpinned history expires after one hour. Pinned items remain until removed or cleared. Android manages its system clipboard separately. If you enable system spell checking in Monolog, the selected Android spell-checking service may receive the word being checked.
 
+If you link a Screenshots folder in Keyboard Privacy, Monolog reads recent images from that folder to offer a paste preview. The keyboard shows each preview at most once and removes its Clipboard entry 15 minutes after capture. The original screenshot stays in your folder. Monolog does not make a copy or upload it.
+
 Online services
 
 When you submit a web or image search in Ask AI, Monolog sends your query and Safe Search setting through its configured search service. The service name appears beside the Safe Search control. Preview images load from the search provider. Choosing More in browser opens your query in DuckDuckGo. If you enable GIFs and stickers, opening their tabs loads KLIPY content and submitting a media search sends that query to the provider. Advertising may involve additional device, network and interaction information when it is enabled. See the KLIPY media and ads notice in About for details. If you open an action or search in another app, Monolog passes information needed for that action, such as a search term, phone number or email address. The receiving app handles that information under its own privacy practices.

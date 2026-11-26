@@ -194,6 +194,8 @@ internal fun KeyboardDashboard(
     privateMode: Boolean,
     clips: List<String>,
     images: ClipboardImages,
+    screenshots: List<RecentScreenshot>,
+    onPasteScreenshot: (RecentScreenshot) -> Unit,
     onPasteImage: (ClipboardImage) -> Unit,
     rowHeight: Dp,
     tiles: List<DashboardTile>,
@@ -282,8 +284,19 @@ internal fun KeyboardDashboard(
             Column(Modifier.fillMaxSize().verticalScroll(rememberScrollState())) {
                 val text = expandedText
                 val image = expandedImage
+                if (text == null && image == null && screenshots.isNotEmpty()) {
+                    Text("Recent screenshots", Modifier.padding(start = 4.dp, top = 5.dp), color = PaperKeySubText, fontSize = 12.sp)
+                    FlowRow(Modifier.fillMaxWidth().padding(vertical = 3.dp),
+                        horizontalArrangement = Arrangement.spacedBy(5.dp), verticalArrangement = Arrangement.spacedBy(5.dp)) {
+                        screenshots.forEach { screenshot ->
+                            ScreenshotThumbnail(screenshot, Modifier.clickable(onClickLabel = "Paste screenshot") {
+                                onPasteScreenshot(screenshot)
+                            }.semantics { contentDescription = "Screenshot" })
+                        }
+                    }
+                }
                 when {
-                    !clipboard -> Text("Enable clipboard to keep copied text and images for one hour. Pin items you want to keep.",
+                    !clipboard -> Text("Enable clipboard to keep other copied text and images for one hour. Pin items you want to keep.",
                         Modifier.padding(10.dp), color = PaperKeySubText)
                     text != null -> {
                         Text(text, Modifier.padding(10.dp), color = PaperKeyText)
@@ -303,7 +316,7 @@ internal fun KeyboardDashboard(
                     }
                     else -> {
                         val recent = clips.filterNot(pins::contains)
-                        if (pins.isEmpty() && recent.isEmpty() && images.items.isEmpty()) Text("Nothing copied yet.",
+                        if (pins.isEmpty() && recent.isEmpty() && images.items.isEmpty() && screenshots.isEmpty()) Text("Nothing copied yet.",
                             Modifier.padding(10.dp), color = PaperKeySubText)
                         for (pinned in listOf(true, false)) {
                             val textItems = if (pinned) pins else recent

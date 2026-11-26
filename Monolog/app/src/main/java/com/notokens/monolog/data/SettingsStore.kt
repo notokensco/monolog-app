@@ -146,17 +146,25 @@ class SettingsStore(private val context: Context) {
     }
 
     internal suspend fun resetLocalContent() {
+        var screenshotFolder: String? = null
         context.monologSettings.edit { values ->
             values.remove(typingProfileKey)
             values.remove(personalWordsKey)
             values.remove(clipboardPinsKey)
             values.remove(clipboardKey)
+            screenshotFolder = values[screenshotFolderKey]
+            values.remove(screenshotFolderKey)
             values.remove(recentEmojiKey)
             values.remove(recentGifSearchKey)
             values.remove(recentStickerSearchKey)
             values.remove(incognitoUntilKey)
             values.remove(draftRescueKey)
         }
+        screenshotFolder?.let { folder ->
+            runCatching { context.contentResolver.releasePersistableUriPermission(android.net.Uri.parse(folder),
+                android.content.Intent.FLAG_GRANT_READ_URI_PERMISSION) }
+        }
+        context.getSharedPreferences("recent_screenshot_suggestions", Context.MODE_PRIVATE).edit().clear().apply()
     }
 
     private fun readTypingProfile(values: Preferences): TypingProfile = decodeTypingProfile(values[typingProfileKey])
@@ -261,6 +269,11 @@ class SettingsStore(private val context: Context) {
     private val preferences = context.monologSettings.data
     private val smartToneKey = booleanPreferencesKey("smart_tone")
     private val clipboardKey = booleanPreferencesKey("keyboard_clipboard")
+    private val screenshotFolderKey = stringPreferencesKey("keyboard_screenshot_folder")
+    internal val screenshotFolder = preferences.map { it[screenshotFolderKey] }.distinctUntilChanged()
+    internal suspend fun setScreenshotFolder(uri: String?) {
+        context.monologSettings.edit { if (uri == null) it.remove(screenshotFolderKey) else it[screenshotFolderKey] = uri }
+    }
     private val draftRescueKey = booleanPreferencesKey("keyboard_draft_rescue")
     val draftRescue = preferences.map { it[draftRescueKey] ?: false }.distinctUntilChanged()
     suspend fun setDraftRescue(enabled: Boolean) { context.monologSettings.edit { it[draftRescueKey] = enabled } }

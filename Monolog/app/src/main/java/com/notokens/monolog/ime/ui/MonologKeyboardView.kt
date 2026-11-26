@@ -30,6 +30,7 @@ import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.LocalLayoutDirection
 import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxWidth
@@ -87,6 +88,7 @@ internal fun MonologKeyboardView(
     layoutSession: Int,
     editorContext: EditorContext,
     editorActive: Boolean,
+    imageMimeTypes: List<String> = emptyList(),
     keyboardState: KeyboardState,
     voxState: VoxState,
     voxLanguage: com.notokens.monolog.ime.vox.VoxLanguage,
@@ -135,6 +137,7 @@ internal fun MonologKeyboardView(
     onPasteText: (String) -> Unit = onCharTyped,
     onEmojiSuggestion: (String, String) -> Boolean,
     onPasteImage: (ClipboardImage) -> Boolean,
+    onPasteScreenshot: (RecentScreenshot) -> Boolean = { false },
     onPasteMedia: (KeyboardMedia.Item) -> Boolean,
     onLetterTyped: (String) -> Unit,
     onSwipe: (List<SwipePoint>) -> Unit,
@@ -208,6 +211,12 @@ internal fun MonologKeyboardView(
     val clips = rememberKeyboardClips(settings, privateMode, editorActive)
     val clipboardEnabled by settings.keyboardClipboard.collectAsState(false)
     val images = rememberClipboardImages(clipboardEnabled, privateMode, editorActive)
+    val screenshotFolder by settings.screenshotFolder.collectAsState(null)
+    val screenshotSource = remember(context) { RecentScreenshots(context.applicationContext) }
+    val screenshots = rememberRecentScreenshots(screenshotSource, screenshotFolder, editorActive,
+        privateMode || editorContext.isRestrictedField, layoutSession)
+    var offeredScreenshot by remember(layoutSession, screenshotFolder) { mutableStateOf<RecentScreenshot?>(null) }
+    var dismissedScreenshot by remember(layoutSession, screenshotFolder) { mutableStateOf(false) }
     val phoneActions by settings.phoneActions.collectAsState(false)
     val customTriggers by settings.sensitiveWords.collectAsState("")
     val copiedActions = com.notokens.monolog.ime.rememberClipboardActions(
@@ -274,6 +283,19 @@ internal fun MonologKeyboardView(
     fun typeMediaQuery(value: String) { mediaQuery = (mediaQuery + value).take(80) }
     var userPinned by remember(layoutSession) { mutableStateOf(false) }
     var placementMenu by remember(layoutSession) { mutableStateOf(false) }
+    val screenshotToolbarVisible = !dashboardOpen && !isShortcutsOpen && !isVoxOpen && !showTranslation &&
+        searchQuery == null && keyboardState.layer != KeyboardLayer.EMOJI && !placementMenu && panel == null &&
+        systemAutofillSuggestions.isEmpty()
+    LaunchedEffect(screenshotToolbarVisible, screenshots, imageMimeTypes) {
+        if (!screenshotToolbarVisible || offeredScreenshot != null || dismissedScreenshot) return@LaunchedEffect
+        val screenshot = screenshots.firstOrNull { it.accepts(imageMimeTypes) && screenshotSource.canOffer(it) }
+            ?: return@LaunchedEffect
+        offeredScreenshot = screenshot
+        screenshotSource.dismissThrough(screenshot.capturedAt)
+    }
+    val toolbarScreenshot = offeredScreenshot?.takeIf {
+        screenshotToolbarVisible && !dismissedScreenshot && it in screenshots && it.accepts(imageMimeTypes)
+    }
     val mediaAllowed = !privateMode && !editorContext.isRestrictedField
     val mediaWorkspace = keyboardState.layer == KeyboardLayer.EMOJI &&
         !dashboardOpen && !placementMenu && panel == null && !isShortcutsOpen && !isVoxOpen && !isAiActive
@@ -526,6 +548,17 @@ internal fun MonologKeyboardView(
                             when {
                                 systemAutofillSuggestions.isNotEmpty() ->
                                     SystemAutofillStrip(systemAutofillSuggestions)
+                                toolbarScreenshot != null -> Row(verticalAlignment = Alignment.CenterVertically) {
+                                    androidx.compose.material3.TextButton(onClick = {
+                                        if (onPasteScreenshot(toolbarScreenshot)) dismissedScreenshot = true
+                                    }, contentPadding = PaddingValues(horizontal = 5.dp)) {
+                                        ScreenshotThumbnail(toolbarScreenshot, toolbar = true)
+                                        Spacer(Modifier.width(5.dp))
+                                        Text("Paste screenshot", maxLines = 1)
+                                    }
+                                    IconControl(Glyph.CLOSE, "Dismiss screenshot preview", { dismissedScreenshot = true },
+                                        modifier = Modifier.size(32.dp), compact = true)
+                                }
                                 aiAllowed && !privateMode && ai.rememberCandidate != null ->
                                     androidx.compose.material3.TextButton(onClick = ai::saveRememberCandidate) { Text("Add to Remember?") }
                                 rescueHint && rescueAllowed && !hasInput && panel == null ->
@@ -640,6 +673,8 @@ internal fun MonologKeyboardView(
                             privateMode = privateMode,
                             clips = clips,
                             images = images,
+                            screenshots = screenshots,
+                            onPasteScreenshot = { if (onPasteScreenshot(it)) dashboardOpen = false },
                             onPasteImage = { if (onPasteImage(it)) dashboardOpen = false },
                             rowHeight = rowHeight,
                             tiles = tiles,
